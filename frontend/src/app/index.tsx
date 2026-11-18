@@ -82,7 +82,9 @@ export default function DashboardScreen(): React.JSX.Element {
     );
   }
 
-  const currentList = activeTab === 'category' ? categories : countries;
+  const currentList = (activeTab === 'category' ? categories : countries).filter(
+    (item) => item.name !== 'أفلام عالمية' && item.name !== 'أفلام رائجة'
+  );
 
   // 3. حالة النجاح: شبكة التصنيفات / الدول
   return (

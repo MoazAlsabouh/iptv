@@ -92,8 +92,38 @@ const PREFERRED_COUNTRY_ORDER: string[] = [
   'الصومال',
   'جيبوتي',
   'جزر القمر',
-  'أفلام عالمية',
 ];
+
+/**
+ * التحقق مما إذا كان العنصر محتوى مسجل/فيلم (VOD) وليس قناة بث تلفزيوني مباشر
+ */
+export function isVodItem(item: MediaItem): boolean {
+  if (item.type === 'movie' || item.type === 'series') {
+    return true;
+  }
+  const country = (item.country || '').trim();
+  if (country === 'أفلام عالمية' || country.toLowerCase().includes('vod')) {
+    return true;
+  }
+  const group = (item.groupTitle || '').trim();
+  if (
+    group === 'أفلام رائجة' ||
+    group === 'أفلام عالمية' ||
+    group.toLowerCase() === 'vod' ||
+    group.toLowerCase().includes('vod')
+  ) {
+    return true;
+  }
+  const url = (item.url || '').toLowerCase();
+  // ملفات الفيديو المسجلة (mp4, mkv, webm, sample) التي لا تمثل بثاً حياً (.m3u8)
+  if (
+    (url.endsWith('.mp4') || url.endsWith('.mkv') || url.endsWith('.webm') || url.includes('/sample/')) &&
+    !url.includes('.m3u8')
+  ) {
+    return true;
+  }
+  return false;
+}
 
 /**
  * دالة مساعدة لتجميع القنوات حسب الدولة (tvg-country)
@@ -159,46 +189,66 @@ export function useMediaData() {
     retry: 2,
   });
 
-  // تصفية وتجميع القنوات حسب التصنيفات مع تطبيق معايير الرقابة الأبوية
-  const categories = useMemo(() => {
-    if (!query.data) {
-      return [];
-    }
-    const allCategories = groupChannelsByCategory(query.data);
+  // فصل عناصر البث التلفزيوني المباشر عن محتوى الأفلام والمسلسلات (VOD)
+  const { liveChannels, vodItems } = useMemo(() => {
+    if (!query.data) return { liveChannels: [], vodItems: [] };
 
-    if (isChildMode) {
-      return allCategories.filter((cat) => !isRestrictedCategory(cat.name));
+    const live: MediaItem[] = [];
+    const vod: MediaItem[] = [];
+
+    for (const item of query.data) {
+      if (isVodItem(item)) {
+        vod.push({ ...item, type: item.type || 'movie' });
+      } else {
+        live.push({ ...item, type: 'live' });
+      }
     }
 
-    return allCategories;
-  }, [query.data, isChildMode]);
-
-  // تصفية وتجميع القنوات حسب الدول
-  const countries = useMemo(() => {
-    if (!query.data) {
-      return [];
-    }
-    return groupChannelsByCountry(query.data);
+    return { liveChannels: live, vodItems: vod };
   }, [query.data]);
 
-  // تصفية القنوات الفردية لضمان عدم ظهورها في شاشات الاستعراض المباشر عند تفعيل وضع الطفل
-  const filteredChannels = useMemo(() => {
-    if (!query.data) return [];
-    if (!isChildMode) return query.data;
-
-    return query.data.filter((item) => {
+  // تصفية قنوات البث المباشر للأطفال
+  const filteredLiveChannels = useMemo(() => {
+    if (!isChildMode) return liveChannels;
+    return liveChannels.filter((item) => {
       const category = item.groupTitle ? item.groupTitle.trim() : 'General';
       return !isRestrictedCategory(category);
     });
-  }, [query.data, isChildMode]);
+  }, [liveChannels, isChildMode]);
+
+  // تصفية محتوى VOD للأطفال
+  const filteredVodItems = useMemo(() => {
+    if (!isChildMode) return vodItems;
+    return vodItems.filter((item) => {
+      const category = item.groupTitle ? item.groupTitle.trim() : 'General';
+      return !isRestrictedCategory(category);
+    });
+  }, [vodItems, isChildMode]);
+
+  // تصنيفات قنوات التلفزيون فقط (استبعاد أي تصنيف خاص بـ VOD)
+  const categories = useMemo(() => {
+    const allCategories = groupChannelsByCategory(filteredLiveChannels);
+    return allCategories.filter(
+      (cat) => cat.name !== 'أفلام عالمية' && cat.name !== 'أفلام رائجة'
+    );
+  }, [filteredLiveChannels]);
+
+  // دول قنوات التلفزيون فقط (استبعاد أفلام عالمية)
+  const countries = useMemo(() => {
+    const allCountries = groupChannelsByCountry(filteredLiveChannels);
+    return allCountries.filter((c) => c.name !== 'أفلام عالمية');
+  }, [filteredLiveChannels]);
 
   return {
     ...query,
     playlistUrl,
     categories,
     countries,
-    channels: filteredChannels,
-    totalChannels: filteredChannels.length,
+    channels: filteredLiveChannels,
+    totalChannels: filteredLiveChannels.length,
+    vodItems: filteredVodItems,
+    movies: filteredVodItems,
+    totalVod: filteredVodItems.length,
     isChildMode,
   };
 }

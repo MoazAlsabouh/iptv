@@ -88,70 +88,37 @@ const MovieCard: React.FC<MovieCardProps> = ({ item, onSelect, index }) => {
 };
 
 /**
- * شاشة مخصصة لعرض الأفلام والمسلسلات بتصميم تلفاز داكن احترافي.
- * تدعم التصفية بين (الكل، أفلام، مسلسلات) واستجابة كاملة للريموت كنترول.
+ * شاشة مخصصة لعرض الأفلام والمسلسلات (VOD) فقط بتصميم تلفاز داكن احترافي.
+ * تستبعد قنوات البث المباشر التلفزيونية وتدعم التصفية بين (الكل، أفلام، مسلسلات).
  */
 export default function MoviesScreen(): React.JSX.Element {
   const router = useRouter();
-  const { channels, isLoading, isError, refetch } = useMediaData();
+  const { vodItems, isLoading, isError, refetch } = useMediaData();
   const [filterType, setFilterType] = useState<MovieFilterType>('all');
 
-  // استخراج كافة المحتوى المصنف ضمن الأفلام والمسلسلات والسينما والدراما
+  // محتوى الأفلام والمسلسلات VOD المسجل حصراً
   const allMovieItems = useMemo(() => {
-    if (!channels || channels.length === 0) return [];
+    return vodItems || [];
+  }, [vodItems]);
 
-    return channels.filter((item) => {
-      const group = (item.groupTitle || '').toLowerCase();
-      const name = (item.name || '').toLowerCase();
+  const moviesOnly = useMemo(() => {
+    return allMovieItems.filter((item) => item.type === 'movie' || item.type !== 'series');
+  }, [allMovieItems]);
 
-      return (
-        group.includes('أفلام') ||
-        group.includes('مسلسلات') ||
-        group.includes('سينما') ||
-        group.includes('دراما') ||
-        group.includes('movie') ||
-        group.includes('series') ||
-        group.includes('cinema') ||
-        group.includes('drama') ||
-        name.includes('أفلام') ||
-        name.includes('مسلسلات') ||
-        name.includes('سينما') ||
-        name.includes('دراما') ||
-        name.includes('cinema') ||
-        name.includes('movie') ||
-        name.includes('series')
-      );
-    });
-  }, [channels]);
+  const seriesOnly = useMemo(() => {
+    return allMovieItems.filter((item) => item.type === 'series');
+  }, [allMovieItems]);
 
   // التصفية بحسب التبويب المختار
   const filteredItems = useMemo(() => {
     if (filterType === 'movies') {
-      return allMovieItems.filter((item) => {
-        const text = `${item.groupTitle || ''} ${item.name}`.toLowerCase();
-        return (
-          text.includes('أفلام') ||
-          text.includes('سينما') ||
-          text.includes('movie') ||
-          text.includes('cinema')
-        );
-      });
+      return moviesOnly;
     }
-
     if (filterType === 'series') {
-      return allMovieItems.filter((item) => {
-        const text = `${item.groupTitle || ''} ${item.name}`.toLowerCase();
-        return (
-          text.includes('مسلسلات') ||
-          text.includes('دراما') ||
-          text.includes('series') ||
-          text.includes('drama')
-        );
-      });
+      return seriesOnly;
     }
-
     return allMovieItems;
-  }, [allMovieItems, filterType]);
+  }, [allMovieItems, moviesOnly, seriesOnly, filterType]);
 
   const handleGoBack = () => {
     if (router.canGoBack()) {
@@ -279,7 +246,7 @@ export default function MoviesScreen(): React.JSX.Element {
                     focused && styles.tabTextFocused,
                   ]}
                 >
-                  أفلام وسينما
+                  أفلام ({moviesOnly.length})
                 </Text>
               </View>
             )}
@@ -307,7 +274,7 @@ export default function MoviesScreen(): React.JSX.Element {
                     focused && styles.tabTextFocused,
                   ]}
                 >
-                  مسلسلات ودراما
+                  مسلسلات ({seriesOnly.length})
                 </Text>
               </View>
             )}
@@ -318,10 +285,24 @@ export default function MoviesScreen(): React.JSX.Element {
       {/* المحتوى أو الحالة الفارغة */}
       {filteredItems.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <MaterialIcons name="local-movies" size={68} color="#475569" />
-          <Text style={styles.emptyTitle}>لا يتوفر محتوى أفلام أو مسلسلات حالياً</Text>
+          <MaterialIcons
+            name={filterType === 'series' ? 'tv' : 'local-movies'}
+            size={68}
+            color="#475569"
+          />
+          <Text style={styles.emptyTitle}>
+            {filterType === 'series'
+              ? 'لا تتوفر مسلسلات حالياً'
+              : filterType === 'movies'
+              ? 'لا تتوفر أفلام حالياً'
+              : 'لا يتوفر محتوى أفلام أو مسلسلات حالياً'}
+          </Text>
           <Text style={styles.emptySub}>
-            سيتم تحديث القائمة وإضافة المزيد من المحتوى الترفيهي تلقائياً
+            {filterType === 'series'
+              ? 'سيتم إضافة المسلسلات قريباً'
+              : filterType === 'movies'
+              ? 'سيتم إضافة المزيد من الأفلام قريباً'
+              : 'سيتم تحديث القائمة وإضافة المزيد من المحتوى الترفيهي تلقائياً'}
           </Text>
         </View>
       ) : (

@@ -200,13 +200,24 @@ export function parseM3U(content: string): MediaItem[] {
     } else if (!line.startsWith('#') && currentItem) {
       // السطر يمثل رابط البث المباشر (Stream URL)
       if (line.length > 5) {
+        const country = currentItem.country || '';
+        const groupTitle = currentItem.groupTitle || 'General';
+        const lowerUrl = line.toLowerCase();
+        const isVod =
+          country === 'أفلام عالمية' ||
+          groupTitle === 'أفلام رائجة' ||
+          groupTitle === 'أفلام عالمية' ||
+          ((lowerUrl.endsWith('.mp4') || lowerUrl.endsWith('.mkv') || lowerUrl.includes('/sample/')) &&
+            !lowerUrl.includes('.m3u8'));
+
         items.push({
           id: currentItem.id || String(counter++),
           name: currentItem.name || 'Unknown Channel',
-          groupTitle: currentItem.groupTitle || 'General',
+          groupTitle,
           country: currentItem.country,
           logo: currentItem.logo || '',
           url: line,
+          type: isVod ? 'movie' : 'live',
         });
       }
       // تصفير العنصر المؤقت للتحضير للقناة التالية

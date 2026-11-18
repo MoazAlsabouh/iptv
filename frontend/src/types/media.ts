@@ -17,4 +17,5 @@ export interface MediaItem {
   logo: string;
   url: string;
   sources?: StreamSource[];
+  type?: 'live' | 'movie' | 'series';
 }
