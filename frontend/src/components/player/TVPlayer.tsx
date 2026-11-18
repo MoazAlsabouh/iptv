@@ -127,7 +127,7 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
               break;
             default:
               hls.destroy();
-              onErrorRef.current?.(`خطأ غير قابل للاسترداد في بث HLS: ${data.details}`);
+              onErrorRef.current?.('تعذر الاتصال بمصدر البث، يرجى إعادة المحاولة أو اختيار مصدر آخر');
               break;
           }
         }

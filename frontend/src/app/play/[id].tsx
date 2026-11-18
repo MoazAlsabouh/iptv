@@ -361,10 +361,10 @@ export default function PlayerScreen(): React.JSX.Element {
                 </View>
               )}
 
-              {/* قسم 2: مستويات جودة HLS المتوفرة بالبث المباشر */}
+              {/* قسم 2: مستويات جودة البث المتوفرة */}
               {hlsLevels.length > 1 && (
                 <View style={styles.modalSection}>
-                  <Text style={styles.sectionHeader}>جودة البث المباشر (HLS Levels):</Text>
+                  <Text style={styles.sectionHeader}>خيارات جودة البث:</Text>
                   <View style={styles.optionsWrap}>
                     {hlsLevels.map((lvl) => {
                       const isCurrentLevel = lvl.id === selectedHlsLevel;
@@ -440,7 +440,7 @@ export default function PlayerScreen(): React.JSX.Element {
       {isBuffering && !playbackError && currentStreamUrl ? (
         <View style={styles.bufferingContainer} pointerEvents="none">
           <ActivityIndicator size="large" color="#38bdf8" />
-          <Text style={styles.bufferingText}>جاري تهيئة البث المباشر (HLS)...</Text>
+          <Text style={styles.bufferingText}>جاري تهيئة البث المباشر...</Text>
         </View>
       ) : null}
 
@@ -449,7 +449,11 @@ export default function PlayerScreen(): React.JSX.Element {
         <View style={styles.errorOverlay}>
           <MaterialIcons name="error-outline" size={64} color="#ef4444" />
           <Text style={styles.errorTitle}>تعذر تشغيل البث المباشر</Text>
-          <Text style={styles.errorDesc}>{playbackError}</Text>
+          <Text style={styles.errorDesc}>
+            {playbackError.includes('HLS') || playbackError.includes('hls')
+              ? 'تعذر تشغيل هذا البث حالياً، يرجى اختيار مصدر آخر أو إعادة المحاولة'
+              : playbackError}
+          </Text>
 
           <View style={styles.errorActions}>
             <Pressable

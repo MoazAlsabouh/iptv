@@ -145,7 +145,7 @@ export default function CategoryChannelsScreen(): React.JSX.Element {
       {isLoading ? (
         <View style={styles.centerBox}>
           <ActivityIndicator size="large" color="#38bdf8" />
-          <Text style={styles.loadingText}>جاري استخراج القنوات...</Text>
+          <Text style={styles.loadingText}>جاري تحميل القنوات...</Text>
         </View>
       ) : filteredChannels.length === 0 ? (
         <View style={styles.centerBox}>

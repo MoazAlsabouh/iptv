@@ -47,7 +47,7 @@ export default function DashboardScreen(): React.JSX.Element {
       <View style={styles.centerContainer}>
         <ActivityIndicator size="large" color="#38bdf8" />
         <Text style={styles.loadingTitle}>جاري تحميل وتجميع القنوات والأفلام...</Text>
-        <Text style={styles.loadingSub}>يتم الاتصال بخادم Cloudflare Worker لجلب البث المباشر</Text>
+        <Text style={styles.loadingSub}>جاري الاتصال بالخادم لجلب القنوات...</Text>
       </View>
     );
   }
@@ -58,8 +58,8 @@ export default function DashboardScreen(): React.JSX.Element {
       <View style={styles.centerContainer}>
         <View style={styles.errorCard}>
           <MaterialIcons name="error-outline" size={60} color="#ef4444" />
-          <Text style={styles.errorTitle}>تعذر تحميل قائمة القنوات</Text>
-          <Text style={styles.errorDesc}>{error?.message || 'تأكد من الاتصال بالإنترنت'}</Text>
+          <Text style={styles.errorTitle}>تعذر الاتصال بالخادم</Text>
+          <Text style={styles.errorDesc}>يرجى التأكد من الاتصال بالإنترنت ثم إعادة المحاولة</Text>
 
           <View style={styles.errorActions}>
             <Pressable

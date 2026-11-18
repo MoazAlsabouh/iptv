@@ -232,17 +232,17 @@ export async function fetchAndParseM3U(
     });
 
     if (!response.ok) {
-      throw new Error(`فشل جلب القائمة من المصدر. كود الاستجابة: ${response.status}`);
+      throw new Error('فشل الاتصال بالخادم، يرجى إعادة المحاولة');
     }
 
     const content = await response.text();
     return parseM3U(content);
   } catch (error) {
     const errorMessage =
-      error instanceof Error ? error.message : 'خطأ غير متوقع أثناء معالجة القائمة';
+      error instanceof Error ? error.message : 'خطأ غير متوقع أثناء معالجة القنوات';
 
-    console.error('[m3uParser] Error fetching or parsing M3U:', errorMessage);
-    throw new Error(`خطأ في معالجة قائمة M3U: ${errorMessage}`);
+    console.error('[m3uParser] Error fetching or parsing playlist:', errorMessage);
+    throw new Error(errorMessage.startsWith('فشل') ? errorMessage : 'تعذر تحميل القنوات، يرجى التحقق من اتصال الإنترنت');
   }
 }
 
