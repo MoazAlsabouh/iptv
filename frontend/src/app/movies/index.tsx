@@ -9,6 +9,7 @@ import {
   ScrollView,
   ActivityIndicator,
   StyleSheet,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -48,7 +49,7 @@ interface SubCategory {
 
 const SUB_CATEGORIES: SubCategory[] = [
   { id: 'trending', title: 'الرائج', icon: 'whatshot' },
-  { id: 'tv_schedule', title: 'جدول الحلقات اليوم (TVmaze)', icon: 'schedule' },
+  { id: 'tv_schedule', title: 'جدول الحلقات اليوم', icon: 'schedule' },
   { id: 'arabic_movies', title: 'أفلام عربية', icon: 'local-movies' },
   { id: 'arabic_series', title: 'مسلسلات عربية', icon: 'tv' },
   { id: 'action', title: 'أكشن', icon: 'flash-on' },
@@ -76,7 +77,7 @@ const VodCard: React.FC<VodCardProps> = ({ item, onSelect, index }) => {
     >
       {({ focused }) => (
         <View style={styles.cardInner}>
-          {/* البوستر العمودي الاحترافي بنسبة 2:3 */}
+          {/* البوستر العمودي مع التدرج الداكن */}
           <View style={styles.posterContainer}>
             {item.poster && !imageError ? (
               <Image
@@ -90,6 +91,9 @@ const VodCard: React.FC<VodCardProps> = ({ item, onSelect, index }) => {
                 <ChannelLogo uri="" name={item.title} size={64} focused={focused} />
               </View>
             )}
+
+            {/* تدرج لوني داكن خفيف من الأسفل لإبراز التفاصيل */}
+            <View style={styles.posterGradientOverlay} />
 
             {/* شارات الرأس (التقييم ونوع العمل) */}
             <View style={styles.topBadgesRow}>
@@ -107,7 +111,7 @@ const VodCard: React.FC<VodCardProps> = ({ item, onSelect, index }) => {
               ) : null}
             </View>
 
-            {/* شارة رقم وموعد الحلقة (لجدول TVmaze) */}
+            {/* شارة رقم وموعد الحلقة (لجدول الحلقات) */}
             {item.episodeInfo ? (
               <View style={styles.episodeBadge}>
                 <Text numberOfLines={1} style={styles.episodeBadgeText}>
@@ -117,7 +121,7 @@ const VodCard: React.FC<VodCardProps> = ({ item, onSelect, index }) => {
             ) : null}
           </View>
 
-          {/* معلومات الفيلم / المسلسل */}
+          {/* تفاصيل العمل أسفل البوستر */}
           <View style={styles.metaContainer}>
             <Text
               numberOfLines={2}
@@ -128,9 +132,9 @@ const VodCard: React.FC<VodCardProps> = ({ item, onSelect, index }) => {
 
             <View style={styles.subMetaRow}>
               {item.year ? <Text style={styles.metaYear}>{item.year}</Text> : null}
-              {item.sources && item.sources.length > 0 ? (
-                <Text style={styles.metaSources}>{item.sources.length} سيرفرات</Text>
-              ) : null}
+              <Text style={styles.metaSources}>
+                {item.type === 'tv' ? 'عرض الحلقات' : `${item.sources?.length || 0} سيرفرات`}
+              </Text>
             </View>
           </View>
         </View>
@@ -141,7 +145,7 @@ const VodCard: React.FC<VodCardProps> = ({ item, onSelect, index }) => {
 
 /**
  * شاشة استعراض الأفلام والمسلسلات VOD الموسعة عبر TMDB + TVmaze.
- * تدعم شريط البحث اللحظي، الأقسام الفرعية، تعدد السيرفرات، والتحكم بالريموت.
+ * تدعم شريط البحث اللحظي، شريط تصنيفات Glassmorphic، والتوجيه الذكي للمسلسلات.
  */
 export default function MoviesScreen(): React.JSX.Element {
   const router = useRouter();
@@ -229,21 +233,40 @@ export default function MoviesScreen(): React.JSX.Element {
   });
 
   const handleSelect = (item: VodItem) => {
-    const initialUrl = item.sources && item.sources.length > 0 ? item.sources[0].url : '';
-
-    router.push({
-      pathname: '/play/[id]',
-      params: {
-        id: item.id,
-        title: item.title,
-        url: initialUrl,
-        logo: item.poster,
-        sources: JSON.stringify(item.sources),
-        type: item.type,
-        tmdbId: item.tmdbId ? String(item.tmdbId) : undefined,
-        imdbId: item.imdbId,
-      },
-    });
+    if (item.type === 'tv') {
+      // توجيه المسلسل لشاشة تفاصيل واختيار الحلقات
+      router.push({
+        pathname: '/movies/series',
+        params: {
+          id: item.id,
+          title: item.title,
+          poster: item.poster,
+          backdrop: item.backdrop || '',
+          rating: String(item.rating || 0),
+          year: item.year || '',
+          overview: item.overview || '',
+          category: item.category || 'مسلسل',
+          tmdbId: item.tmdbId ? String(item.tmdbId) : undefined,
+          imdbId: item.imdbId,
+        },
+      });
+    } else {
+      // تشغيل الفيلم مباشرة
+      const initialUrl = item.sources && item.sources.length > 0 ? item.sources[0].url : '';
+      router.push({
+        pathname: '/play/[id]',
+        params: {
+          id: item.id,
+          title: item.title,
+          url: initialUrl,
+          logo: item.poster,
+          sources: JSON.stringify(item.sources),
+          type: item.type,
+          tmdbId: item.tmdbId ? String(item.tmdbId) : undefined,
+          imdbId: item.imdbId,
+        },
+      });
+    }
   };
 
   const handleLoadMore = () => {
@@ -254,105 +277,106 @@ export default function MoviesScreen(): React.JSX.Element {
 
   return (
     <View style={styles.container}>
-      {/* 1. الشريط العلوي: العنوان وحقل البحث اللحظي */}
+      {/* 1. الشريط العلوي: العنوان وعناصر التحكم */}
       <View style={styles.topHeader}>
         <View style={styles.titleArea}>
           <Text style={styles.pageTitle}>الأفلام والمسلسلات</Text>
           <Text style={styles.pageSubtitle}>
-            كتالوج الترفيه العربي والعالمي الشامل • TMDB & TVmaze
+            كتالوج الترفيه العربي والعالمي الشامل
           </Text>
         </View>
 
-        {/* حقل البحث الذكي */}
-        <View style={styles.searchBox}>
-          <MaterialIcons name="search" size={22} color="#94a3b8" />
-          <TextInput
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder="ابحث عن أي فيلم أو مسلسل..."
-            placeholderTextColor="#64748b"
-            style={styles.searchInput}
-            returnKeyType="search"
-          />
-          {searchQuery.length > 0 && (
-            <Pressable onPress={() => setSearchQuery('')} style={styles.clearBtn}>
-              <MaterialIcons name="close" size={18} color="#94a3b8" />
-            </Pressable>
+        {/* أدوات الرأس: Segmented Control + مربع البحث */}
+        <View style={styles.headerControls}>
+          {/* Segmented Control للنوع (الكل • أفلام • مسلسلات) */}
+          {debouncedQuery.length === 0 && (
+            <View style={styles.segmentedControl}>
+              <Pressable
+                onPress={() => setMainTab('all')}
+                style={({ focused }) => [
+                  styles.segmentBtn,
+                  mainTab === 'all' && styles.segmentBtnActive,
+                  focused && styles.segmentBtnFocused,
+                ]}
+              >
+                {({ focused }) => (
+                  <Text
+                    style={[
+                      styles.segmentText,
+                      mainTab === 'all' && styles.segmentTextActive,
+                      focused && styles.focusedTextDark,
+                    ]}
+                  >
+                    الكل
+                  </Text>
+                )}
+              </Pressable>
+
+              <Pressable
+                onPress={() => setMainTab('movie')}
+                style={({ focused }) => [
+                  styles.segmentBtn,
+                  mainTab === 'movie' && styles.segmentBtnActive,
+                  focused && styles.segmentBtnFocused,
+                ]}
+              >
+                {({ focused }) => (
+                  <Text
+                    style={[
+                      styles.segmentText,
+                      mainTab === 'movie' && styles.segmentTextActive,
+                      focused && styles.focusedTextDark,
+                    ]}
+                  >
+                    أفلام
+                  </Text>
+                )}
+              </Pressable>
+
+              <Pressable
+                onPress={() => setMainTab('tv')}
+                style={({ focused }) => [
+                  styles.segmentBtn,
+                  mainTab === 'tv' && styles.segmentBtnActive,
+                  focused && styles.segmentBtnFocused,
+                ]}
+              >
+                {({ focused }) => (
+                  <Text
+                    style={[
+                      styles.segmentText,
+                      mainTab === 'tv' && styles.segmentTextActive,
+                      focused && styles.focusedTextDark,
+                    ]}
+                  >
+                    مسلسلات
+                  </Text>
+                )}
+              </Pressable>
+            </View>
           )}
+
+          {/* حقل البحث الذكي */}
+          <View style={styles.searchBox}>
+            <MaterialIcons name="search" size={20} color="#94a3b8" />
+            <TextInput
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder="ابحث عن أي عمل ترفيهي..."
+              placeholderTextColor="#64748b"
+              style={styles.searchInput}
+              returnKeyType="search"
+            />
+            {searchQuery.length > 0 && (
+              <Pressable onPress={() => setSearchQuery('')} style={styles.clearBtn}>
+                <MaterialIcons name="close" size={18} color="#94a3b8" />
+              </Pressable>
+            )}
+          </View>
         </View>
       </View>
 
-      {/* 2. التبويبات الرئيسية (الكل • أفلام • مسلسلات) */}
-      {debouncedQuery.length === 0 && (
-        <View style={styles.tabsRow}>
-          <View style={styles.mainTabs}>
-            <Pressable
-              onPress={() => setMainTab('all')}
-              style={({ focused }) => [
-                styles.mainTabBtn,
-                mainTab === 'all' && styles.mainTabBtnActive,
-                focused && styles.tabFocused,
-              ]}
-            >
-              {({ focused }) => (
-                <Text
-                  style={[
-                    styles.mainTabText,
-                    mainTab === 'all' && styles.mainTabTextActive,
-                    focused && styles.tabTextFocused,
-                  ]}
-                >
-                  الكل
-                </Text>
-              )}
-            </Pressable>
-
-            <Pressable
-              onPress={() => setMainTab('movie')}
-              style={({ focused }) => [
-                styles.mainTabBtn,
-                mainTab === 'movie' && styles.mainTabBtnActive,
-                focused && styles.tabFocused,
-              ]}
-            >
-              {({ focused }) => (
-                <Text
-                  style={[
-                    styles.mainTabText,
-                    mainTab === 'movie' && styles.mainTabTextActive,
-                    focused && styles.tabTextFocused,
-                  ]}
-                >
-                  أفلام
-                </Text>
-              )}
-            </Pressable>
-
-            <Pressable
-              onPress={() => setMainTab('tv')}
-              style={({ focused }) => [
-                styles.mainTabBtn,
-                mainTab === 'tv' && styles.mainTabBtnActive,
-                focused && styles.tabFocused,
-              ]}
-            >
-              {({ focused }) => (
-                <Text
-                  style={[
-                    styles.mainTabText,
-                    mainTab === 'tv' && styles.mainTabTextActive,
-                    focused && styles.tabTextFocused,
-                  ]}
-                >
-                  مسلسلات
-                </Text>
-              )}
-            </Pressable>
-          </View>
-        </View>
-      )}
-
-      {/* 3. شريط الأقسام الفرعية الأفقي */}
+      {/* 2. شريط التصنيفات العصري بنمط Glassmorphic */}
       {debouncedQuery.length === 0 && (
         <View style={styles.categoriesContainer}>
           <ScrollView
@@ -367,13 +391,13 @@ export default function MoviesScreen(): React.JSX.Element {
                   key={cat.id}
                   onPress={() => setSelectedCategory(cat.id)}
                   style={({ focused }) => [
-                    styles.catChip,
-                    isActive && styles.catChipActive,
-                    focused && styles.catChipFocused,
+                    styles.glassChip,
+                    isActive && styles.glassChipActive,
+                    focused && styles.glassChipFocused,
                   ]}
                 >
                   {({ focused }) => (
-                    <View style={styles.catChipContent}>
+                    <View style={styles.glassChipContent}>
                       <MaterialIcons
                         name={cat.icon}
                         size={16}
@@ -381,9 +405,9 @@ export default function MoviesScreen(): React.JSX.Element {
                       />
                       <Text
                         style={[
-                          styles.catChipText,
-                          isActive && styles.catChipTextActive,
-                          focused && styles.tabTextFocused,
+                          styles.glassChipText,
+                          isActive && styles.glassChipTextActive,
+                          focused && styles.focusedTextDark,
                         ]}
                       >
                         {cat.title}
@@ -397,11 +421,11 @@ export default function MoviesScreen(): React.JSX.Element {
         </View>
       )}
 
-      {/* 4. شبكة المحتوى (Grid) أو مؤشر التحميل */}
+      {/* 3. شبكة المحتوى أو حالات التحميل/الخطأ */}
       {isLoading ? (
         <View style={styles.centerBox}>
           <ActivityIndicator size="large" color="#38bdf8" />
-          <Text style={styles.loadingText}>جاري تحميل الكتالوج من TMDB & TVmaze...</Text>
+          <Text style={styles.loadingText}>جاري استعراض الكتالوج السينمائي...</Text>
         </View>
       ) : isError ? (
         <View style={styles.centerBox}>
@@ -411,7 +435,7 @@ export default function MoviesScreen(): React.JSX.Element {
           <Pressable
             hasTVPreferredFocus
             onPress={() => fetchCatalogData()}
-            style={({ focused }) => [styles.retryBtn, focused && styles.tabFocused]}
+            style={({ focused }) => [styles.retryBtn, focused && styles.glassChipFocused]}
           >
             <Text style={styles.retryBtnText}>إعادة المحاولة</Text>
           </Pressable>
@@ -484,13 +508,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 14,
     flexWrap: 'wrap',
     gap: 16,
   },
   titleArea: {
-    flex: 1,
-    minWidth: 260,
+    minWidth: 220,
   },
   pageTitle: {
     fontSize: 26,
@@ -502,112 +525,114 @@ const styles = StyleSheet.create({
     color: '#94a3b8',
     marginTop: 4,
   },
-  searchBox: {
+  headerControls: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1e293b',
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: '#334155',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    width: 320,
-    gap: 8,
+    gap: 12,
+    flexWrap: 'wrap',
   },
-  searchInput: {
-    flex: 1,
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '600',
-    padding: 0,
-    textAlign: 'right',
-  },
-  clearBtn: {
+  segmentedControl: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: 999,
     padding: 4,
-  },
-  tabsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 14,
-  },
-  mainTabs: {
-    flexDirection: 'row',
-    backgroundColor: '#0b1120',
-    borderRadius: 12,
-    padding: 3,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: 'rgba(255, 255, 255, 0.12)',
     gap: 4,
   },
-  mainTabBtn: {
-    paddingVertical: 8,
-    paddingHorizontal: 20,
-    borderRadius: 10,
+  segmentBtn: {
+    paddingVertical: 7,
+    paddingHorizontal: 16,
+    borderRadius: 999,
   },
-  mainTabBtnActive: {
+  segmentBtnActive: {
     backgroundColor: '#0284c7',
   },
-  mainTabText: {
-    color: '#94a3b8',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  mainTabTextActive: {
-    color: '#ffffff',
-    fontWeight: '800',
-  },
-  tabFocused: {
+  segmentBtnFocused: {
     backgroundColor: '#ffffff',
     transform: [{ scale: 1.05 }],
     shadowColor: '#38bdf8',
     shadowOpacity: 0.9,
     shadowRadius: 10,
   },
-  tabTextFocused: {
-    color: '#000000',
-    fontWeight: '900',
+  segmentText: {
+    color: '#94a3b8',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  segmentTextActive: {
+    color: '#ffffff',
+    fontWeight: '800',
+  },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    width: 260,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '600',
+    padding: 0,
+    textAlign: 'right',
+  },
+  clearBtn: {
+    padding: 2,
   },
   categoriesContainer: {
-    marginBottom: 18,
+    marginBottom: 16,
   },
   categoriesScroll: {
     flexDirection: 'row',
-    gap: 8,
-    paddingVertical: 2,
+    gap: 12,
+    paddingHorizontal: 4,
+    paddingVertical: 6,
   },
-  catChip: {
-    backgroundColor: '#1e293b',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 10,
+  glassChip: {
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    paddingVertical: 9,
+    paddingHorizontal: 18,
+    borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
-  catChipActive: {
+  glassChipActive: {
     backgroundColor: '#0284c7',
     borderColor: '#38bdf8',
   },
-  catChipFocused: {
+  glassChipFocused: {
     backgroundColor: '#ffffff',
     borderColor: '#ffffff',
     transform: [{ scale: 1.06 }],
     shadowColor: '#38bdf8',
     shadowOpacity: 0.9,
-    shadowRadius: 10,
+    shadowRadius: 12,
   },
-  catChipContent: {
+  glassChipContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
   },
-  catChipText: {
+  glassChipText: {
     color: '#94a3b8',
     fontSize: 13,
     fontWeight: '700',
   },
-  catChipTextActive: {
+  glassChipTextActive: {
     color: '#ffffff',
     fontWeight: '800',
+  },
+  focusedTextDark: {
+    color: '#000000',
+    fontWeight: '900',
   },
   gridContent: {
     paddingBottom: 40,
@@ -620,7 +645,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#1e293b',
     borderRadius: 16,
     borderWidth: 1.5,
-    borderColor: '#334155',
+    borderColor: 'rgba(255, 255, 255, 0.08)',
     overflow: 'hidden',
     height: 330,
   },
@@ -637,7 +662,7 @@ const styles = StyleSheet.create({
   },
   posterContainer: {
     width: '100%',
-    height: 230,
+    height: 235,
     backgroundColor: '#0b1120',
     position: 'relative',
     overflow: 'hidden',
@@ -653,6 +678,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#0f172a',
   },
+  posterGradientOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: '65%',
+    ...(Platform.OS === 'web'
+      ? {
+          backgroundImage:
+            'linear-gradient(to top, rgba(15, 23, 42, 0.95) 0%, rgba(15, 23, 42, 0.4) 60%, transparent 100%)',
+        }
+      : {
+          backgroundColor: 'rgba(15, 23, 42, 0.65)',
+        }),
+  },
   topBadgesRow: {
     position: 'absolute',
     top: 8,
@@ -661,6 +701,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    zIndex: 2,
   },
   typeBadge: {
     backgroundColor: 'rgba(2, 132, 199, 0.85)',
@@ -701,6 +742,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
+    zIndex: 2,
   },
   episodeBadgeText: {
     color: '#ffffff',
