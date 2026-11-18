@@ -6,16 +6,15 @@ import {
   Image,
   FlatList,
   ActivityIndicator,
+  StyleSheet,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../../store/useAppStore';
 import { useMediaData } from '../../hooks/useMediaData';
+import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 import { MediaItem } from '../../types/media';
 
-/**
- * مكون بطاقة القناة في شاشة المفضلة مع شارة نجمة تفاعلية
- */
 interface FavoriteChannelCardProps {
   item: MediaItem;
   onSelect: (item: MediaItem) => void;
@@ -28,33 +27,24 @@ const FavoriteChannelCard: React.FC<FavoriteChannelCardProps> = ({ item, onSelec
   return (
     <Pressable
       onPress={() => onSelect(item)}
-      className="rounded-2xl outline-none"
+      style={({ focused }) => [
+        styles.favCard,
+        focused && styles.favCardFocused,
+      ]}
     >
       {({ focused }) => (
-        <View
-          className={`p-4 rounded-2xl border items-center justify-between min-h-[170px] relative ${
-            focused
-              ? 'bg-white border-white scale-105 shadow-2xl z-10'
-              : 'bg-neutral-900 border-neutral-800'
-          }`}
-        >
-          {/* شارة النجمة الذهبية في الزاوية */}
-          <View className="absolute top-3 right-3 z-10">
+        <View style={styles.cardContent}>
+          <View style={styles.starBadge}>
             <MaterialIcons name="star" size={18} color="#eab308" />
           </View>
 
-          {/* حاوية الشعار مع صورة بديلة */}
-          <View
-            className={`w-20 h-20 rounded-xl justify-center items-center overflow-hidden mb-3 ${
-              focused ? 'bg-neutral-100' : 'bg-neutral-950'
-            }`}
-          >
+          <View style={[styles.logoWrapper, focused && styles.logoWrapperFocused]}>
             {hasValidLogo ? (
               <Image
                 source={{ uri: item.logo }}
                 onError={() => setImageError(true)}
                 resizeMode="contain"
-                className="w-16 h-16"
+                style={styles.logoImage}
               />
             ) : (
               <MaterialIcons
@@ -65,12 +55,9 @@ const FavoriteChannelCard: React.FC<FavoriteChannelCardProps> = ({ item, onSelec
             )}
           </View>
 
-          {/* اسم القناة */}
           <Text
             numberOfLines={2}
-            className={`text-sm text-center font-bold leading-5 ${
-              focused ? 'text-black' : 'text-white'
-            }`}
+            style={[styles.favTitle, focused && styles.favTitleFocused]}
           >
             {item.name}
           </Text>
@@ -80,16 +67,11 @@ const FavoriteChannelCard: React.FC<FavoriteChannelCardProps> = ({ item, onSelec
   );
 };
 
-/**
- * شاشة استعراض القنوات المفضلة (Favorites Screen).
- * تعرض فقط القنوات المحفوظة في المتجر العام، مع دعم كامل للريموت كنترول وشبكة من 4 أعمدة.
- */
 export default function FavoritesScreen(): React.JSX.Element {
   const router = useRouter();
   const { favoriteIds } = useAppStore();
   const { channels, isLoading } = useMediaData();
 
-  // تصفية القنوات المسجلة ضمن المفضلة فقط
   const favoriteChannels = useMemo(() => {
     if (!channels || channels.length === 0 || favoriteIds.length === 0) {
       return [];
@@ -97,6 +79,10 @@ export default function FavoritesScreen(): React.JSX.Element {
     const favSet = new Set(favoriteIds);
     return channels.filter((ch) => favSet.has(ch.id));
   }, [channels, favoriteIds]);
+
+  useTVRemoteNavigation({
+    onBack: () => router.back(),
+  });
 
   const handleChannelPress = (channel: MediaItem) => {
     router.push({
@@ -106,55 +92,47 @@ export default function FavoritesScreen(): React.JSX.Element {
   };
 
   return (
-    <View className="flex-1">
-      {/* الشريط العلوي لشاشة المفضلة */}
-      <View className="flex-row items-center justify-between mb-6 pb-4 border-b border-neutral-800">
-        <View className="flex-row items-center">
-          <View className="p-2.5 rounded-xl bg-amber-500/10 mr-3">
-            <MaterialIcons name="star" size={28} color="#eab308" />
+    <View style={styles.container}>
+      {/* الشريط العلوي */}
+      <View style={styles.topBar}>
+        <View style={styles.headerTitleRow}>
+          <View style={styles.starIconBox}>
+            <MaterialIcons name="star" size={26} color="#eab308" />
           </View>
           <View>
-            <Text className="text-2xl font-black text-white">
-              القنوات المفضلة
-            </Text>
-            <Text className="text-neutral-400 text-sm mt-0.5">
+            <Text style={styles.screenTitle}>القنوات المفضلة</Text>
+            <Text style={styles.screenSub}>
               إجمالي القنوات المحفوظة: {favoriteChannels.length}
             </Text>
           </View>
         </View>
       </View>
 
-      {/* 1. حالة التحميل */}
+      {/* المحتوى */}
       {isLoading ? (
-        <View className="flex-1 justify-center items-center">
+        <View style={styles.centerBox}>
           <ActivityIndicator size="large" color="#38bdf8" />
-          <Text className="text-white text-lg font-bold mt-4">
-            جاري مزامنة القنوات المفضلة...
-          </Text>
+          <Text style={styles.loadingText}>جاري مزامنة القنوات المفضلة...</Text>
         </View>
       ) : favoriteChannels.length === 0 ? (
-        /* 2. حالة عدم وجود قنوات في المفضلة (Empty State) */
-        <View className="flex-1 justify-center items-center px-6">
-          <View className="p-6 rounded-full bg-neutral-900 border border-neutral-800 mb-4">
-            <MaterialIcons name="star-border" size={64} color="#737373" />
+        <View style={styles.centerBox}>
+          <View style={styles.emptyCircle}>
+            <MaterialIcons name="star-border" size={60} color="#64748b" />
           </View>
-          <Text className="text-xl font-bold text-white text-center">
-            لا توجد قنوات في المفضلة حالياً
-          </Text>
-          <Text className="text-neutral-400 text-sm mt-2 text-center max-w-md leading-6">
-            يمكنك إضافة القنوات إلى هذه القائمة بالضغط على زر "إضافة للمفضلة" أثناء تشغيل أي قناة في المشغل.
+          <Text style={styles.emptyTitle}>لا توجد قنوات في المفضلة حالياً</Text>
+          <Text style={styles.emptySub}>
+            يمكنك إضافة القنوات إلى هذه القائمة بالضغط على زر "إضافة للمفضلة" أثناء تشغيل القناة.
           </Text>
         </View>
       ) : (
-        /* 3. شبكة القنوات المفضلة المكونة من 4 أعمدة والمتوافقة مع التلفاز */
         <FlatList<MediaItem>
           data={favoriteChannels}
           keyExtractor={(item) => item.id}
           numColumns={4}
-          contentContainerStyle={{ paddingBottom: 32 }}
+          contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
-          renderItem={({ item, index }) => (
-            <View className="flex-1 p-2">
+          renderItem={({ item }) => (
+            <View style={styles.col}>
               <FavoriteChannelCard item={item} onSelect={handleChannelPress} />
             </View>
           )}
@@ -163,3 +141,145 @@ export default function FavoritesScreen(): React.JSX.Element {
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#0f172a',
+  },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 24,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1e293b',
+  },
+  headerTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  starIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: 'rgba(234, 179, 8, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(234, 179, 8, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+  screenTitle: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: '#ffffff',
+  },
+  screenSub: {
+    fontSize: 13,
+    color: '#94a3b8',
+    marginTop: 2,
+  },
+  listContent: {
+    paddingBottom: 40,
+  },
+  col: {
+    flex: 1,
+    padding: 8,
+  },
+  favCard: {
+    backgroundColor: '#1e293b',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#334155',
+    padding: 16,
+    minHeight: 160,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  favCardFocused: {
+    backgroundColor: '#ffffff',
+    borderColor: '#ffffff',
+    transform: [{ scale: 1.06 }],
+    shadowColor: '#38bdf8',
+    shadowOpacity: 0.9,
+    shadowRadius: 14,
+    elevation: 8,
+  },
+  cardContent: {
+    alignItems: 'center',
+    width: '100%',
+  },
+  starBadge: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    zIndex: 10,
+  },
+  logoWrapper: {
+    width: 72,
+    height: 72,
+    borderRadius: 14,
+    backgroundColor: '#0f172a',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+    overflow: 'hidden',
+  },
+  logoWrapperFocused: {
+    backgroundColor: '#f1f5f9',
+  },
+  logoImage: {
+    width: 60,
+    height: 60,
+  },
+  favTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#f8fafc',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  favTitleFocused: {
+    color: '#000000',
+    fontWeight: '800',
+  },
+  centerBox: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  loadingText: {
+    color: '#ffffff',
+    fontSize: 16,
+    marginTop: 16,
+    fontWeight: '600',
+  },
+  emptyCircle: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    backgroundColor: '#1e293b',
+    borderWidth: 1,
+    borderColor: '#334155',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+  emptyTitle: {
+    color: '#f8fafc',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  emptySub: {
+    color: '#94a3b8',
+    fontSize: 14,
+    textAlign: 'center',
+    maxWidth: 420,
+    marginTop: 8,
+    lineHeight: 22,
+  },
+});

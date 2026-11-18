@@ -1,12 +1,9 @@
 import React from 'react';
-import { View, Text, Pressable } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../../store/useAppStore';
 
-/**
- * بنية عنصر قائمة التنقل
- */
 interface NavItem {
   id: string;
   title: string;
@@ -15,11 +12,9 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: 'dashboard', title: 'Dashboard', route: '/', icon: 'dashboard' },
-  { id: 'movies', title: 'Movies', route: '/movies', icon: 'movie' },
-  { id: 'live', title: 'Live TV', route: '/live', icon: 'live-tv' },
-  { id: 'favorites', title: 'Favorites', route: '/favorites', icon: 'star' },
-  { id: 'settings', title: 'Settings', route: '/settings', icon: 'settings' },
+  { id: 'dashboard', title: 'لوحة التحكم', route: '/', icon: 'dashboard' },
+  { id: 'favorites', title: 'المفضلة', route: '/favorites', icon: 'star' },
+  { id: 'settings', title: 'الإعدادات', route: '/settings', icon: 'settings' },
 ];
 
 interface MainLayoutProps {
@@ -27,9 +22,8 @@ interface MainLayoutProps {
 }
 
 /**
- * التخطيط الرئيسي للتطبيق (Master-Detail Layout) الموجه لأجهزة التلفاز (TV-First).
- * يحتوي على شريط جانبي وقسم عرض رئيسي، مع دعم كامل لمحرك تركيز ريموت التلفاز (D-Pad)
- * وإمكانية التنقل بين القوائم والمفضلة ومؤشر مرئي لحالة الرقابة الأبوية.
+ * التخطيط الرئيسي للتطبيق (Master-Detail Layout) بتصميم تلفاز داكن احترافي.
+ * يعتمد StyleSheet القياسي لضمان مظهر موحد واستجابة كاملة لريموت التلفاز.
  */
 export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const router = useRouter();
@@ -37,36 +31,31 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const isChildMode = useAppStore((state) => state.isChildMode);
 
   return (
-    <View className="flex-1 flex-row bg-neutral-950">
-      {/* الشريط الجانبي (Sidebar - Master View) */}
-      <View className="w-72 bg-neutral-900 border-r border-neutral-800 p-6 justify-between">
+    <View style={styles.rootContainer}>
+      {/* الشريط الجانبي (Sidebar) */}
+      <View style={styles.sidebar}>
         <View>
-          {/* شعار التطبيق مع مؤشر وضع الطفل إذا كان مفعلاً */}
-          <View className="mb-8">
-            <View className="flex-row items-center">
+          {/* شعار التطبيق */}
+          <View style={styles.brandContainer}>
+            <View style={styles.logoRow}>
               <MaterialIcons
                 name="tv"
-                size={32}
+                size={34}
                 color={isChildMode ? '#f59e0b' : '#38bdf8'}
               />
-              <Text className="ml-3 text-xl font-bold text-white tracking-wider">
-                IPTV STREAM
-              </Text>
+              <Text style={styles.brandTitle}>IPTV STREAM</Text>
             </View>
 
-            {/* شارة وضع الطفل المخصص للوالدين */}
             {isChildMode && (
-              <View className="mt-2.5 flex-row items-center bg-amber-500/10 border border-amber-500/30 px-2.5 py-1 rounded-md self-start">
-                <MaterialIcons name="lock" size={14} color="#f59e0b" />
-                <Text className="ml-1 text-[11px] font-bold text-amber-400">
-                  وضع الطفل مفعل
-                </Text>
+              <View style={styles.childModeBadge}>
+                <MaterialIcons name="lock" size={12} color="#f59e0b" />
+                <Text style={styles.childModeText}>وضع الطفل مفعّل</Text>
               </View>
             )}
           </View>
 
-          {/* أزرار التنقل مع محرك التركيز لريموت التلفاز */}
-          <View className="space-y-3">
+          {/* أزرار التنقل مع إطار تركيز مضيء للريموت */}
+          <View style={styles.navContainer}>
             {NAV_ITEMS.map((item, index) => {
               const isActive = currentPath === item.route;
 
@@ -75,64 +64,159 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                   key={item.id}
                   hasTVPreferredFocus={index === 0}
                   onPress={() => router.push(item.route as any)}
-                  className="rounded-xl outline-none"
+                  style={({ focused }) => [
+                    styles.navItem,
+                    isActive && styles.navItemActive,
+                    focused && styles.navItemFocused,
+                  ]}
                 >
-                  {({ focused }) => (
-                    <View
-                      className={`flex-row items-center px-4 py-3.5 rounded-xl ${
-                        focused
-                          ? 'bg-white scale-110 shadow-lg'
-                          : isActive
-                          ? 'bg-neutral-800'
-                          : 'bg-transparent'
-                      }`}
-                    >
-                      <MaterialIcons
-                        name={item.icon}
-                        size={24}
-                        color={
-                          focused
-                            ? '#000000'
-                            : isActive
-                            ? item.id === 'favorites'
-                              ? '#eab308'
-                              : '#38bdf8'
-                            : item.id === 'favorites'
-                            ? '#ca8a04'
-                            : '#a3a3a3'
-                        }
-                      />
-                      <Text
-                        className={`ml-3 text-base ${
-                          focused
-                            ? 'text-black font-bold'
-                            : isActive
-                            ? 'text-white font-semibold'
-                            : 'text-neutral-400 font-medium'
-                        }`}
-                      >
-                        {item.title}
-                      </Text>
-                    </View>
-                  )}
+                  {({ focused }) => {
+                    const iconColor = focused
+                      ? '#000000'
+                      : isActive
+                      ? item.id === 'favorites'
+                        ? '#eab308'
+                        : '#38bdf8'
+                      : '#94a3b8';
+
+                    return (
+                      <View style={styles.navItemInner}>
+                        <MaterialIcons name={item.icon} size={24} color={iconColor} />
+                        <Text
+                          style={[
+                            styles.navItemText,
+                            isActive && styles.navItemTextActive,
+                            focused && styles.navItemTextFocused,
+                          ]}
+                        >
+                          {item.title}
+                        </Text>
+                      </View>
+                    );
+                  }}
                 </Pressable>
               );
             })}
           </View>
         </View>
 
-        {/* تذييل إرشادي لمستخدمي ريموت التلفاز */}
-        <View className="pt-4 border-t border-neutral-800">
-          <Text className="text-xs text-neutral-500 text-center">
-            استخدم الأسهم للتنقل و OK للاختيار
-          </Text>
+        {/* إرشادات التحكم بريموت التلفاز */}
+        <View style={styles.sidebarFooter}>
+          <Text style={styles.footerHelpText}>الأسهم للتنقل • OK للاختيار</Text>
         </View>
       </View>
 
-      {/* مساحة عرض المحتوى (Content Area - Detail View) */}
-      <View className="flex-1 bg-neutral-950 p-8">
-        {children}
-      </View>
+      {/* مساحة عرض المحتوى الرئيسية */}
+      <View style={styles.contentArea}>{children}</View>
     </View>
   );
 };
+
+const styles = StyleSheet.create({
+  rootContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: '#0f172a', // خلفية داكنة فخمة
+    height: '100%',
+    width: '100%',
+  },
+  sidebar: {
+    width: 260,
+    backgroundColor: '#0b1120',
+    borderRightWidth: 1,
+    borderRightColor: '#1e293b',
+    padding: 24,
+    justifyContent: 'space-between',
+  },
+  brandContainer: {
+    marginBottom: 32,
+  },
+  logoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  brandTitle: {
+    marginLeft: 12,
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#ffffff',
+    letterSpacing: 1.2,
+  },
+  childModeBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.35)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginTop: 8,
+    alignSelf: 'flex-start',
+  },
+  childModeText: {
+    color: '#fbbf24',
+    fontSize: 11,
+    fontWeight: '700',
+    marginLeft: 4,
+  },
+  navContainer: {
+    gap: 10,
+  },
+  navItem: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: 'transparent',
+    borderWidth: 1.5,
+    borderColor: 'transparent',
+  },
+  navItemActive: {
+    backgroundColor: '#1e293b',
+    borderColor: '#334155',
+  },
+  navItemFocused: {
+    backgroundColor: '#ffffff',
+    borderColor: '#ffffff',
+    transform: [{ scale: 1.06 }],
+    shadowColor: '#38bdf8',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.9,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  navItemInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  navItemText: {
+    marginLeft: 12,
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#94a3b8',
+  },
+  navItemTextActive: {
+    color: '#f8fafc',
+    fontWeight: '700',
+  },
+  navItemTextFocused: {
+    color: '#000000',
+    fontWeight: '800',
+  },
+  sidebarFooter: {
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#1e293b',
+  },
+  footerHelpText: {
+    fontSize: 11,
+    color: '#64748b',
+    textAlign: 'center',
+    fontWeight: '500',
+  },
+  contentArea: {
+    flex: 1,
+    backgroundColor: '#0f172a',
+    padding: 32,
+  },
+});

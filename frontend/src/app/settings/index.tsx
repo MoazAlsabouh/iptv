@@ -1,12 +1,10 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, Pressable } from 'react-native';
+import { View, Text, TextInput, Pressable, StyleSheet } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../../store/useAppStore';
 
 /**
- * شاشة الإعدادات والرقابة الأبوية (Settings & Parental Controls).
- * تتيح التحكم في وضع الطفل (Child Mode) مع حماية برمز PIN من 4 أرقام،
- * وتحتوي على مساحة تمهيدية لمؤقت الإيقاف التلقائي للشاشات الذكية.
+ * شاشة الإعدادات والرقابة الأبوية بتصميم تلفاز داكن (#0f172a).
  */
 export default function SettingsScreen(): React.JSX.Element {
   const { isChildMode, pinCode, setChildMode, setPinCode } = useAppStore();
@@ -16,14 +14,10 @@ export default function SettingsScreen(): React.JSX.Element {
   const [successMessage, setSuccessMessage] = useState<string>('');
   const [isInputFocused, setIsInputFocused] = useState<boolean>(false);
 
-  /**
-   * معالجة تفعيل أو إيقاف وضع الطفل مع التحقق الصارم من رمز الـ PIN
-   */
   const handleToggleChildMode = () => {
     setErrorMessage('');
     setSuccessMessage('');
 
-    // التحقق من صحة طول الرمز المدخل
     if (inputPin.trim().length !== 4 || !/^\d{4}$/.test(inputPin.trim())) {
       setErrorMessage('يرجى إدخال رمز PIN صالح مكون من 4 أرقام بالضبط');
       return;
@@ -32,7 +26,6 @@ export default function SettingsScreen(): React.JSX.Element {
     const cleanPin = inputPin.trim();
 
     if (isChildMode) {
-      // محاولة إلغاء التفعيل: يجب مطابقة الرمز المسجل
       if (cleanPin !== pinCode) {
         setErrorMessage('رمز PIN غير صحيح! لا يمكن إلغاء قفل وضع الطفل');
         return;
@@ -40,9 +33,8 @@ export default function SettingsScreen(): React.JSX.Element {
 
       setChildMode(false);
       setInputPin('');
-      setSuccessMessage('تم إيقاف وضع الطفل بنجاح، وعرض كافة التصنيفات مجدداً');
+      setSuccessMessage('تم إيقاف وضع الطفل بنجاح، وعرض كافة القنوات والتصنيفات');
     } else {
-      // تفعيل وضع الطفل: تسجيل الرمز وتفعيل القفل
       setPinCode(cleanPin);
       setChildMode(true);
       setInputPin('');
@@ -51,76 +43,54 @@ export default function SettingsScreen(): React.JSX.Element {
   };
 
   return (
-    <View className="flex-1">
+    <View style={styles.container}>
       {/* عنوان الشاشة */}
-      <View className="mb-6 pb-4 border-b border-neutral-800">
-        <Text className="text-2xl font-black text-white">إعدادات التطبيق</Text>
-        <Text className="text-neutral-400 text-sm mt-1">
-          إدارة الرقابة الأبوية، أمان المحتوى، والمؤقت الزمني للشاشات الذكية
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>إعدادات التطبيق</Text>
+        <Text style={styles.headerSub}>
+          إدارة الرقابة الأبوية، أمان المحتوى، وتخصيص تجربة التلفاز
         </Text>
       </View>
 
-      <View className="flex-row space-x-6">
+      <View style={styles.gridRow}>
         {/* 1. قسم وضع الطفل والرقابة الأبوية */}
-        <View className="flex-1 bg-neutral-900 border border-neutral-800 rounded-2xl p-6 justify-between">
+        <View style={styles.card}>
           <View>
-            <View className="flex-row items-center justify-between mb-4">
-              <View className="flex-row items-center">
-                <View
-                  className={`p-3 rounded-xl ${
-                    isChildMode ? 'bg-amber-500/20' : 'bg-neutral-800'
-                  }`}
-                >
+            <View style={styles.cardTopRow}>
+              <View style={styles.cardHeaderInfo}>
+                <View style={[styles.cardIconBox, isChildMode && styles.cardIconBoxActive]}>
                   <MaterialIcons
                     name={isChildMode ? 'child-care' : 'family-restroom'}
                     size={28}
                     color={isChildMode ? '#f59e0b' : '#38bdf8'}
                   />
                 </View>
-                <View className="ml-3">
-                  <Text className="text-lg font-bold text-white">
-                    وضع الرقابة الأبوية (وضع الطفل)
-                  </Text>
-                  <Text className="text-xs text-neutral-400">
-                    فلترة تصنيفات العنف، الرعب، والأخبار تلقائياً
+                <View style={styles.cardHeaderText}>
+                  <Text style={styles.cardTitle}>وضع الرقابة الأبوية (وضع الطفل)</Text>
+                  <Text style={styles.cardSubtitle}>
+                    فلترة المحتوى غير المناسب والأخبار تلقائياً
                   </Text>
                 </View>
               </View>
 
-              {/* شارة الحالة الحالية */}
-              <View
-                className={`px-3 py-1.5 rounded-full ${
-                  isChildMode ? 'bg-amber-500/20' : 'bg-neutral-800'
-                }`}
-              >
-                <Text
-                  className={`text-xs font-bold ${
-                    isChildMode ? 'text-amber-400' : 'text-neutral-400'
-                  }`}
-                >
-                  {isChildMode ? 'مفعل الآن' : 'غير مفعل'}
+              <View style={[styles.statusBadge, isChildMode && styles.statusBadgeActive]}>
+                <Text style={[styles.statusText, isChildMode && styles.statusTextActive]}>
+                  {isChildMode ? 'مفعّل الآن' : 'غير مفعّل'}
                 </Text>
               </View>
             </View>
 
-            <Text className="text-neutral-300 text-sm mb-4 leading-6">
+            <Text style={styles.descText}>
               {isChildMode
                 ? 'وضع الطفل قيد التشغيل حالياً. لإيقافه والسماح بجميع القنوات، أدخل رمز PIN المسجل أدناه:'
                 : 'لحماية أطفالك وتصفية المحتوى الموجه للبالغين، قم بتعيين رمز PIN مكون من 4 أرقام ثم اضغط تفعيل:'}
             </Text>
 
-            {/* حقل إدخال رمز PIN المخصص للتلفاز */}
-            <View
-              className={`flex-row items-center bg-neutral-950 px-4 py-3.5 rounded-xl border mb-3 ${
-                isInputFocused
-                  ? 'border-white bg-neutral-900 scale-105'
-                  : 'border-neutral-800'
-              }`}
-            >
+            <View style={[styles.inputBox, isInputFocused && styles.inputBoxFocused]}>
               <MaterialIcons
                 name="lock-outline"
                 size={22}
-                color={isInputFocused ? '#38bdf8' : '#737373'}
+                color={isInputFocused ? '#38bdf8' : '#64748b'}
               />
               <TextInput
                 value={inputPin}
@@ -128,53 +98,44 @@ export default function SettingsScreen(): React.JSX.Element {
                 onFocus={() => setIsInputFocused(true)}
                 onBlur={() => setIsInputFocused(false)}
                 placeholder="أدخل رمز PIN (مثال: 1234)"
-                placeholderTextColor="#737373"
+                placeholderTextColor="#64748b"
                 keyboardType="numeric"
                 maxLength={4}
                 secureTextEntry
-                className="flex-1 ml-3 text-white text-base tracking-widest outline-none"
+                style={styles.pinInput}
               />
             </View>
 
-            {/* رسائل التنبيه والخطأ */}
             {errorMessage ? (
-              <Text className="text-red-400 text-xs font-semibold mb-3">
-                {errorMessage}
-              </Text>
+              <Text style={styles.errorAlert}>{errorMessage}</Text>
             ) : null}
 
             {successMessage ? (
-              <Text className="text-emerald-400 text-xs font-semibold mb-3">
-                {successMessage}
-              </Text>
+              <Text style={styles.successAlert}>{successMessage}</Text>
             ) : null}
           </View>
 
-          {/* زر تبديل الحالة المهيأ بالكامل لريموت التلفاز */}
           <Pressable
             hasTVPreferredFocus
             onPress={handleToggleChildMode}
-            className="rounded-xl outline-none mt-4"
+            style={({ focused }) => [
+              styles.actionBtn,
+              isChildMode ? styles.actionBtnDanger : styles.actionBtnWarning,
+              focused && styles.actionBtnFocused,
+            ]}
           >
             {({ focused }) => (
-              <View
-                className={`py-3.5 rounded-xl flex-row justify-center items-center ${
-                  focused
-                    ? 'bg-white scale-105 shadow-xl'
-                    : isChildMode
-                    ? 'bg-red-600'
-                    : 'bg-amber-500'
-                }`}
-              >
+              <View style={styles.btnRow}>
                 <MaterialIcons
                   name={isChildMode ? 'lock-open' : 'lock'}
                   size={20}
                   color={focused ? '#000000' : '#ffffff'}
                 />
                 <Text
-                  className={`ml-2 text-base font-bold ${
-                    focused ? 'text-black font-extrabold' : 'text-white'
-                  }`}
+                  style={[
+                    styles.actionBtnText,
+                    focused && styles.actionBtnTextFocused,
+                  ]}
                 >
                   {isChildMode ? 'إلغاء قفل وضع الطفل' : 'تفعيل وضع الطفل وقفل التصنيفات'}
                 </Text>
@@ -183,53 +144,247 @@ export default function SettingsScreen(): React.JSX.Element {
           </Pressable>
         </View>
 
-        {/* 2. قسم المؤقت الزمني (UI Placeholder للمهام القادمة) */}
-        <View className="flex-1 bg-neutral-900 border border-neutral-800 rounded-2xl p-6 justify-between ml-6">
+        {/* 2. قسم المؤقت الزمني */}
+        <View style={[styles.card, styles.cardMargin]}>
           <View>
-            <View className="flex-row items-center mb-4">
-              <View className="p-3 rounded-xl bg-neutral-800">
+            <View style={styles.cardHeaderInfo}>
+              <View style={styles.cardIconBox}>
                 <MaterialIcons name="timer" size={28} color="#38bdf8" />
               </View>
-              <View className="ml-3">
-                <Text className="text-lg font-bold text-white">
-                  مؤقت المشاهدة الذكي
-                </Text>
-                <Text className="text-xs text-neutral-400">
+              <View style={styles.cardHeaderText}>
+                <Text style={styles.cardTitle}>مؤقت المشاهدة الذكي</Text>
+                <Text style={styles.cardSubtitle}>
                   إيقاف التشغيل التلقائي بعد مدة محددة
                 </Text>
               </View>
             </View>
 
-            <View className="p-4 rounded-xl bg-neutral-950 border border-neutral-800/80 mb-4">
-              <View className="flex-row items-center justify-between mb-2">
-                <Text className="text-neutral-300 font-semibold text-sm">
-                  المدة المحددة افتراضياً:
-                </Text>
-                <Text className="text-sky-400 font-bold text-sm">
-                  ساعتان (120 دقيقة)
-                </Text>
+            <View style={styles.timerPreviewBox}>
+              <View style={styles.timerRow}>
+                <Text style={styles.timerLabel}>المدة الافتراضية:</Text>
+                <Text style={styles.timerValue}>ساعتان (120 دقيقة)</Text>
               </View>
-              <Text className="text-neutral-500 text-xs leading-5">
-                عند انتهاء العداد التنازلي للمؤقت، سيتم قفل المشغل تلقائياً ولن يتمكن الطفل من
-                متابعة المشاهدة إلا بعد فتح القفل بواسطة الوالدين.
+              <Text style={styles.timerDesc}>
+                عند انتهاء العداد التنازلي للمؤقت، سيتم قفل المشغل تلقائياً لمنع الاستخدام المفرط.
               </Text>
             </View>
           </View>
 
-          {/* زر تمهيدي غير نشط يوضح الميزة القادمة */}
-          <Pressable
-            disabled
-            className="rounded-xl outline-none opacity-60"
-          >
-            <View className="py-3.5 rounded-xl flex-row justify-center items-center bg-neutral-800 border border-neutral-700">
-              <MaterialIcons name="hourglass-empty" size={20} color="#9ca3af" />
-              <Text className="ml-2 text-sm font-semibold text-neutral-400">
-                المؤقت الزمني التلقائي (قريباً)
-              </Text>
-            </View>
-          </Pressable>
+          <View style={styles.disabledBtn}>
+            <MaterialIcons name="hourglass-empty" size={20} color="#64748b" />
+            <Text style={styles.disabledBtnText}>المؤقت التلقائي (قيد التطوير)</Text>
+          </View>
         </View>
       </View>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#0f172a',
+  },
+  header: {
+    marginBottom: 28,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1e293b',
+  },
+  headerTitle: {
+    fontSize: 26,
+    fontWeight: '900',
+    color: '#ffffff',
+  },
+  headerSub: {
+    fontSize: 14,
+    color: '#94a3b8',
+    marginTop: 4,
+  },
+  gridRow: {
+    flexDirection: 'row',
+  },
+  card: {
+    flex: 1,
+    backgroundColor: '#1e293b',
+    borderWidth: 1.5,
+    borderColor: '#334155',
+    borderRadius: 20,
+    padding: 24,
+    justifyContent: 'space-between',
+  },
+  cardMargin: {
+    marginLeft: 20,
+  },
+  cardTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  cardHeaderInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  cardIconBox: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: '#0f172a',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cardIconBoxActive: {
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+  },
+  cardHeaderText: {
+    marginLeft: 14,
+  },
+  cardTitle: {
+    fontSize: 17,
+    fontWeight: 'bold',
+    color: '#ffffff',
+  },
+  cardSubtitle: {
+    fontSize: 12,
+    color: '#94a3b8',
+    marginTop: 2,
+  },
+  statusBadge: {
+    backgroundColor: '#0f172a',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  statusBadgeActive: {
+    backgroundColor: 'rgba(245, 158, 11, 0.2)',
+  },
+  statusText: {
+    color: '#94a3b8',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  statusTextActive: {
+    color: '#fbbf24',
+  },
+  descText: {
+    color: '#cbd5e1',
+    fontSize: 13,
+    lineHeight: 22,
+    marginBottom: 16,
+  },
+  inputBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0f172a',
+    borderWidth: 1.5,
+    borderColor: '#334155',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginBottom: 10,
+  },
+  inputBoxFocused: {
+    borderColor: '#38bdf8',
+    backgroundColor: '#0b1120',
+  },
+  pinInput: {
+    flex: 1,
+    color: '#ffffff',
+    fontSize: 16,
+    letterSpacing: 4,
+    marginLeft: 12,
+    outlineWidth: 0,
+  },
+  errorAlert: {
+    color: '#f87171',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  successAlert: {
+    color: '#4ade80',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  actionBtn: {
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  actionBtnWarning: {
+    backgroundColor: '#d97706',
+  },
+  actionBtnDanger: {
+    backgroundColor: '#dc2626',
+  },
+  actionBtnFocused: {
+    backgroundColor: '#ffffff',
+    transform: [{ scale: 1.05 }],
+    shadowColor: '#38bdf8',
+    shadowOpacity: 0.9,
+    shadowRadius: 14,
+  },
+  actionBtnText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: 'bold',
+    marginLeft: 8,
+  },
+  actionBtnTextFocused: {
+    color: '#000000',
+    fontWeight: '900',
+  },
+  btnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  timerPreviewBox: {
+    backgroundColor: '#0f172a',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#334155',
+    padding: 16,
+    marginTop: 18,
+  },
+  timerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  timerLabel: {
+    color: '#94a3b8',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  timerValue: {
+    color: '#38bdf8',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  timerDesc: {
+    color: '#64748b',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  disabledBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: '#0f172a',
+    borderWidth: 1,
+    borderColor: '#334155',
+    opacity: 0.7,
+  },
+  disabledBtnText: {
+    color: '#64748b',
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+});

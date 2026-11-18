@@ -6,6 +6,7 @@ import {
   Image,
   FlatList,
   ActivityIndicator,
+  StyleSheet,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -13,10 +14,6 @@ import { useMediaData } from '../../hooks/useMediaData';
 import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 import { MediaItem } from '../../types/media';
 
-/**
- * مكون بطاقة القناة المستقل لتسهيل إدارة حالة فشل تحميل الشعار (Fallback Logo)
- * وتوفير أقصى قدر من الأداء أثناء التمرير على أجهزة التلفاز.
- */
 interface ChannelCardProps {
   item: MediaItem;
   onSelect: (item: MediaItem) => void;
@@ -29,28 +26,20 @@ const ChannelCard: React.FC<ChannelCardProps> = ({ item, onSelect }) => {
   return (
     <Pressable
       onPress={() => onSelect(item)}
-      className="rounded-2xl outline-none"
+      style={({ focused }) => [
+        styles.channelCard,
+        focused && styles.channelCardFocused,
+      ]}
     >
       {({ focused }) => (
-        <View
-          className={`p-4 rounded-2xl border items-center justify-between min-h-[170px] ${
-            focused
-              ? 'bg-white border-white scale-105 shadow-2xl z-10'
-              : 'bg-neutral-900 border-neutral-800'
-          }`}
-        >
-          {/* حاوية الشعار مع صورة بديلة عند الفشل أو عدم التوفر */}
-          <View
-            className={`w-20 h-20 rounded-xl justify-center items-center overflow-hidden mb-3 ${
-              focused ? 'bg-neutral-100' : 'bg-neutral-950'
-            }`}
-          >
+        <View style={styles.cardContent}>
+          <View style={[styles.logoWrapper, focused && styles.logoWrapperFocused]}>
             {hasValidLogo ? (
               <Image
                 source={{ uri: item.logo }}
                 onError={() => setImageError(true)}
                 resizeMode="contain"
-                className="w-16 h-16"
+                style={styles.logoImage}
               />
             ) : (
               <MaterialIcons
@@ -61,12 +50,9 @@ const ChannelCard: React.FC<ChannelCardProps> = ({ item, onSelect }) => {
             )}
           </View>
 
-          {/* اسم القناة */}
           <Text
             numberOfLines={2}
-            className={`text-sm text-center font-bold leading-5 ${
-              focused ? 'text-black' : 'text-white'
-            }`}
+            style={[styles.channelTitle, focused && styles.channelTitleFocused]}
           >
             {item.name}
           </Text>
@@ -76,15 +62,10 @@ const ChannelCard: React.FC<ChannelCardProps> = ({ item, onSelect }) => {
   );
 };
 
-/**
- * شاشة استعراض القنوات التابعة لتصنيف محدد (Category Channels Grid).
- * تدعم التنقل السلس بشبكة من 4 أعمدة مع زر رجوع متوافق مع ريموت التلفاز.
- */
 export default function CategoryChannelsScreen(): React.JSX.Element {
   const router = useRouter();
   const params = useLocalSearchParams<{ name: string }>();
 
-  // استخراج وفك ترميز اسم التصنيف بأمان
   const categoryName = useMemo(() => {
     if (!params.name) return '';
     return typeof params.name === 'string'
@@ -96,7 +77,6 @@ export default function CategoryChannelsScreen(): React.JSX.Element {
 
   const { channels, isLoading } = useMediaData();
 
-  // تصفية القنوات التابعة لهذا التصنيف
   const filteredChannels = useMemo(() => {
     if (!channels || channels.length === 0 || !categoryName) {
       return [];
@@ -106,7 +86,6 @@ export default function CategoryChannelsScreen(): React.JSX.Element {
     );
   }, [channels, categoryName]);
 
-  // دعم أزرار الرجوع بريموت التلفاز
   useTVRemoteNavigation({
     onBack: () => router.back(),
   });
@@ -119,79 +98,56 @@ export default function CategoryChannelsScreen(): React.JSX.Element {
   };
 
   return (
-    <View className="flex-1">
-      {/* الشريط العلوي مع زر الرجوع ومعلومات التصنيف */}
-      <View className="flex-row items-center justify-between mb-6 pb-4 border-b border-neutral-800">
-        <View className="flex-row items-center">
-          {/* زر الرجوع للوراء مع التركيز التلقائي لريموت التلفاز */}
-          <Pressable
-            hasTVPreferredFocus
-            onPress={() => router.back()}
-            className="rounded-xl outline-none mr-4"
-          >
-            {({ focused }) => (
-              <View
-                className={`flex-row items-center px-4 py-2.5 rounded-xl ${
-                  focused ? 'bg-white scale-105 shadow-md' : 'bg-neutral-800'
-                }`}
-              >
-                <MaterialIcons
-                  name="arrow-back"
-                  size={22}
-                  color={focused ? '#000000' : '#ffffff'}
-                />
-                <Text
-                  className={`ml-2 text-sm font-semibold ${
-                    focused ? 'text-black font-bold' : 'text-white'
-                  }`}
-                >
-                  رجوع
-                </Text>
-              </View>
-            )}
-          </Pressable>
+    <View style={styles.container}>
+      {/* الشريط العلوي */}
+      <View style={styles.topBar}>
+        <Pressable
+          hasTVPreferredFocus
+          onPress={() => router.back()}
+          style={({ focused }) => [styles.backBtn, focused && styles.backBtnFocused]}
+        >
+          {({ focused }) => (
+            <View style={styles.btnRow}>
+              <MaterialIcons
+                name="arrow-back"
+                size={22}
+                color={focused ? '#000000' : '#ffffff'}
+              />
+              <Text style={[styles.backBtnText, focused && styles.backBtnTextFocused]}>
+                رجوع
+              </Text>
+            </View>
+          )}
+        </Pressable>
 
-          {/* تفاصيل التصنيف الحالي */}
-          <View>
-            <Text className="text-2xl font-black text-white">
-              {categoryName || 'التصنيف'}
-            </Text>
-            <Text className="text-neutral-400 text-sm mt-0.5">
-              عدد القنوات المتاحة: {filteredChannels.length}
-            </Text>
-          </View>
+        <View style={styles.titleInfo}>
+          <Text style={styles.categoryTitle}>{categoryName || 'التصنيف'}</Text>
+          <Text style={styles.channelCount}>
+            {filteredChannels.length} {categoryName.includes('أفلام') ? 'فيلم متاح' : 'قناة متاحة'}
+          </Text>
         </View>
       </View>
 
-      {/* حالة التحميل إذا لم تنتهِ بعد */}
+      {/* المحتوى */}
       {isLoading ? (
-        <View className="flex-1 justify-center items-center">
+        <View style={styles.centerBox}>
           <ActivityIndicator size="large" color="#38bdf8" />
-          <Text className="text-white text-lg font-bold mt-4">
-            جاري استخراج قنوات التصنيف...
-          </Text>
+          <Text style={styles.loadingText}>جاري استخراج القنوات...</Text>
         </View>
       ) : filteredChannels.length === 0 ? (
-        /* حالة عدم وجود قنوات في هذا التصنيف */
-        <View className="flex-1 justify-center items-center">
-          <MaterialIcons name="tv-off" size={64} color="#525252" />
-          <Text className="text-white text-xl font-bold mt-4">
-            لا توجد قنوات متاحة في هذا التصنيف
-          </Text>
-          <Text className="text-neutral-500 text-sm mt-2">
-            يرجى الرجوع واختيار تصنيف آخر.
-          </Text>
+        <View style={styles.centerBox}>
+          <MaterialIcons name="tv-off" size={64} color="#64748b" />
+          <Text style={styles.emptyTitle}>لا توجد قنوات متاحة في هذا التصنيف</Text>
         </View>
       ) : (
-        /* شبكة القنوات المكونة من 4 أعمدة والمتوافقة مع ريموت التلفاز */
         <FlatList<MediaItem>
           data={filteredChannels}
           keyExtractor={(item) => item.id}
           numColumns={4}
-          contentContainerStyle={{ paddingBottom: 32 }}
+          contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           renderItem={({ item }) => (
-            <View className="flex-1 p-2">
+            <View style={styles.col}>
               <ChannelCard item={item} onSelect={handleChannelPress} />
             </View>
           )}
@@ -200,3 +156,137 @@ export default function CategoryChannelsScreen(): React.JSX.Element {
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#0f172a',
+  },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 24,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1e293b',
+  },
+  backBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 12,
+    backgroundColor: '#1e293b',
+    borderWidth: 1.5,
+    borderColor: '#334155',
+    marginRight: 20,
+  },
+  backBtnFocused: {
+    backgroundColor: '#ffffff',
+    borderColor: '#ffffff',
+    transform: [{ scale: 1.08 }],
+    shadowColor: '#38bdf8',
+    shadowOpacity: 0.8,
+    shadowRadius: 10,
+  },
+  btnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  backBtnText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+    marginLeft: 6,
+  },
+  backBtnTextFocused: {
+    color: '#000000',
+  },
+  titleInfo: {
+    justifyContent: 'center',
+  },
+  categoryTitle: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: '#ffffff',
+  },
+  channelCount: {
+    fontSize: 13,
+    color: '#94a3b8',
+    marginTop: 2,
+  },
+  listContent: {
+    paddingBottom: 40,
+  },
+  col: {
+    flex: 1,
+    padding: 8,
+  },
+  channelCard: {
+    backgroundColor: '#1e293b',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#334155',
+    padding: 16,
+    minHeight: 160,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  channelCardFocused: {
+    backgroundColor: '#ffffff',
+    borderColor: '#ffffff',
+    transform: [{ scale: 1.06 }],
+    shadowColor: '#38bdf8',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.9,
+    shadowRadius: 14,
+    elevation: 8,
+  },
+  cardContent: {
+    alignItems: 'center',
+    width: '100%',
+  },
+  logoWrapper: {
+    width: 72,
+    height: 72,
+    borderRadius: 14,
+    backgroundColor: '#0f172a',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+    overflow: 'hidden',
+  },
+  logoWrapperFocused: {
+    backgroundColor: '#f1f5f9',
+  },
+  logoImage: {
+    width: 60,
+    height: 60,
+  },
+  channelTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#f8fafc',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  channelTitleFocused: {
+    color: '#000000',
+    fontWeight: '800',
+  },
+  centerBox: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: '#ffffff',
+    fontSize: 16,
+    marginTop: 16,
+    fontWeight: '600',
+  },
+  emptyTitle: {
+    color: '#94a3b8',
+    fontSize: 18,
+    marginTop: 16,
+    fontWeight: '700',
+  },
+});
