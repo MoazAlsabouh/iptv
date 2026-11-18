@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "iptv-app",
+    "slug": "iptv-app",
+    "version": "1.0.0",
+    "orientation": "landscape",
+    "scheme": "iptv-app",
+    "userInterfaceStyle": "dark",
+    "plugins": [
+      "expo-router"
+    ],
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
