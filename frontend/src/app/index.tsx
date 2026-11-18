@@ -46,7 +46,7 @@ export default function DashboardScreen(): React.JSX.Element {
     return (
       <View style={styles.centerContainer}>
         <ActivityIndicator size="large" color="#38bdf8" />
-        <Text style={styles.loadingTitle}>جاري تحميل وتجميع القنوات والأفلام...</Text>
+        <Text style={styles.loadingTitle}>جاري تحميل وتجميع القنوات التلفزيونية...</Text>
         <Text style={styles.loadingSub}>جاري الاتصال بالخادم لجلب القنوات...</Text>
       </View>
     );
@@ -90,11 +90,11 @@ export default function DashboardScreen(): React.JSX.Element {
       {/* شريط العنوان وشريط التبويب العلوي */}
       <View style={styles.headerBar}>
         <View>
-          <Text style={styles.headerTitle}>لوحة التحكم والتصفح</Text>
+          <Text style={styles.headerTitle}>القنوات التلفزيونية</Text>
           <Text style={styles.headerSubtitle}>
             {activeTab === 'category'
-              ? `إجمالي الأقسام: ${categories.length} • إجمالي المحتوى: ${totalChannels} قناة وفيلم`
-              : `إجمالي الدول: ${countries.length} • إجمالي المحتوى: ${totalChannels} قناة وفيلم`}
+              ? `إجمالي الأقسام: ${categories.length} • إجمالي القنوات: ${totalChannels} قناة`
+              : `إجمالي الدول: ${countries.length} • إجمالي القنوات: ${totalChannels} قناة`}
           </Text>
         </View>
 

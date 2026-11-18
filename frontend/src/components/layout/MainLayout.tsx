@@ -12,7 +12,8 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: 'dashboard', title: 'لوحة التحكم', route: '/', icon: 'dashboard' },
+  { id: 'channels', title: 'القنوات التلفزيونية', route: '/', icon: 'live-tv' },
+  { id: 'movies', title: 'الأفلام والمسلسلات', route: '/movies', icon: 'movie' },
   { id: 'favorites', title: 'المفضلة', route: '/favorites', icon: 'star' },
   { id: 'settings', title: 'الإعدادات', route: '/settings', icon: 'settings' },
 ];
@@ -57,7 +58,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           {/* أزرار التنقل مع إطار تركيز مضيء للريموت */}
           <View style={styles.navContainer}>
             {NAV_ITEMS.map((item, index) => {
-              const isActive = currentPath === item.route;
+              const isActive =
+                item.route === '/'
+                  ? currentPath === '/' || currentPath.startsWith('/category')
+                  : currentPath === item.route || currentPath.startsWith(item.route);
 
               return (
                 <Pressable
