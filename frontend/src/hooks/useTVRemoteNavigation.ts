@@ -1,5 +1,7 @@
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
+import { useRouter } from 'expo-router';
+import { safeGoBack } from '../utils/navigation';
 
 interface TVKeyHandlers {
   onEnter?: () => void;
@@ -18,6 +20,8 @@ interface TVKeyHandlers {
  * @param handlers كائن يحتوي على دوال الاستجابة للأزرار المختلفة
  */
 export function useTVRemoteNavigation(handlers: TVKeyHandlers) {
+  const router = useRouter();
+
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') {
       return;
@@ -38,6 +42,8 @@ export function useTVRemoteNavigation(handlers: TVKeyHandlers) {
         case 'BrowserBack':
           if (handlers.onBack) {
             handlers.onBack();
+          } else {
+            safeGoBack(router);
           }
           break;
         case 'ArrowUp':
@@ -69,5 +75,5 @@ export function useTVRemoteNavigation(handlers: TVKeyHandlers) {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handlers]);
+  }, [handlers, router]);
 }

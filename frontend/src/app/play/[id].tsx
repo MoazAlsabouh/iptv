@@ -70,8 +70,16 @@ export default function PlayerScreen(): React.JSX.Element {
     return () => clearTimeout(timer);
   }, [showOverlay]);
 
+  const handleGoBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/');
+    }
+  };
+
   useTVRemoteNavigation({
-    onBack: () => router.back(),
+    onBack: handleGoBack,
     onAnyKey: resetOverlayTimer,
   });
 
@@ -121,7 +129,7 @@ export default function PlayerScreen(): React.JSX.Element {
             {/* زر الخروج */}
             <Pressable
               hasTVPreferredFocus
-              onPress={() => router.back()}
+              onPress={handleGoBack}
               style={({ focused }) => [
                 styles.overlayBtn,
                 focused && styles.overlayBtnFocused,
@@ -229,7 +237,7 @@ export default function PlayerScreen(): React.JSX.Element {
             </Pressable>
 
             <Pressable
-              onPress={() => router.back()}
+              onPress={handleGoBack}
               style={({ focused }) => [styles.backToListBtn, focused && styles.overlayBtnFocused]}
             >
               {({ focused }) => (

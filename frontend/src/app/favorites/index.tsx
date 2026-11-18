@@ -80,8 +80,16 @@ export default function FavoritesScreen(): React.JSX.Element {
     return channels.filter((ch) => favSet.has(ch.id));
   }, [channels, favoriteIds]);
 
+  const handleGoBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/');
+    }
+  };
+
   useTVRemoteNavigation({
-    onBack: () => router.back(),
+    onBack: handleGoBack,
   });
 
   const handleChannelPress = (channel: MediaItem) => {

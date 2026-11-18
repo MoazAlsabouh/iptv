@@ -94,8 +94,16 @@ export default function CategoryChannelsScreen(): React.JSX.Element {
     );
   }, [channels, categoryName, isCountryFilter]);
 
+  const handleGoBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/');
+    }
+  };
+
   useTVRemoteNavigation({
-    onBack: () => router.back(),
+    onBack: handleGoBack,
   });
 
   const handleChannelPress = (channel: MediaItem) => {
@@ -111,7 +119,7 @@ export default function CategoryChannelsScreen(): React.JSX.Element {
       <View style={styles.topBar}>
         <Pressable
           hasTVPreferredFocus
-          onPress={() => router.back()}
+          onPress={handleGoBack}
           style={({ focused }) => [styles.backBtn, focused && styles.backBtnFocused]}
         >
           {({ focused }) => (
