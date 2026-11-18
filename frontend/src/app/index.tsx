@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -13,12 +13,16 @@ import { useAppStore } from '../store/useAppStore';
 import { useMediaData, CategoryGroup } from '../hooks/useMediaData';
 import { DEFAULT_BACKEND_M3U_URL } from '../utils/m3uParser';
 
+type TabType = 'category' | 'country';
+
 /**
  * شاشة لوحة التحكم والتصنيفات المركزية بتصميم تلفاز داكن (#0f172a) واستجابة كاملة للريموت.
+ * تدعم التبويب بين "حسب القسم" و "حسب الدولة".
  */
 export default function DashboardScreen(): React.JSX.Element {
   const router = useRouter();
   const { playlistUrl, setPlaylistUrl } = useAppStore();
+  const [activeTab, setActiveTab] = useState<TabType>('category');
 
   // التأكد من توجيه التطبيق دائماً للرابط المركزي السحابي الموحد
   useEffect(() => {
@@ -27,7 +31,7 @@ export default function DashboardScreen(): React.JSX.Element {
     }
   }, [playlistUrl, setPlaylistUrl]);
 
-  const { categories, totalChannels, isLoading, isError, error, refetch } =
+  const { categories, countries, totalChannels, isLoading, isError, error, refetch } =
     useMediaData();
 
   // 1. حالة التحميل
@@ -71,56 +75,147 @@ export default function DashboardScreen(): React.JSX.Element {
     );
   }
 
-  // 3. حالة النجاح: شبكة التصنيفات
+  const currentList = activeTab === 'category' ? categories : countries;
+
+  // 3. حالة النجاح: شبكة التصنيفات / الدول
   return (
     <View style={styles.container}>
-      {/* شريط الإحصائيات العلوي */}
+      {/* شريط العنوان وشريط التبويب العلوي */}
       <View style={styles.headerBar}>
         <View>
-          <Text style={styles.headerTitle}>لوحة التحكم والتصنيفات</Text>
+          <Text style={styles.headerTitle}>لوحة التحكم والتصفح</Text>
           <Text style={styles.headerSubtitle}>
-            إجمالي التصنيفات: {categories.length} • إجمالي المحتوى: {totalChannels} قناة وفيلم
+            {activeTab === 'category'
+              ? `إجمالي الأقسام: ${categories.length} • إجمالي المحتوى: ${totalChannels} قناة وفيلم`
+              : `إجمالي الدول: ${countries.length} • إجمالي المحتوى: ${totalChannels} قناة وفيلم`}
           </Text>
+        </View>
+
+        {/* أزرار التبويب: حسب القسم وحسب الدولة */}
+        <View style={styles.tabContainer}>
+          <Pressable
+            onPress={() => setActiveTab('category')}
+            style={({ focused }) => [
+              styles.tabBtn,
+              activeTab === 'category' && styles.tabBtnActive,
+              focused && styles.tabBtnFocused,
+            ]}
+          >
+            {({ focused }) => (
+              <View style={styles.tabContent}>
+                <MaterialIcons
+                  name="category"
+                  size={20}
+                  color={
+                    focused
+                      ? '#000000'
+                      : activeTab === 'category'
+                      ? '#ffffff'
+                      : '#94a3b8'
+                  }
+                />
+                <Text
+                  style={[
+                    styles.tabText,
+                    activeTab === 'category' && styles.tabTextActive,
+                    focused && styles.tabTextFocused,
+                  ]}
+                >
+                  حسب القسم
+                </Text>
+              </View>
+            )}
+          </Pressable>
+
+          <Pressable
+            onPress={() => setActiveTab('country')}
+            style={({ focused }) => [
+              styles.tabBtn,
+              activeTab === 'country' && styles.tabBtnActive,
+              focused && styles.tabBtnFocused,
+            ]}
+          >
+            {({ focused }) => (
+              <View style={styles.tabContent}>
+                <MaterialIcons
+                  name="public"
+                  size={20}
+                  color={
+                    focused
+                      ? '#000000'
+                      : activeTab === 'country'
+                      ? '#ffffff'
+                      : '#94a3b8'
+                  }
+                />
+                <Text
+                  style={[
+                    styles.tabText,
+                    activeTab === 'country' && styles.tabTextActive,
+                    focused && styles.tabTextFocused,
+                  ]}
+                >
+                  حسب الدولة
+                </Text>
+              </View>
+            )}
+          </Pressable>
         </View>
       </View>
 
-      {/* شبكة التصنيفات المتجاوبة */}
+      {/* شبكة البطاقات المتجاوبة */}
       <FlatList<CategoryGroup>
-        data={categories}
-        keyExtractor={(item) => item.name}
+        data={currentList}
+        keyExtractor={(item) => `${activeTab}-${item.name}`}
         numColumns={3}
         contentContainerStyle={styles.gridContainer}
         showsVerticalScrollIndicator={false}
-        renderItem={({ item, index }) => (
-          <View style={styles.gridItem}>
-            <Pressable
-              hasTVPreferredFocus={index === 0}
-              onPress={() => {
-                router.push({
-                  pathname: '/category/[name]',
-                  params: { name: item.name },
-                });
-              }}
-              style={({ focused }) => [
-                styles.categoryCard,
-                focused && styles.categoryCardFocused,
-              ]}
-            >
-              {({ focused }) => {
-                const isMovieCategory = item.name.includes('أفلام');
-                return (
+        renderItem={({ item, index }) => {
+          const isMovie =
+            item.name.includes('أفلام') || item.name === 'أفلام عالمية';
+
+          let iconName: keyof typeof MaterialIcons.glyphMap = 'live-tv';
+          if (isMovie) {
+            iconName = 'movie';
+          } else if (activeTab === 'country') {
+            iconName = 'flag';
+          }
+
+          return (
+            <View style={styles.gridItem}>
+              <Pressable
+                hasTVPreferredFocus={index === 0}
+                onPress={() => {
+                  if (activeTab === 'country') {
+                    router.push({
+                      pathname: '/category/[name]',
+                      params: { name: item.name, filterBy: 'country' },
+                    });
+                  } else {
+                    router.push({
+                      pathname: '/category/[name]',
+                      params: { name: item.name },
+                    });
+                  }
+                }}
+                style={({ focused }) => [
+                  styles.categoryCard,
+                  focused && styles.categoryCardFocused,
+                ]}
+              >
+                {({ focused }) => (
                   <View style={styles.cardInner}>
                     <View style={styles.cardHeader}>
                       <View style={[styles.iconCircle, focused && styles.iconCircleFocused]}>
                         <MaterialIcons
-                          name={isMovieCategory ? 'movie' : 'live-tv'}
+                          name={iconName}
                           size={28}
                           color={focused ? '#0284c7' : '#38bdf8'}
                         />
                       </View>
                       <View style={[styles.countBadge, focused && styles.countBadgeFocused]}>
                         <Text style={[styles.countText, focused && styles.countTextFocused]}>
-                          {item.count} {isMovieCategory ? 'فيلم' : 'قناة'}
+                          {item.count} {isMovie ? 'فيلم' : 'قناة'}
                         </Text>
                       </View>
                     </View>
@@ -137,11 +232,11 @@ export default function DashboardScreen(): React.JSX.Element {
                       </Text>
                     </View>
                   </View>
-                );
-              }}
-            </Pressable>
-          </View>
-        )}
+                )}
+              </Pressable>
+            </View>
+          );
+        }}
       />
     </View>
   );
@@ -167,6 +262,8 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#1e293b',
+    flexWrap: 'wrap',
+    gap: 16,
   },
   headerTitle: {
     fontSize: 26,
@@ -177,6 +274,49 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#94a3b8',
     marginTop: 4,
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#0b1120',
+    borderRadius: 14,
+    padding: 5,
+    borderWidth: 1.5,
+    borderColor: '#1e293b',
+    gap: 8,
+  },
+  tabBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 22,
+    borderRadius: 10,
+  },
+  tabBtnActive: {
+    backgroundColor: '#0284c7',
+  },
+  tabBtnFocused: {
+    backgroundColor: '#ffffff',
+    transform: [{ scale: 1.05 }],
+    shadowColor: '#38bdf8',
+    shadowOpacity: 0.9,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  tabContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  tabText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#94a3b8',
+  },
+  tabTextActive: {
+    color: '#ffffff',
+    fontWeight: '800',
+  },
+  tabTextFocused: {
+    color: '#000000',
+    fontWeight: '900',
   },
   gridContainer: {
     paddingBottom: 40,

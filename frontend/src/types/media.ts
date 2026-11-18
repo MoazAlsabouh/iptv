@@ -5,6 +5,7 @@ export interface MediaItem {
   id: string;
   name: string;
   groupTitle: string;
+  country?: string;
   logo: string;
   url: string;
 }

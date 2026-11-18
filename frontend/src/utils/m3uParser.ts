@@ -6,7 +6,7 @@ import { MediaItem } from '../types/media';
 export const DEFAULT_BACKEND_M3U_URL = 'https://iptv-backend.moaznsm.workers.dev';
 
 /**
- * دالة مساعدة سريعة لاستخراج خصائص الوسائط (مثل tvg-logo و group-title)
+ * دالة مساعدة سريعة لاستخراج خصائص الوسائط (مثل tvg-logo و group-title و tvg-country)
  * تم استخدام indexOf و substring لتفادي عبء Regular Expressions على معالجات التلفاز الضعيفة.
  */
 function extractAttribute(line: string, attrName: string): string {
@@ -82,12 +82,14 @@ export function parseM3U(content: string): MediaItem[] {
     if (line.startsWith('#EXTINF:')) {
       const logo = extractAttribute(line, 'tvg-logo');
       const groupTitle = extractAttribute(line, 'group-title') || 'General';
+      const country = extractAttribute(line, 'tvg-country');
       const name = extractChannelName(line);
 
       currentItem = {
         id: String(counter++),
         name: name || 'Unknown Channel',
         groupTitle,
+        country: country || undefined,
         logo,
       };
     } else if (!line.startsWith('#') && currentItem) {
@@ -97,6 +99,7 @@ export function parseM3U(content: string): MediaItem[] {
           id: currentItem.id || String(counter++),
           name: currentItem.name || 'Unknown Channel',
           groupTitle: currentItem.groupTitle || 'General',
+          country: currentItem.country,
           logo: currentItem.logo || '',
           url: line,
         });
@@ -135,7 +138,12 @@ export async function fetchAndParseM3U(
       ? `${proxyPrefix}${encodeURIComponent(cleanUrl)}`
       : cleanUrl;
 
-    const response = await fetch(finalUrl);
+    const response = await fetch(finalUrl, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+      },
+    });
 
     if (!response.ok) {
       throw new Error(`فشل جلب القائمة من المصدر. كود الاستجابة: ${response.status}`);

@@ -64,7 +64,7 @@ const ChannelCard: React.FC<ChannelCardProps> = ({ item, onSelect }) => {
 
 export default function CategoryChannelsScreen(): React.JSX.Element {
   const router = useRouter();
-  const params = useLocalSearchParams<{ name: string }>();
+  const params = useLocalSearchParams<{ name: string; filterBy?: string }>();
 
   const categoryName = useMemo(() => {
     if (!params.name) return '';
@@ -75,16 +75,24 @@ export default function CategoryChannelsScreen(): React.JSX.Element {
       : '';
   }, [params.name]);
 
+  const filterBy = params.filterBy || 'category';
+  const isCountryFilter = filterBy === 'country';
+
   const { channels, isLoading } = useMediaData();
 
   const filteredChannels = useMemo(() => {
     if (!channels || channels.length === 0 || !categoryName) {
       return [];
     }
+    if (isCountryFilter) {
+      return channels.filter(
+        (ch) => (ch.country ? ch.country.trim() : 'قنوات عامة') === categoryName
+      );
+    }
     return channels.filter(
-      (ch) => (ch.groupTitle ? ch.groupTitle.trim() : 'General') === categoryName
+      (ch) => (ch.groupTitle ? ch.groupTitle.trim() : 'قنوات عامة ومنوعة') === categoryName
     );
-  }, [channels, categoryName]);
+  }, [channels, categoryName, isCountryFilter]);
 
   useTVRemoteNavigation({
     onBack: () => router.back(),
@@ -121,7 +129,9 @@ export default function CategoryChannelsScreen(): React.JSX.Element {
         </Pressable>
 
         <View style={styles.titleInfo}>
-          <Text style={styles.categoryTitle}>{categoryName || 'التصنيف'}</Text>
+          <Text style={styles.categoryTitle}>
+            {isCountryFilter ? `قنوات دولة: ${categoryName}` : categoryName || 'التصنيف'}
+          </Text>
           <Text style={styles.channelCount}>
             {filteredChannels.length} {categoryName.includes('أفلام') ? 'فيلم متاح' : 'قناة متاحة'}
           </Text>
