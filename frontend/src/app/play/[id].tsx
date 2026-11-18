@@ -5,25 +5,36 @@ import {
   Pressable,
   ActivityIndicator,
   StyleSheet,
+  ScrollView,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useKeepAwake } from 'expo-keep-awake';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../../store/useAppStore';
-import { TVPlayer } from '../../components/player/TVPlayer';
+import { useMediaData } from '../../hooks/useMediaData';
+import { TVPlayer, HlsLevelOption } from '../../components/player/TVPlayer';
 import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 import { ChannelLogo } from '../../components/ChannelLogo';
+import { StreamSource } from '../../types/media';
 
 /**
  * شاشة مشغل الفيديو بتصميم ملء الشاشة الداكن والتحكم الكامل بالريموت كنترول.
+ * تدعم التبديل السلس بين مصادر البث وجودات HLS.
  */
 export default function PlayerScreen(): React.JSX.Element {
   useKeepAwake();
 
   const router = useRouter();
-  const params = useLocalSearchParams<{ id: string; url: string; title?: string; logo?: string }>();
+  const params = useLocalSearchParams<{
+    id: string;
+    url: string;
+    title?: string;
+    logo?: string;
+    sources?: string;
+  }>();
 
   const { favoriteIds, toggleFavorite } = useAppStore();
+  const { channels } = useMediaData();
 
   const channelId = useMemo(() => {
     if (!params.id) return '';
@@ -34,7 +45,7 @@ export default function PlayerScreen(): React.JSX.Element {
     return Boolean(channelId && favoriteIds.includes(channelId));
   }, [channelId, favoriteIds]);
 
-  const streamUrl = useMemo(() => {
+  const rawStreamUrl = useMemo(() => {
     if (!params.url) return '';
     return typeof params.url === 'string'
       ? decodeURIComponent(params.url)
@@ -61,6 +72,36 @@ export default function PlayerScreen(): React.JSX.Element {
       : '';
   }, [params.logo]);
 
+  // مصادر البث المتعددة للقناة
+  const channelSources: StreamSource[] = useMemo(() => {
+    if (params.sources) {
+      try {
+        const raw = typeof params.sources === 'string' ? params.sources : params.sources[0];
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      } catch {
+        // تجاهل
+      }
+    }
+    const found = channels.find((c) => c.id === channelId);
+    return found?.sources || [];
+  }, [params.sources, channels, channelId]);
+
+  const [activeSourceIndex, setActiveSourceIndex] = useState<number>(0);
+  const [hlsLevels, setHlsLevels] = useState<HlsLevelOption[]>([]);
+  const [selectedHlsLevel, setSelectedHlsLevel] = useState<number>(-1);
+  const [showQualityModal, setShowQualityModal] = useState<boolean>(false);
+
+  // رابط البث الفعلي بناءً على المصدر المختار
+  const currentStreamUrl = useMemo(() => {
+    if (channelSources.length > 0 && channelSources[activeSourceIndex]) {
+      return channelSources[activeSourceIndex].url;
+    }
+    return rawStreamUrl;
+  }, [channelSources, activeSourceIndex, rawStreamUrl]);
+
   const [isBuffering, setIsBuffering] = useState<boolean>(true);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState<number>(0);
@@ -71,14 +112,14 @@ export default function PlayerScreen(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
-    if (!showOverlay) return;
+    if (!showOverlay || showQualityModal) return;
 
     const timer = setTimeout(() => {
       setShowOverlay(false);
     }, 5000);
 
     return () => clearTimeout(timer);
-  }, [showOverlay]);
+  }, [showOverlay, showQualityModal]);
 
   const handleGoBack = () => {
     if (router.canGoBack()) {
@@ -89,7 +130,13 @@ export default function PlayerScreen(): React.JSX.Element {
   };
 
   useTVRemoteNavigation({
-    onBack: handleGoBack,
+    onBack: () => {
+      if (showQualityModal) {
+        setShowQualityModal(false);
+      } else {
+        handleGoBack();
+      }
+    },
     onAnyKey: resetOverlayTimer,
   });
 
@@ -100,13 +147,17 @@ export default function PlayerScreen(): React.JSX.Element {
     resetOverlayTimer();
   };
 
+  const hasMultiQuality = channelSources.length > 1 || hlsLevels.length > 1;
+
   return (
     <View style={styles.rootContainer}>
       {/* 1. مشغل الفيديو HLS */}
-      {streamUrl ? (
+      {currentStreamUrl ? (
         <TVPlayer
-          key={`tv-player-${retryKey}`}
-          streamUrl={streamUrl}
+          key={`tv-player-${retryKey}-${activeSourceIndex}`}
+          streamUrl={currentStreamUrl}
+          selectedLevel={selectedHlsLevel}
+          onLevelsLoaded={(levels) => setHlsLevels(levels)}
           style={StyleSheet.absoluteFillObject}
           onBuffering={(buffering) => setIsBuffering(buffering)}
           onError={(errorMsg) => {
@@ -122,7 +173,7 @@ export default function PlayerScreen(): React.JSX.Element {
       )}
 
       {/* 2. طبقة حساسة للنقر لاستعادة الواجهة عند اختفائها */}
-      {!showOverlay && !playbackError && (
+      {!showOverlay && !playbackError && !showQualityModal && (
         <Pressable
           hasTVPreferredFocus
           onPress={resetOverlayTimer}
@@ -138,7 +189,7 @@ export default function PlayerScreen(): React.JSX.Element {
           <View style={styles.controlsRow}>
             {/* زر الخروج */}
             <Pressable
-              hasTVPreferredFocus
+              hasTVPreferredFocus={!showQualityModal}
               onPress={handleGoBack}
               style={({ focused }) => [
                 styles.overlayBtn,
@@ -172,6 +223,33 @@ export default function PlayerScreen(): React.JSX.Element {
                   {channelTitle}
                 </Text>
               </View>
+            ) : null}
+
+            {/* زر الجودة والمصادر */}
+            {hasMultiQuality ? (
+              <Pressable
+                onPress={() => {
+                  setShowQualityModal(true);
+                  resetOverlayTimer();
+                }}
+                style={({ focused }) => [
+                  styles.qualityBtn,
+                  focused && styles.overlayBtnFocused,
+                ]}
+              >
+                {({ focused }) => (
+                  <View style={styles.btnRow}>
+                    <MaterialIcons
+                      name="tune"
+                      size={20}
+                      color={focused ? '#000000' : '#38bdf8'}
+                    />
+                    <Text style={[styles.qualityBtnText, focused && styles.overlayBtnTextFocused]}>
+                      الجودة / المصادر
+                    </Text>
+                  </View>
+                )}
+              </Pressable>
             ) : null}
 
             {/* زر المفضلة */}
@@ -221,15 +299,152 @@ export default function PlayerScreen(): React.JSX.Element {
         </View>
       )}
 
-      {/* 4. مؤشر التحميل المؤقت */}
-      {isBuffering && !playbackError && streamUrl ? (
+      {/* 4. قائمة التبديل بين الجودات والمصادر (Modal / Overlay) */}
+      {showQualityModal && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalTitleRow}>
+                <MaterialIcons name="settings-input-antenna" size={24} color="#38bdf8" />
+                <Text style={styles.modalTitle}>إعدادات البث والجودة</Text>
+              </View>
+              <Text style={styles.modalSub}>{channelTitle}</Text>
+            </View>
+
+            <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
+              {/* قسم 1: مصادر وروابط البث المختلفة للقناة */}
+              {channelSources.length > 1 && (
+                <View style={styles.modalSection}>
+                  <Text style={styles.sectionHeader}>مصادر البث المتاحة:</Text>
+                  <View style={styles.optionsWrap}>
+                    {channelSources.map((src, idx) => {
+                      const isCurrentSource = idx === activeSourceIndex;
+                      return (
+                        <Pressable
+                          key={`source-${idx}`}
+                          hasTVPreferredFocus={isCurrentSource}
+                          onPress={() => {
+                            setActiveSourceIndex(idx);
+                            setIsBuffering(true);
+                            setPlaybackError(null);
+                          }}
+                          style={({ focused }) => [
+                            styles.optionChip,
+                            isCurrentSource && styles.optionChipActive,
+                            focused && styles.optionChipFocused,
+                          ]}
+                        >
+                          {({ focused }) => (
+                            <View style={styles.optionContent}>
+                              {isCurrentSource && (
+                                <MaterialIcons
+                                  name="check"
+                                  size={18}
+                                  color={focused ? '#000000' : '#38bdf8'}
+                                />
+                              )}
+                              <Text
+                                style={[
+                                  styles.optionText,
+                                  isCurrentSource && styles.optionTextActive,
+                                  focused && styles.optionTextFocused,
+                                ]}
+                              >
+                                {src.label}
+                              </Text>
+                            </View>
+                          )}
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
+
+              {/* قسم 2: مستويات جودة HLS المتوفرة بالبث المباشر */}
+              {hlsLevels.length > 1 && (
+                <View style={styles.modalSection}>
+                  <Text style={styles.sectionHeader}>جودة البث المباشر (HLS Levels):</Text>
+                  <View style={styles.optionsWrap}>
+                    {hlsLevels.map((lvl) => {
+                      const isCurrentLevel = lvl.id === selectedHlsLevel;
+                      return (
+                        <Pressable
+                          key={`hls-lvl-${lvl.id}`}
+                          onPress={() => setSelectedHlsLevel(lvl.id)}
+                          style={({ focused }) => [
+                            styles.optionChip,
+                            isCurrentLevel && styles.optionChipActive,
+                            focused && styles.optionChipFocused,
+                          ]}
+                        >
+                          {({ focused }) => (
+                            <View style={styles.optionContent}>
+                              {isCurrentLevel && (
+                                <MaterialIcons
+                                  name="check"
+                                  size={18}
+                                  color={focused ? '#000000' : '#38bdf8'}
+                                />
+                              )}
+                              <Text
+                                style={[
+                                  styles.optionText,
+                                  isCurrentLevel && styles.optionTextActive,
+                                  focused && styles.optionTextFocused,
+                                ]}
+                              >
+                                {lvl.label}
+                              </Text>
+                            </View>
+                          )}
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
+            </ScrollView>
+
+            {/* زر إغلاق القائمة */}
+            <Pressable
+              onPress={() => setShowQualityModal(false)}
+              style={({ focused }) => [
+                styles.modalCloseBtn,
+                focused && styles.modalCloseBtnFocused,
+              ]}
+            >
+              {({ focused }) => (
+                <View style={styles.btnRow}>
+                  <MaterialIcons
+                    name="check-circle"
+                    size={20}
+                    color={focused ? '#000000' : '#ffffff'}
+                  />
+                  <Text
+                    style={[
+                      styles.modalCloseBtnText,
+                      focused && styles.modalCloseBtnTextFocused,
+                    ]}
+                  >
+                    حفظ ومتابعة المشاهدة
+                  </Text>
+                </View>
+              )}
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      {/* 5. مؤشر التحميل المؤقت */}
+      {isBuffering && !playbackError && currentStreamUrl ? (
         <View style={styles.bufferingContainer} pointerEvents="none">
           <ActivityIndicator size="large" color="#38bdf8" />
           <Text style={styles.bufferingText}>جاري تهيئة البث المباشر (HLS)...</Text>
         </View>
       ) : null}
 
-      {/* 5. واجهة الخطأ مع أزرار التحكم */}
+      {/* 6. واجهة الخطأ مع أزرار التحكم */}
       {playbackError ? (
         <View style={styles.errorOverlay}>
           <MaterialIcons name="error-outline" size={64} color="#ef4444" />
@@ -279,33 +494,24 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  noUrlBox: {
-    alignItems: 'center',
-  },
-  noUrlText: {
-    color: '#ffffff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginTop: 16,
-  },
   overlayBar: {
     position: 'absolute',
-    top: 32,
-    left: 32,
-    right: 32,
-    zIndex: 50,
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingTop: 36,
+    paddingBottom: 24,
+    paddingHorizontal: 36,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    zIndex: 10,
   },
   controlsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-  },
-  btnRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
   },
   overlayBtn: {
     backgroundColor: 'rgba(15, 23, 42, 0.85)',
@@ -343,7 +549,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 30,
-    maxWidth: 400,
+    maxWidth: 360,
     gap: 10,
   },
   playerChannelLogo: {
@@ -354,6 +560,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     flexShrink: 1,
+  },
+  qualityBtn: {
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    borderWidth: 1.5,
+    borderColor: '#0284c7',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 30,
+  },
+  qualityBtnText: {
+    color: '#38bdf8',
+    fontSize: 14,
+    fontWeight: '700',
+    marginLeft: 6,
   },
   favoriteBtn: {
     backgroundColor: 'rgba(15, 23, 42, 0.85)',
@@ -387,6 +607,123 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
+  modalOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.82)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 99,
+    padding: 24,
+  },
+  modalCard: {
+    backgroundColor: '#1e293b',
+    borderRadius: 24,
+    borderWidth: 1.5,
+    borderColor: '#38bdf8',
+    width: '100%',
+    maxWidth: 560,
+    maxHeight: '80%',
+    padding: 28,
+  },
+  modalHeader: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#334155',
+    paddingBottom: 16,
+    marginBottom: 20,
+  },
+  modalTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#ffffff',
+  },
+  modalSub: {
+    fontSize: 14,
+    color: '#94a3b8',
+    marginTop: 4,
+  },
+  modalScroll: {
+    marginBottom: 20,
+  },
+  modalSection: {
+    marginBottom: 20,
+  },
+  sectionHeader: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#38bdf8',
+    marginBottom: 12,
+  },
+  optionsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  optionChip: {
+    backgroundColor: '#0f172a',
+    borderWidth: 1.5,
+    borderColor: '#334155',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+  },
+  optionChipActive: {
+    backgroundColor: '#0284c7',
+    borderColor: '#38bdf8',
+  },
+  optionChipFocused: {
+    backgroundColor: '#ffffff',
+    borderColor: '#ffffff',
+    transform: [{ scale: 1.06 }],
+    shadowColor: '#38bdf8',
+    shadowOpacity: 0.9,
+    shadowRadius: 10,
+  },
+  optionContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  optionText: {
+    color: '#94a3b8',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  optionTextActive: {
+    color: '#ffffff',
+    fontWeight: '800',
+  },
+  optionTextFocused: {
+    color: '#000000',
+    fontWeight: '900',
+  },
+  modalCloseBtn: {
+    backgroundColor: '#0284c7',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCloseBtnFocused: {
+    backgroundColor: '#ffffff',
+    transform: [{ scale: 1.04 }],
+    shadowColor: '#ffffff',
+    shadowOpacity: 0.9,
+    shadowRadius: 12,
+  },
+  modalCloseBtnText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginLeft: 8,
+  },
+  modalCloseBtnTextFocused: {
+    color: '#000000',
+  },
   bufferingContainer: {
     position: 'absolute',
     top: 0,
@@ -398,65 +735,73 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.4)',
   },
   bufferingText: {
-    color: '#ffffff',
+    color: '#38bdf8',
     fontSize: 16,
+    fontWeight: '600',
+    marginTop: 16,
+  },
+  noUrlBox: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  noUrlText: {
+    color: '#ef4444',
+    fontSize: 18,
     fontWeight: 'bold',
-    marginTop: 14,
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    borderRadius: 20,
+    marginTop: 16,
   },
   errorOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(15, 23, 42, 0.96)',
+    backgroundColor: 'rgba(15, 23, 42, 0.95)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 32,
-    zIndex: 60,
+    zIndex: 20,
   },
   errorTitle: {
-    color: '#f87171',
+    color: '#ef4444',
     fontSize: 24,
     fontWeight: 'bold',
-    marginTop: 18,
+    marginTop: 16,
   },
   errorDesc: {
     color: '#94a3b8',
-    fontSize: 14,
+    fontSize: 15,
     textAlign: 'center',
-    maxWidth: 500,
-    marginTop: 8,
-    marginBottom: 28,
+    maxWidth: 480,
+    marginVertical: 12,
   },
   errorActions: {
     flexDirection: 'row',
+    marginTop: 20,
     gap: 16,
   },
   retryBtn: {
     backgroundColor: '#0284c7',
     paddingVertical: 14,
     paddingHorizontal: 24,
-    borderRadius: 14,
+    borderRadius: 12,
   },
   retryBtnText: {
     color: '#ffffff',
     fontSize: 15,
     fontWeight: 'bold',
-    marginLeft: 8,
+    marginLeft: 6,
   },
   backToListBtn: {
-    backgroundColor: '#1e293b',
-    borderWidth: 1.5,
-    borderColor: '#334155',
+    backgroundColor: '#334155',
     paddingVertical: 14,
     paddingHorizontal: 24,
-    borderRadius: 14,
+    borderRadius: 12,
   },
   backToListText: {
     color: '#ffffff',
     fontSize: 15,
     fontWeight: 'bold',
-    marginLeft: 8,
+    marginLeft: 6,
+  },
+  btnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
 });

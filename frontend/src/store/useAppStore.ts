@@ -9,10 +9,12 @@ export interface AppState {
   pinCode: string | null;
   playlistUrl: string;
   favoriteIds: string[];
+  activeDashboardTab: 'category' | 'country';
   setChildMode: (isChildMode: boolean) => void;
   setPinCode: (pinCode: string | null) => void;
   setPlaylistUrl: (playlistUrl: string) => void;
   toggleFavorite: (id: string) => void;
+  setActiveDashboardTab: (tab: 'category' | 'country') => void;
   resetAppStore: () => void;
 }
 
@@ -25,6 +27,7 @@ export const useAppStore = create<AppState>((set) => ({
   pinCode: null,
   playlistUrl: DEFAULT_BACKEND_M3U_URL,
   favoriteIds: [],
+  activeDashboardTab: 'category',
   setChildMode: (isChildMode: boolean) => set({ isChildMode }),
   setPinCode: (pinCode: string | null) => set({ pinCode }),
   setPlaylistUrl: (playlistUrl: string) => set({ playlistUrl }),
@@ -37,11 +40,14 @@ export const useAppStore = create<AppState>((set) => ({
           : [...state.favoriteIds, id],
       };
     }),
+  setActiveDashboardTab: (tab: 'category' | 'country') =>
+    set({ activeDashboardTab: tab }),
   resetAppStore: () =>
     set({
       isChildMode: false,
       pinCode: null,
       playlistUrl: DEFAULT_BACKEND_M3U_URL,
       favoriteIds: [],
+      activeDashboardTab: 'category',
     }),
 }));

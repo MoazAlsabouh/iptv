@@ -23,7 +23,7 @@ interface CountrySource {
   name: string;
 }
 
-// قائمة الدول العربية المستهدفة لربط كل رمز بالاسم العربي
+// قائمة الدول العربية المستهدفة لربط كل رمز بالاسم العربي (22 دولة عربية)
 const ARAB_COUNTRIES: CountrySource[] = [
   { code: 'sy', name: 'سوريا' },
   { code: 'sa', name: 'السعودية' },
@@ -40,6 +40,13 @@ const ARAB_COUNTRIES: CountrySource[] = [
   { code: 'tn', name: 'تونس' },
   { code: 'om', name: 'عُمان' },
   { code: 'bh', name: 'البحرين' },
+  { code: 'ly', name: 'ليبيا' },
+  { code: 'ye', name: 'اليمن' },
+  { code: 'sd', name: 'السودان' },
+  { code: 'mr', name: 'موريتانيا' },
+  { code: 'so', name: 'الصومال' },
+  { code: 'dj', name: 'جيبوتي' },
+  { code: 'km', name: 'جزر القمر' },
 ];
 
 /**
@@ -186,16 +193,17 @@ function processCountryM3U(
 }
 
 /**
- * جلب وتوحيد كافة القنوات العربية من قوائم الدول بالتوازي
+ * جلب وتوحيد كافة القنوات العربية من قوائم الدول بالتوازي باستخدام Promise.allSettled
+ * لضمان عدم تأثر باقي الدول في حال غياب أو تعطل ملف دولة معينة
  */
 async function fetchAndNormalizeArabChannels(): Promise<string> {
-  const results = await Promise.all(ARAB_COUNTRIES.map(fetchCountrySource));
+  const results = await Promise.allSettled(ARAB_COUNTRIES.map(fetchCountrySource));
   const urlSet = new Set<string>();
   const entries: ChannelEntry[] = [];
 
-  for (const item of results) {
-    if (item.content) {
-      processCountryM3U(item.content, item.country.name, urlSet, entries);
+  for (const res of results) {
+    if (res.status === 'fulfilled' && res.value.content) {
+      processCountryM3U(res.value.content, res.value.country.name, urlSet, entries);
     }
   }
 

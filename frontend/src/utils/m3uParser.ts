@@ -1,4 +1,4 @@
-import { MediaItem } from '../types/media';
+import { MediaItem, StreamSource } from '../types/media';
 
 /**
  * الرابط الافتراضي للواجهة الخلفية (Cloudflare Worker) التي تدمج قنوات IPTV مع أفلام TMDB
@@ -52,10 +52,99 @@ function extractChannelName(line: string): string {
   return 'Unknown Channel';
 }
 
+interface QualityExtractResult {
+  baseName: string;
+  qualityLabel: string;
+}
+
+/**
+ * استخراج لاحقة الجودة وتوحيد اسم القناة الأساسي
+ * مثال: "Syria TV (1080p)" -> baseName: "Syria TV", qualityLabel: "1080p"
+ */
+export function extractQualityAndBaseName(fullName: string): QualityExtractResult {
+  if (!fullName) return { baseName: '', qualityLabel: '' };
+
+  let name = fullName.trim();
+  let qualityLabel = '';
+
+  // مطابقة أنماط الجودة مثل (1080p), [720p], (576p), (SD), (HD), (FHD), (4K)
+  const qualityRegex = /[\(\[]\s*(\d{3,4}p|\d{3,4}i|4k|uhd|fhd|hd|sd)\s*[\)\]]/i;
+  const match = name.match(qualityRegex);
+
+  if (match) {
+    qualityLabel = match[1].toUpperCase();
+    name = name.replace(qualityRegex, '').trim();
+  } else {
+    // مطابقة الجودة في نهاية الاسم
+    const endQualityRegex = /\b(1080p|720p|576p|480p|360p|4k|fhd|hd|sd)\b/i;
+    const endMatch = name.match(endQualityRegex);
+    if (endMatch) {
+      qualityLabel = endMatch[1].toUpperCase();
+      name = name.replace(endQualityRegex, '').trim();
+    }
+  }
+
+  // تنظيف أي زوائد أو علامات ترقيم في النهاية
+  name = name.replace(/[\s\-\:\_]+$/, '').trim();
+
+  return {
+    baseName: name || fullName.trim(),
+    qualityLabel: qualityLabel || '',
+  };
+}
+
+/**
+ * دمج القنوات التي تمتلك نفس الاسم الأساسي في عنصر واحد متعدد المصادر (Multi-Source)
+ */
+export function mergeMultiSourceChannels(items: MediaItem[]): MediaItem[] {
+  if (!items || items.length === 0) return [];
+
+  const map = new Map<string, MediaItem>();
+  const merged: MediaItem[] = [];
+
+  for (const item of items) {
+    const { baseName, qualityLabel } = extractQualityAndBaseName(item.name);
+    // تجميع القناة بناءً على اسمها الموحد ودولتها وتصنيفها
+    const key = `${baseName.toLowerCase()}|${item.country || ''}|${item.groupTitle || ''}`;
+
+    const existing = map.get(key);
+
+    if (existing) {
+      if (!existing.sources) {
+        const existingQuality = extractQualityAndBaseName(existing.name).qualityLabel;
+        existing.sources = [
+          { label: existingQuality || 'مصدر 1', url: existing.url },
+        ];
+      }
+
+      const label = qualityLabel || `مصدر ${existing.sources.length + 1}`;
+      // التحقق من عدم تكرار نفس الرابط بالضبط
+      if (!existing.sources.some((s) => s.url === item.url)) {
+        existing.sources.push({ label, url: item.url });
+      }
+
+      // إذا كان الشعار مفقوداً في العنصر السابق وتوفر في الحالي، نحدثه
+      if (!existing.logo && item.logo) {
+        existing.logo = item.logo;
+      }
+    } else {
+      const singleSourceLabel = qualityLabel || 'مصدر 1';
+      const newItem: MediaItem = {
+        ...item,
+        name: baseName,
+        sources: [{ label: singleSourceLabel, url: item.url }],
+      };
+      map.set(key, newItem);
+      merged.push(newItem);
+    }
+  }
+
+  return merged;
+}
+
 /**
  * محلل M3U فائق الأداء مصمم خصيصاً للقوائم الضخمة (عشرات الآلاف من القنوات) على أجهزة التلفاز.
- * يعتمد خوارزمية مسح خطية O(N) بدون أي مكتبات خارجية وبدون تعبيرات نمطية ثقيلة (Regex)
- * لتفادي استهلاك الذاكرة (OOM) وتجميد واجهة المستخدم (UI Freezing).
+ * يعتمد خوارزمية مسح خطية O(N) مع دمج القنوات متعددة المصادر.
  *
  * @param content محتوى ملف M3U كنص خام
  * @returns مصفوفة من عناصر MediaItem الجاهزة للعرض
@@ -109,7 +198,7 @@ export function parseM3U(content: string): MediaItem[] {
     }
   }
 
-  return items;
+  return mergeMultiSourceChannels(items);
 }
 
 /**

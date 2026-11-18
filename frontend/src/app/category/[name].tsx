@@ -98,7 +98,13 @@ export default function CategoryChannelsScreen(): React.JSX.Element {
   const handleChannelPress = (channel: MediaItem) => {
     router.push({
       pathname: '/play/[id]',
-      params: { id: channel.id, title: channel.name, url: channel.url, logo: channel.logo },
+      params: {
+        id: channel.id,
+        title: channel.name,
+        url: channel.url,
+        logo: channel.logo,
+        sources: channel.sources ? JSON.stringify(channel.sources) : undefined,
+      },
     });
   };
 

@@ -21,8 +21,15 @@ type TabType = 'category' | 'country';
  */
 export default function DashboardScreen(): React.JSX.Element {
   const router = useRouter();
-  const { playlistUrl, setPlaylistUrl } = useAppStore();
-  const [activeTab, setActiveTab] = useState<TabType>('category');
+  const {
+    playlistUrl,
+    setPlaylistUrl,
+    activeDashboardTab,
+    setActiveDashboardTab,
+  } = useAppStore();
+
+  const activeTab = activeDashboardTab;
+  const setActiveTab = setActiveDashboardTab;
 
   // التأكد من توجيه التطبيق دائماً للرابط المركزي السحابي الموحد
   useEffect(() => {

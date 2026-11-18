@@ -4,22 +4,33 @@ import { Video, ResizeMode, AVPlaybackStatus } from 'expo-av';
 import { MaterialIcons } from '@expo/vector-icons';
 import Hls from 'hls.js';
 
+export interface HlsLevelOption {
+  id: number; // -1 for auto
+  label: string;
+  height?: number;
+  bitrate?: number;
+}
+
 interface TVPlayerProps {
   streamUrl: string;
   onBuffering?: (isBuffering: boolean) => void;
   onError?: (errorMessage: string) => void;
+  onLevelsLoaded?: (levels: HlsLevelOption[]) => void;
+  selectedLevel?: number;
   style?: StyleProp<ViewStyle>;
 }
 
 /**
  * مشغل فيديو متطور يدعم شاشات التلفاز والويب وأجهزة Android/iOS.
  * يستخدم hls.js لبث قنوات m3u8 الحية بكفاءة عالية على المتصفحات والشاشات الذكية،
- * ويعالج أخطاء التشغيل التلقائي (Autoplay / AbortError) مع زر تشغيل يدوي للريموت.
+ * ويدعم استخراج وتبديل مستويات الجودة Hls Levels ومعالجة Autoplay.
  */
 export const TVPlayer: React.FC<TVPlayerProps> = ({
   streamUrl,
   onBuffering,
   onError,
+  onLevelsLoaded,
+  selectedLevel = -1,
   style,
 }) => {
   const videoHtmlRef = useRef<HTMLVideoElement | null>(null);
@@ -32,6 +43,8 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
   onBufferingRef.current = onBuffering;
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
+  const onLevelsLoadedRef = useRef(onLevelsLoaded);
+  onLevelsLoadedRef.current = onLevelsLoaded;
 
   // إعداد hls.js على بيئة الويب وشاشات التلفاز الذكية
   useEffect(() => {
@@ -81,6 +94,26 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         onBufferingRef.current?.(false);
         safePlay();
+
+        // استخراج مستويات الجودة المتاحة من ملف manifest
+        const levels: HlsLevelOption[] = [
+          { id: -1, label: 'تلقائي (Auto)' },
+        ];
+
+        if (hls.levels && hls.levels.length > 0) {
+          hls.levels.forEach((lvl, idx) => {
+            const h = lvl.height || 0;
+            const label = h > 0 ? `${h}p` : `جودة ${idx + 1}`;
+            levels.push({
+              id: idx,
+              label,
+              height: lvl.height,
+              bitrate: lvl.bitrate,
+            });
+          });
+        }
+
+        onLevelsLoadedRef.current?.(levels);
       });
 
       hls.on(Hls.Events.ERROR, (_event, data) => {
@@ -118,62 +151,64 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
       if (videoEl) {
         videoEl.pause();
         videoEl.removeAttribute('src');
-        videoEl.load();
       }
     };
   }, [streamUrl]);
 
+  // تحديث مستوى الجودة المختار في hls.js
+  useEffect(() => {
+    if (hlsRef.current && typeof selectedLevel === 'number') {
+      hlsRef.current.currentLevel = selectedLevel;
+    }
+  }, [selectedLevel]);
+
   const handleManualPlay = () => {
-    if (videoHtmlRef.current) {
-      videoHtmlRef.current.play().then(() => {
+    const videoEl = videoHtmlRef.current;
+    if (videoEl) {
+      videoEl.play().then(() => {
         setNeedsUserPlay(false);
-      }).catch((e) => console.warn('Manual play failed:', e));
+      }).catch((err) => {
+        console.error('[TVPlayer] Manual play error:', err);
+      });
     }
   };
 
-  // في بيئة الويب وشاشات Smart TV Web
   if (Platform.OS === 'web') {
     return (
       <View style={[styles.container, style]}>
         <video
           ref={videoHtmlRef}
-          controls
-          autoPlay
-          playsInline
           style={{
             width: '100%',
             height: '100%',
-            objectFit: 'contain',
             backgroundColor: '#000000',
+            objectFit: 'contain',
           }}
-          onWaiting={() => onBufferingRef.current?.(true)}
-          onPlaying={() => {
-            onBufferingRef.current?.(false);
-            setNeedsUserPlay(false);
-          }}
-          onError={() => onErrorRef.current?.('تعذر تحميل البث المباشر')}
+          playsInline
+          autoPlay
+          controls={false}
         />
 
-        {/* زر تشغيل يدوي للريموت في حال منع المتصفح التشغيل التلقائي */}
+        {/* زر تشغيل يدوي مخصص لأجهزة التلفاز عند حظر المتصفح للتشغيل التلقائي */}
         {needsUserPlay && (
-          <View style={styles.overlayCenter}>
+          <View style={styles.autoplayOverlay}>
             <Pressable
               hasTVPreferredFocus
               onPress={handleManualPlay}
               style={({ focused }) => [
-                styles.manualPlayBtn,
-                focused && styles.manualPlayBtnFocused,
+                styles.playBtn,
+                focused && styles.playBtnFocused,
               ]}
             >
               {({ focused }) => (
-                <View style={styles.btnContent}>
+                <View style={styles.playBtnContent}>
                   <MaterialIcons
                     name="play-arrow"
                     size={36}
                     color={focused ? '#000000' : '#ffffff'}
                   />
-                  <Text style={[styles.btnText, focused && styles.btnTextFocused]}>
-                    اضغط للتشغيل (OK)
+                  <Text style={[styles.playBtnText, focused && styles.playBtnTextFocused]}>
+                    اضغط للتشغيل
                   </Text>
                 </View>
               )}
@@ -184,44 +219,42 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
     );
   }
 
-  // في بيئات التشغيل الأصلية (React Native / Android TV / Apple TV)
+  // البيئات الأصلية (Native - Android TV / Fire TV)
   return (
     <Video
       ref={nativeVideoRef}
-      style={[styles.container, style]}
       source={{ uri: streamUrl }}
-      useNativeControls
+      style={[styles.container, style]}
       resizeMode={ResizeMode.CONTAIN}
       shouldPlay
+      isLooping={false}
+      useNativeControls={false}
       onPlaybackStatusUpdate={(status: AVPlaybackStatus) => {
         if (!status.isLoaded) {
           if (status.error) {
-            onError?.(`خطأ في البث: ${status.error}`);
+            onError?.(status.error);
           }
         } else {
           onBuffering?.(status.isBuffering);
         }
       }}
-      onError={(err) => onError?.(`فشل الاتصال بالبث: ${err}`)}
     />
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    ...StyleSheet.absoluteFillObject,
     backgroundColor: '#000000',
-    justifyContent: 'center',
-    alignItems: 'center',
+    overflow: 'hidden',
   },
-  overlayCenter: {
+  autoplayOverlay: {
     ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    zIndex: 30,
+    zIndex: 999,
   },
-  manualPlayBtn: {
+  playBtn: {
     backgroundColor: '#0284c7',
     paddingVertical: 16,
     paddingHorizontal: 28,
@@ -229,26 +262,25 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#38bdf8',
   },
-  manualPlayBtnFocused: {
+  playBtnFocused: {
     backgroundColor: '#ffffff',
     borderColor: '#ffffff',
     transform: [{ scale: 1.1 }],
-    shadowColor: '#ffffff',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
+    shadowColor: '#38bdf8',
+    shadowOpacity: 0.9,
     shadowRadius: 16,
   },
-  btnContent: {
+  playBtnContent: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  btnText: {
+  playBtnText: {
     color: '#ffffff',
     fontSize: 18,
     fontWeight: 'bold',
     marginLeft: 8,
   },
-  btnTextFocused: {
+  playBtnTextFocused: {
     color: '#000000',
   },
 });

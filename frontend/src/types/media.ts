@@ -1,4 +1,12 @@
 /**
+ * بنية تمثل مصدر بث منفصل لنفس القناة
+ */
+export interface StreamSource {
+  label: string;
+  url: string;
+}
+
+/**
  * واجهة تمثل عنصر وسائط أو قناة مأخوذة من قائمة تشغيل M3U
  */
 export interface MediaItem {
@@ -8,4 +16,5 @@ export interface MediaItem {
   country?: string;
   logo: string;
   url: string;
+  sources?: StreamSource[];
 }
