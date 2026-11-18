@@ -63,6 +63,47 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
       hlsRef.current = null;
     }
 
+    let playbackStarted = false;
+    let timeoutId: NodeJS.Timeout | null = null;
+
+    const clearPlaybackTimeout = () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+    };
+
+    const onPlaySuccess = () => {
+      playbackStarted = true;
+      clearPlaybackTimeout();
+      onBufferingRef.current?.(false);
+    };
+
+    const onVideoError = () => {
+      clearPlaybackTimeout();
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+      onErrorRef.current?.('تعذر الاتصال بمصدر البث، يرجى إعادة المحاولة أو اختيار مصدر آخر');
+    };
+
+    videoEl.addEventListener('playing', onPlaySuccess);
+    videoEl.addEventListener('canplay', onPlaySuccess);
+    videoEl.addEventListener('error', onVideoError);
+
+    // مؤقت أمان لمدة 10 ثوانٍ: إذا لم يبدأ تشغيل الفيديو خلال 10 ثوانٍ، نستدعي onError تلقائياً
+    timeoutId = setTimeout(() => {
+      if (!playbackStarted) {
+        clearPlaybackTimeout();
+        if (hlsRef.current) {
+          hlsRef.current.destroy();
+          hlsRef.current = null;
+        }
+        onErrorRef.current?.('استغرق الاتصال بمصدر البث وقتاً أطول من المتوقع');
+      }
+    }, 10000);
+
     const safePlay = () => {
       videoEl.play().catch((err: any) => {
         // تجاهل خطأ AbortError الناتج عن إلغاء طلب التشغيل عند التحميل الجديد
@@ -71,6 +112,7 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
         }
         // إذا منع المتصفح التشغيل التلقائي (Autoplay Policy) نظهر زر التشغيل اليدوي
         if (err.name === 'NotAllowedError') {
+          clearPlaybackTimeout();
           setNeedsUserPlay(true);
         } else {
           console.warn('[TVPlayer] Play warning:', err);
@@ -92,7 +134,6 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
       hls.attachMedia(videoEl);
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        onBufferingRef.current?.(false);
         safePlay();
 
         // استخراج مستويات الجودة المتاحة من ملف manifest
@@ -118,18 +159,11 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
 
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data.fatal) {
-          switch (data.type) {
-            case Hls.ErrorTypes.NETWORK_ERROR:
-              hls.startLoad();
-              break;
-            case Hls.ErrorTypes.MEDIA_ERROR:
-              hls.recoverMediaError();
-              break;
-            default:
-              hls.destroy();
-              onErrorRef.current?.('تعذر الاتصال بمصدر البث، يرجى إعادة المحاولة أو اختيار مصدر آخر');
-              break;
-          }
+          // استدعاء onError فوراً عند أي خطأ قاتل (مثل 403 / 502 / CORS / manifestLoadError) دون تكرار لا نهائي
+          clearPlaybackTimeout();
+          hls.destroy();
+          hlsRef.current = null;
+          onErrorRef.current?.('تعذر الاتصال بمصدر البث، يرجى إعادة المحاولة أو اختيار مصدر آخر');
         }
       });
     } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
@@ -144,6 +178,10 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
 
     // دالة التنظيف عند تغيير القناة أو مغادرة الصفحة
     return () => {
+      clearPlaybackTimeout();
+      videoEl.removeEventListener('playing', onPlaySuccess);
+      videoEl.removeEventListener('canplay', onPlaySuccess);
+      videoEl.removeEventListener('error', onVideoError);
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
@@ -232,10 +270,10 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
       onPlaybackStatusUpdate={(status: AVPlaybackStatus) => {
         if (!status.isLoaded) {
           if (status.error) {
-            onError?.(status.error);
+            onErrorRef.current?.(status.error);
           }
         } else {
-          onBuffering?.(status.isBuffering);
+          onBufferingRef.current?.(status.isBuffering);
         }
       }}
     />

@@ -58,8 +58,8 @@ interface QualityExtractResult {
 }
 
 /**
- * استخراج لاحقة الجودة وتوحيد اسم القناة الأساسي
- * مثال: "Syria TV (1080p)" -> baseName: "Syria TV", qualityLabel: "1080p"
+ * استخراج لاحقة الجودة وتوحيد اسم القناة الأساسي وإزالة الوسوم الإضافية
+ * مثال: "Syria TV Ⓢ [1080p]" -> baseName: "Syria TV", qualityLabel: "1080P"
  */
 export function extractQualityAndBaseName(fullName: string): QualityExtractResult {
   if (!fullName) return { baseName: '', qualityLabel: '' };
@@ -67,7 +67,7 @@ export function extractQualityAndBaseName(fullName: string): QualityExtractResul
   let name = fullName.trim();
   let qualityLabel = '';
 
-  // مطابقة أنماط الجودة مثل (1080p), [720p], (576p), (SD), (HD), (FHD), (4K)
+  // 1. مطابقة واستخراج أنماط الجودة مثل (1080p), [720p], (576p), (SD), (HD), (FHD), (4K)
   const qualityRegex = /[\(\[]\s*(\d{3,4}p|\d{3,4}i|4k|uhd|fhd|hd|sd)\s*[\)\]]/i;
   const match = name.match(qualityRegex);
 
@@ -84,8 +84,15 @@ export function extractQualityAndBaseName(fullName: string): QualityExtractResul
     }
   }
 
-  // تنظيف أي زوائد أو علامات ترقيم في النهاية
-  name = name.replace(/[\s\-\:\_]+$/, '').trim();
+  // 2. إزالة رموز مثل Ⓢ و Ⓖ
+  name = name.replace(/[ⓈⒼ]/g, '');
+
+  // 3. إزالة أي وسوم إضافية بين أقواس مربعة [...] أو دائرية (...)
+  name = name.replace(/\[[^\]]*\]/g, '').replace(/\([^\)]*\)/g, '');
+
+  // 4. تنظيف أي علامات ترقيم في البداية والنهاية والمسافات الزائدة
+  name = name.replace(/^[\s\-\:\_\|\.\,]+/, '').replace(/[\s\-\:\_\|\.\,]+$/, '');
+  name = name.replace(/\s+/g, ' ').trim();
 
   return {
     baseName: name || fullName.trim(),
@@ -104,8 +111,8 @@ export function mergeMultiSourceChannels(items: MediaItem[]): MediaItem[] {
 
   for (const item of items) {
     const { baseName, qualityLabel } = extractQualityAndBaseName(item.name);
-    // تجميع القناة بناءً على اسمها الموحد ودولتها وتصنيفها
-    const key = `${baseName.toLowerCase()}|${item.country || ''}|${item.groupTitle || ''}`;
+    // تجميع القناة بناءً على اسمها الموحد ودولتها
+    const key = `${baseName.toLowerCase()}|${item.country || ''}`;
 
     const existing = map.get(key);
 
@@ -121,6 +128,15 @@ export function mergeMultiSourceChannels(items: MediaItem[]): MediaItem[] {
       // التحقق من عدم تكرار نفس الرابط بالضبط
       if (!existing.sources.some((s) => s.url === item.url)) {
         existing.sources.push({ label, url: item.url });
+      }
+
+      // إذا كان التصنيف الحالي أكثر دقة من التصنيف العام
+      if (
+        existing.groupTitle === 'قنوات عامة ومنوعة' &&
+        item.groupTitle &&
+        item.groupTitle !== 'قنوات عامة ومنوعة'
+      ) {
+        existing.groupTitle = item.groupTitle;
       }
 
       // إذا كان الشعار مفقوداً في العنصر السابق وتوفر في الحالي، نحدثه

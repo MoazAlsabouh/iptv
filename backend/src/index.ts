@@ -255,6 +255,21 @@ function sanitizeExtinf(
 }
 
 /**
+ * فحص ما إذا كانت القناة محظورة جغرافياً أو غير مستقرة (Geo-blocked / Not 24/7 / Ⓖ)
+ */
+function isBlockedOrUnstableChannel(extinf: string): boolean {
+  if (
+    extinf.includes('Ⓖ') ||
+    extinf.includes('[Geo-blocked]') ||
+    extinf.includes('[Not 24/7]') ||
+    /\[(geo-blocked|not 24\/7)\]/i.test(extinf)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * معالجة قائمة Free-TV (الأولوية الأولى - الأكثر استقراراً)
  */
 function processFreeTVM3U(
@@ -275,7 +290,7 @@ function processFreeTVM3U(
     } else if (!line.startsWith('#') && currentExtinf) {
       if (line.startsWith('http://') || line.startsWith('https://')) {
         const country = detectArabCountry(currentExtinf);
-        if (country) {
+        if (country && !isBlockedOrUnstableChannel(currentExtinf)) {
           if (!urlSet.has(line)) {
             urlSet.add(line);
             const commaIdx = currentExtinf.lastIndexOf(',');
@@ -312,7 +327,7 @@ function processCountryM3U(
       currentExtinf = line;
     } else if (!line.startsWith('#') && currentExtinf) {
       if (line.startsWith('http://') || line.startsWith('https://')) {
-        if (!urlSet.has(line)) {
+        if (!isBlockedOrUnstableChannel(currentExtinf) && !urlSet.has(line)) {
           urlSet.add(line);
 
           const groupTitleRegex = /group-title="([^"]*)"/i;
@@ -351,7 +366,7 @@ function processAraM3U(
       currentExtinf = line;
     } else if (!line.startsWith('#') && currentExtinf) {
       if (line.startsWith('http://') || line.startsWith('https://')) {
-        if (!urlSet.has(line)) {
+        if (!isBlockedOrUnstableChannel(currentExtinf) && !urlSet.has(line)) {
           urlSet.add(line);
 
           const detectedCountry = detectArabCountry(currentExtinf) || 'قنوات عربية دولية';
@@ -399,7 +414,7 @@ function processDistroM3U(
           lower.includes('middle east') ||
           detectArabCountry(currentExtinf);
 
-        if (isTarget && !urlSet.has(line)) {
+        if (isTarget && !isBlockedOrUnstableChannel(currentExtinf) && !urlSet.has(line)) {
           urlSet.add(line);
           const country = detectArabCountry(currentExtinf) || 'قنوات عربية دولية';
           const commaIdx = currentExtinf.lastIndexOf(',');

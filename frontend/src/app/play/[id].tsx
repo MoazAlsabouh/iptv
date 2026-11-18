@@ -150,15 +150,15 @@ export default function PlayerScreen(): React.JSX.Element {
   // التبديل التلقائي الصامت للمصدر البديل عند حدوث خطأ
   const handlePlayerError = useCallback(
     (errorMsg: string) => {
-      if (channelSources.length > 1 && activeSourceIndex < channelSources.length - 1) {
-        // يوجد مصدر بديل للقناة، نقوم بالتبديل التلقائي الصامت للمصدر التالي
+      if (channelSources.length > 1 && activeSourceIndex + 1 < channelSources.length) {
+        // يوجد مصدر تالٍ: ننتقل إليه تلقائياً مع إبقاء مؤشر التحميل ظاهراً
         setIsBuffering(true);
         setPlaybackError(null);
         setActiveSourceIndex((prev) => prev + 1);
       } else {
-        // تم استنفاد جميع المصادر المتاحة
-        setPlaybackError(errorMsg);
+        // تم استنفاد جميع المصادر المتاحة أو لا توجد مصادر بديلة
         setIsBuffering(false);
+        setPlaybackError(errorMsg || 'تعذر تشغيل هذا البث حالياً، يرجى إعادة المحاولة');
       }
     },
     [channelSources, activeSourceIndex]
@@ -177,7 +177,7 @@ export default function PlayerScreen(): React.JSX.Element {
   return (
     <View style={styles.rootContainer}>
       {/* 1. مشغل الفيديو HLS */}
-      {currentStreamUrl ? (
+      {currentStreamUrl && !playbackError ? (
         <TVPlayer
           key={`tv-player-${retryKey}-${activeSourceIndex}`}
           streamUrl={currentStreamUrl}
@@ -187,12 +187,12 @@ export default function PlayerScreen(): React.JSX.Element {
           onBuffering={(buffering) => setIsBuffering(buffering)}
           onError={handlePlayerError}
         />
-      ) : (
+      ) : !currentStreamUrl ? (
         <View style={styles.noUrlBox}>
           <MaterialIcons name="link-off" size={64} color="#ef4444" />
           <Text style={styles.noUrlText}>رابط تشغيل القناة غير متوفر</Text>
         </View>
-      )}
+      ) : null}
 
       {/* 2. طبقة حساسة للنقر لاستعادة الواجهة عند اختفائها */}
       {!showOverlay && !playbackError && !showQualityModal && (
