@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { DEFAULT_BACKEND_M3U_URL } from '../utils/m3uParser';
 
 /**
  * واجهة تمثل حالة التطبيق الأساسية
@@ -17,11 +18,12 @@ export interface AppState {
 
 /**
  * المتجر العام للتطبيق باستخدام Zustand
+ * يتم تعيين الرابط الافتراضي مباشرة إلى خادم Cloudflare Worker المدمج
  */
 export const useAppStore = create<AppState>((set) => ({
   isChildMode: false,
   pinCode: null,
-  playlistUrl: '',
+  playlistUrl: DEFAULT_BACKEND_M3U_URL,
   favoriteIds: [],
   setChildMode: (isChildMode: boolean) => set({ isChildMode }),
   setPinCode: (pinCode: string | null) => set({ pinCode }),
@@ -39,7 +41,7 @@ export const useAppStore = create<AppState>((set) => ({
     set({
       isChildMode: false,
       pinCode: null,
-      playlistUrl: '',
+      playlistUrl: DEFAULT_BACKEND_M3U_URL,
       favoriteIds: [],
     }),
 }));

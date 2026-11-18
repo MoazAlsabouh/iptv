@@ -10,6 +10,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useMediaData } from '../../hooks/useMediaData';
+import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 import { MediaItem } from '../../types/media';
 
 /**
@@ -104,6 +105,11 @@ export default function CategoryChannelsScreen(): React.JSX.Element {
       (ch) => (ch.groupTitle ? ch.groupTitle.trim() : 'General') === categoryName
     );
   }, [channels, categoryName]);
+
+  // دعم أزرار الرجوع بريموت التلفاز
+  useTVRemoteNavigation({
+    onBack: () => router.back(),
+  });
 
   const handleChannelPress = (channel: MediaItem) => {
     router.push({

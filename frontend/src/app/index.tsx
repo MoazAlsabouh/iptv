@@ -11,10 +11,12 @@ import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../store/useAppStore';
 import { useMediaData, CategoryGroup } from '../hooks/useMediaData';
+import { DEFAULT_BACKEND_M3U_URL } from '../utils/m3uParser';
 
 /**
  * شاشة لوحة التحكم الرئيسية (Dashboard) الموجهة لأجهزة التلفاز (TV-First).
- * تدعم إدخال رابط M3U، وتتيح التنقل الكامل بالريموت كنترول لعرض تصنيفات القنوات.
+ * تدعم إدخال رابط M3U أو استخدام رابط الخادم المدمج تلقائياً،
+ * وتتيح التنقل الكامل بالريموت كنترول لعرض تصنيفات القنوات والأفلام.
  */
 export default function DashboardScreen(): React.JSX.Element {
   const router = useRouter();
@@ -37,6 +39,10 @@ export default function DashboardScreen(): React.JSX.Element {
     setPlaylistUrl('');
   };
 
+  const handleUseDefaultUrl = () => {
+    setPlaylistUrl(DEFAULT_BACKEND_M3U_URL);
+  };
+
   // 1. حالة عدم وجود رابط M3U: واجهة إدخال الرابط المخصصة للتلفاز
   if (!playlistUrl || playlistUrl.trim().length === 0) {
     return (
@@ -47,7 +53,7 @@ export default function DashboardScreen(): React.JSX.Element {
             إعداد قائمة التشغيل (M3U Playlist)
           </Text>
           <Text className="text-neutral-400 text-sm mb-6 text-center leading-6">
-            يرجى لصق رابط قائمة M3U المجانية لبدء استعراض القنوات والتصنيفات المباشرة على التلفاز.
+            يرجى لصق رابط قائمة M3U أو استخدام خادم البث المدمج الذي يحتوي على قنوات عربية وأفلام رائجة.
           </Text>
 
           {/* حقل الإدخال مع تركيز مرئي واضح */}
@@ -72,11 +78,11 @@ export default function DashboardScreen(): React.JSX.Element {
             />
           </View>
 
-          {/* زر حفظ الرابط المهيأ للريموت كنترول */}
+          {/* زر حفظ الرابط المدخل */}
           <Pressable
             hasTVPreferredFocus
             onPress={handleSaveUrl}
-            className="w-full rounded-xl outline-none"
+            className="w-full rounded-xl outline-none mb-3"
           >
             {({ focused }) => (
               <View
@@ -101,6 +107,35 @@ export default function DashboardScreen(): React.JSX.Element {
               </View>
             )}
           </Pressable>
+
+          {/* زر استخدام الخادم السحابي المدمج */}
+          <Pressable
+            onPress={handleUseDefaultUrl}
+            className="w-full rounded-xl outline-none"
+          >
+            {({ focused }) => (
+              <View
+                className={`w-full py-3.5 rounded-xl flex-row justify-center items-center border ${
+                  focused
+                    ? 'bg-white border-white scale-105 shadow-xl'
+                    : 'bg-neutral-800 border-neutral-700'
+                }`}
+              >
+                <MaterialIcons
+                  name="cloud-download"
+                  size={20}
+                  color={focused ? '#000000' : '#38bdf8'}
+                />
+                <Text
+                  className={`ml-2 text-base font-semibold ${
+                    focused ? 'text-black font-bold' : 'text-white'
+                  }`}
+                >
+                  استخدام الخادم السحابي المدمج (قنوات + أفلام)
+                </Text>
+              </View>
+            )}
+          </Pressable>
         </View>
       </View>
     );
@@ -112,10 +147,10 @@ export default function DashboardScreen(): React.JSX.Element {
       <View className="flex-1 justify-center items-center">
         <ActivityIndicator size="large" color="#38bdf8" />
         <Text className="text-white text-xl font-bold mt-6">
-          جاري تحميل وتجميع القنوات...
+          جاري تحميل وتجميع القنوات والأفلام...
         </Text>
         <Text className="text-neutral-400 text-sm mt-2">
-          يتم الآن تحليل ملف M3U عبر محرك التحليل السريع
+          يتم الآن تحليل قائمة البث المباشر وأفلام VOD
         </Text>
       </View>
     );
@@ -203,7 +238,7 @@ export default function DashboardScreen(): React.JSX.Element {
             لوحة التحكم والتصنيفات
           </Text>
           <Text className="text-neutral-400 text-sm mt-1">
-            إجمالي التصنيفات: {categories.length} | إجمالي القنوات المتاحة: {totalChannels}
+            إجمالي التصنيفات: {categories.length} | إجمالي القنوات والأفلام: {totalChannels}
           </Text>
         </View>
 
@@ -269,7 +304,7 @@ export default function DashboardScreen(): React.JSX.Element {
                       }`}
                     >
                       <MaterialIcons
-                        name="folder-open"
+                        name={item.name.includes('أفلام') ? 'movie' : 'folder-open'}
                         size={28}
                         color={focused ? '#0284c7' : '#38bdf8'}
                       />
@@ -284,7 +319,7 @@ export default function DashboardScreen(): React.JSX.Element {
                           focused ? 'text-neutral-900' : 'text-sky-400'
                         }`}
                       >
-                        {item.count} قناة
+                        {item.count} {item.name.includes('أفلام') ? 'فيلم' : 'قناة'}
                       </Text>
                     </View>
                   </View>
@@ -303,7 +338,7 @@ export default function DashboardScreen(): React.JSX.Element {
                         focused ? 'text-neutral-600' : 'text-neutral-400'
                       }`}
                     >
-                      اضغط للاستعراض
+                      اضغط للاستعراض بالريموت
                     </Text>
                   </View>
                 </View>

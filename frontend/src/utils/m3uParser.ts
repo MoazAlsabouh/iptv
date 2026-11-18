@@ -1,6 +1,11 @@
 import { MediaItem } from '../types/media';
 
 /**
+ * الرابط الافتراضي للواجهة الخلفية (Cloudflare Worker) التي تدمج قنوات IPTV مع أفلام TMDB
+ */
+export const DEFAULT_BACKEND_M3U_URL = 'https://iptv-backend.moaznsm.workers.dev';
+
+/**
  * دالة مساعدة سريعة لاستخراج خصائص الوسائط (مثل tvg-logo و group-title)
  * تم استخدام indexOf و substring لتفادي عبء Regular Expressions على معالجات التلفاز الضعيفة.
  */
@@ -140,8 +145,18 @@ export async function fetchAndParseM3U(
     const errorMessage =
       error instanceof Error ? error.message : 'خطأ غير متوقع أثناء معالجة القائمة';
 
-    // تسجيل الخطأ للمساعدة في التصحيح دون تعطيل التطبيق
     console.error('[m3uParser] Error fetching or parsing M3U:', errorMessage);
     throw new Error(`خطأ في معالجة قائمة M3U: ${errorMessage}`);
   }
+}
+
+/**
+ * دالة مخصصة لجلب وتحليل قائمة التشغيل المدمجة تلقائياً من خادم Cloudflare Worker الخاص بالتطبيق
+ * (الرابط: https://iptv-backend.moaznsm.workers.dev)
+ *
+ * @param useProxy خيار تفعيل البروكسي إذا لزم الأمر
+ * @returns مصفوفة القنوات والأفلام المحللة
+ */
+export async function fetchBackendPlaylist(useProxy: boolean = false): Promise<MediaItem[]> {
+  return fetchAndParseM3U(DEFAULT_BACKEND_M3U_URL, useProxy);
 }

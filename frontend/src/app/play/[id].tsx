@@ -1,4 +1,4 @@
-import React, { useRef, useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,15 +7,16 @@ import {
   StyleSheet,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Video, ResizeMode, AVPlaybackStatus } from 'expo-av';
 import { useKeepAwake } from 'expo-keep-awake';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../../store/useAppStore';
+import { TVPlayer } from '../../components/player/TVPlayer';
+import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 
 /**
  * شاشة مشغل الفيديو الموجهة بالكامل للتلفاز (Fullscreen TV Video Player).
- * تدعم إبقاء الشاشة نشطة (useKeepAwake)، إخفاء عناصر التحكم تلقائياً بعد 5 ثوانٍ،
- * زر إضافة/إزالة القناة من المفضلة، وإعادة محاولة الاتصال بسلاسة عند تعثر البث.
+ * تدعم HLS.js لقنوات البث المباشر (m3u8)، إبقاء الشاشة نشطة، تحكم الريموت كنترول،
+ * ومؤقت إخفاء الواجهة بعد 5 ثوانٍ.
  */
 export default function PlayerScreen(): React.JSX.Element {
   // منع شاشة التلفاز من الإغلاق التلقائي أو التعتيم طوال فترة فتح المشغل
@@ -23,7 +24,6 @@ export default function PlayerScreen(): React.JSX.Element {
 
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string; url: string; title?: string }>();
-  const videoRef = useRef<Video>(null);
 
   // إدارة المفضلة من المتجر العام
   const { favoriteIds, toggleFavorite } = useAppStore();
@@ -62,29 +62,29 @@ export default function PlayerScreen(): React.JSX.Element {
 
   // حالة إظهار وإخفاء الواجهة العائمة (Auto-hide Overlay)
   const [showOverlay, setShowOverlay] = useState<boolean>(true);
-  const overlayTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   /**
    * إعادة ضبط وتنشيط مؤقت الإخفاء التلقائي لمدة 5 ثوانٍ
    */
   const resetOverlayTimer = useCallback(() => {
     setShowOverlay(true);
-    if (overlayTimerRef.current) {
-      clearTimeout(overlayTimerRef.current);
-    }
-    overlayTimerRef.current = setTimeout(() => {
-      setShowOverlay(false);
-    }, 5000);
   }, []);
 
   useEffect(() => {
-    resetOverlayTimer();
-    return () => {
-      if (overlayTimerRef.current) {
-        clearTimeout(overlayTimerRef.current);
-      }
-    };
-  }, [resetOverlayTimer]);
+    if (!showOverlay) return;
+
+    const timer = setTimeout(() => {
+      setShowOverlay(false);
+    }, 5000);
+
+    return () => clearTimeout(timer);
+  }, [showOverlay]);
+
+  // دعم أزرار ريموت التلفاز ولوحة المفاتيح
+  useTVRemoteNavigation({
+    onBack: () => router.back(),
+    onAnyKey: resetOverlayTimer,
+  });
 
   /**
    * إعادة تحميل مصدر الفيديو ومحاولة الاتصال بالبث مجدداً
@@ -96,34 +96,19 @@ export default function PlayerScreen(): React.JSX.Element {
     resetOverlayTimer();
   };
 
-  const handlePlaybackStatusUpdate = (status: AVPlaybackStatus) => {
-    if (!status.isLoaded) {
-      if (status.error) {
-        setPlaybackError(`خطأ في البث: ${status.error}`);
-        setIsBuffering(false);
-      }
-    } else {
-      setIsBuffering(status.isBuffering);
-      if (playbackError) {
-        setPlaybackError(null);
-      }
-    }
-  };
-
   return (
     <View className="flex-1 bg-black justify-center items-center">
-      {/* 1. مشغل الفيديو بملء الشاشة المطلق مع إعادة التحميل عبر retryKey */}
+      {/* 1. مشغل الفيديو المتطور بملء الشاشة مع دعم hls.js لقنوات m3u8 */}
       {streamUrl ? (
-        <Video
-          key={`video-stream-${retryKey}`}
-          ref={videoRef}
+        <TVPlayer
+          key={`tv-player-${retryKey}`}
+          streamUrl={streamUrl}
           style={StyleSheet.absoluteFillObject}
-          source={{ uri: streamUrl }}
-          useNativeControls
-          resizeMode={ResizeMode.CONTAIN}
-          shouldPlay
-          onPlaybackStatusUpdate={handlePlaybackStatusUpdate}
-          onError={(error) => setPlaybackError(`فشل الاتصال بمصدر البث: ${error}`)}
+          onBuffering={(buffering) => setIsBuffering(buffering)}
+          onError={(errorMsg) => {
+            setPlaybackError(errorMsg);
+            setIsBuffering(false);
+          }}
         />
       ) : (
         <View className="items-center px-6">
@@ -237,10 +222,10 @@ export default function PlayerScreen(): React.JSX.Element {
             ) : null}
           </View>
 
-          {/* تنبيه صغير بأن القائمة ستختفي تلقائياً */}
-          <View className="bg-black/50 px-3 py-1 rounded-md">
+          {/* تنبيه إرشادي */}
+          <View className="bg-black/50 px-3 py-1.5 rounded-md">
             <Text className="text-neutral-400 text-xs">
-              اضغط أي زر لإظهار التحكم
+              استخدم الأسهم و OK للتحكم بالريموت
             </Text>
           </View>
         </View>
@@ -251,12 +236,12 @@ export default function PlayerScreen(): React.JSX.Element {
         <View className="absolute inset-0 justify-center items-center bg-black/40 pointer-events-none">
           <ActivityIndicator size="large" color="#38bdf8" />
           <Text className="text-white text-base font-bold mt-4 bg-black/70 px-4 py-1.5 rounded-full">
-            جاري تهيئة البث المباشر...
+            جاري تهيئة البث المباشر (HLS)...
           </Text>
         </View>
       ) : null}
 
-      {/* 5. واجهة الخطأ مع زر إعادة المحاولة (له تركيز الريموت الافتراضي) وزر الرجوع */}
+      {/* 5. واجهة الخطأ مع زر إعادة المحاولة */}
       {playbackError ? (
         <View className="absolute inset-0 justify-center items-center bg-black/95 p-8 z-40">
           <MaterialIcons name="error-outline" size={64} color="#ef4444" />
@@ -268,7 +253,6 @@ export default function PlayerScreen(): React.JSX.Element {
           </Text>
 
           <View className="flex-row space-x-4">
-            {/* زر إعادة محاولة الاتصال - يحصل على التركيز الأساسي للريموت */}
             <Pressable
               hasTVPreferredFocus
               onPress={handleRetry}
@@ -296,7 +280,6 @@ export default function PlayerScreen(): React.JSX.Element {
               )}
             </Pressable>
 
-            {/* زر العودة لقائمة القنوات */}
             <Pressable
               onPress={() => router.back()}
               className="rounded-xl outline-none ml-4"
