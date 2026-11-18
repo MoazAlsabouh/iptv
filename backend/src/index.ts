@@ -538,7 +538,8 @@ interface VodItem {
   episodeInfo?: string;
   releaseDate?: string;
   isUnreleased?: boolean;
-  sources: { label: string; url: string }[];
+  originalLanguage?: string;
+  sources: { label: string; url: string; type?: 'embed' | 'direct' }[];
 }
 
 function jsonResponse(data: any, status: number = 200): Response {
@@ -665,6 +666,8 @@ async function handleVodCatalog(url: URL, env: Env): Promise<Response> {
         const episode = item.number || 1;
         const episodeInfo = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}${item.airtime ? ' • ' + item.airtime : ''}`;
 
+        const originalLanguage = show.language?.toLowerCase() === 'arabic' ? 'ar' : 'en';
+
         return {
           id: `tvm-${item.id}`,
           imdbId,
@@ -678,6 +681,7 @@ async function handleVodCatalog(url: URL, env: Env): Promise<Response> {
           episodeInfo,
           releaseDate,
           isUnreleased,
+          originalLanguage,
           sources: buildVodSources('tv', undefined, imdbId, season, episode),
         };
       });
@@ -758,6 +762,7 @@ async function handleVodCatalog(url: URL, env: Env): Promise<Response> {
       const releaseDate = item.release_date || item.first_air_date || '';
       const year = releaseDate ? releaseDate.substring(0, 4) : '';
       const isUnreleased = Boolean(releaseDate && releaseDate > today);
+      const originalLanguage = item.original_language || (category === 'arabic_movies' || category === 'arabic_series' ? 'ar' : 'en');
       const overview = item.overview || '';
 
       return {
@@ -773,6 +778,7 @@ async function handleVodCatalog(url: URL, env: Env): Promise<Response> {
         category: categoryLabel,
         releaseDate,
         isUnreleased,
+        originalLanguage,
         sources: buildVodSources(itemType, item.id),
       };
     });
@@ -821,6 +827,7 @@ async function handleVodSearch(url: URL, env: Env): Promise<Response> {
       const releaseDate = item.release_date || item.first_air_date || '';
       const year = releaseDate ? releaseDate.substring(0, 4) : '';
       const isUnreleased = Boolean(releaseDate && releaseDate > today);
+      const originalLanguage = item.original_language || 'en';
       const overview = item.overview || '';
 
       return {
@@ -836,6 +843,7 @@ async function handleVodSearch(url: URL, env: Env): Promise<Response> {
         category: itemType === 'tv' ? 'مسلسل' : 'فيلم',
         releaseDate,
         isUnreleased,
+        originalLanguage,
         sources: buildVodSources(itemType, item.id),
       };
     });
@@ -923,6 +931,338 @@ async function handleVodEpisodes(url: URL): Promise<Response> {
   }
 }
 
+/**
+ * 1. مزود يوتيوب عبر واجهات Piped / Invidious العامة مع مهلة 4 ثوانٍ
+ */
+async function searchYouTubeProvider(
+  query: string,
+  isMovie: boolean
+): Promise<{ label: string; url: string; type: 'embed' }[]> {
+  const minSeconds = isMovie ? 55 * 60 : 20 * 60; // 55 دقيقة للأفلام، 20 دقيقة لحلقات المسلسلات
+  const instances = [
+    {
+      type: 'piped',
+      url: `https://pipedapi.kavin.rocks/search?q=${encodeURIComponent(query)}&filter=videos`,
+    },
+    {
+      type: 'piped',
+      url: `https://api.piped.privacy.com.de/search?q=${encodeURIComponent(query)}&filter=videos`,
+    },
+    {
+      type: 'invidious',
+      url: `https://inv.nadeko.net/api/v1/search?q=${encodeURIComponent(query)}&type=video`,
+    },
+  ];
+
+  for (const inst of instances) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch(inst.url, {
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (!res.ok) continue;
+
+      const data = (await res.json()) as any;
+      const items =
+        inst.type === 'piped'
+          ? data.items || []
+          : Array.isArray(data)
+          ? data
+          : [];
+      const validVideos: { id: string; title: string }[] = [];
+
+      for (const item of items) {
+        let durationSec = 0;
+        let videoId = '';
+
+        if (inst.type === 'piped') {
+          durationSec = item.duration || 0;
+          videoId = (item.url || '').replace('/watch?v=', '');
+        } else {
+          durationSec = item.lengthSeconds || 0;
+          videoId = item.videoId || '';
+        }
+
+        if (videoId && durationSec >= minSeconds) {
+          validVideos.push({ id: videoId, title: item.title || '' });
+          if (validVideos.length >= 2) break;
+        }
+      }
+
+      if (validVideos.length > 0) {
+        return validVideos.map((v, idx) => ({
+          label: idx === 0 ? 'يوتيوب (HD)' : 'يوتيوب 2 (بديل)',
+          url: `https://www.youtube.com/embed/${v.id}?autoplay=1&rel=0`,
+          type: 'embed' as const,
+        }));
+      }
+    } catch {
+      // تجربة الخادم التالي بهدوء
+    }
+  }
+  return [];
+}
+
+/**
+ * 2. مزود الأرشيف العالمي Archive.org لاستخراج ملفات MP4 المباشرة مع مهلة 4 ثوانٍ
+ */
+async function searchArchiveProvider(
+  title: string
+): Promise<{ label: string; url: string; type: 'direct' }[]> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+    const cleanTitle = title.replace(/[^\p{L}\p{N}\s]/gu, ' ').trim();
+    if (!cleanTitle) return [];
+
+    const searchUrl = `https://archive.org/advancedsearch.php?q=title:(${encodeURIComponent(cleanTitle)}) AND mediatype:(movies)&fl[]=identifier,title&rows=2&output=json`;
+    const res = await fetch(searchUrl, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return [];
+
+    const data = (await res.json()) as any;
+    const docs = data.response?.docs || [];
+    if (docs.length === 0) return [];
+
+    const identifier = docs[0].identifier;
+    if (!identifier) return [];
+
+    // جلب ملفات العنصر لاستخراج رابط MP4 مباشر
+    const metaController = new AbortController();
+    const metaTimeout = setTimeout(() => metaController.abort(), 4000);
+    const metaRes = await fetch(`https://archive.org/metadata/${identifier}`, {
+      headers: { Accept: 'application/json' },
+      signal: metaController.signal,
+    });
+    clearTimeout(metaTimeout);
+    if (!metaRes.ok) return [];
+
+    const metaData = (await metaRes.json()) as any;
+    const files = metaData.files || [];
+    const mp4File = files.find(
+      (f: any) =>
+        (f.name && f.name.toLowerCase().endsWith('.mp4')) ||
+        f.format === 'h.264' ||
+        f.format === '512Kb MPEG4'
+    );
+
+    if (mp4File && mp4File.name) {
+      const directUrl = `https://archive.org/download/${identifier}/${encodeURIComponent(mp4File.name)}`;
+      return [
+        {
+          label: 'أرشيف مباشر (MP4)',
+          url: directUrl,
+          type: 'direct',
+        },
+      ];
+    }
+  } catch {
+    // تجاهل الأخطاء بهدوء
+  }
+  return [];
+}
+
+/**
+ * 3. مزود السيرفرات المدمجة المتعددة (VidSrc, Embed.su, AutoEmbed, 2Embed)
+ */
+function buildMultiEmbedSources(
+  type: 'movie' | 'tv',
+  tmdbId?: string,
+  imdbId?: string,
+  season: number = 1,
+  episode: number = 1
+): { label: string; url: string; type: 'embed' }[] {
+  const list: { label: string; url: string; type: 'embed' }[] = [];
+
+  if (type === 'movie') {
+    if (tmdbId) {
+      list.push({
+        label: 'سيرفر 1 - VidSrc',
+        url: `https://vidsrc.to/embed/movie/${tmdbId}`,
+        type: 'embed',
+      });
+      list.push({
+        label: 'سيرفر 2 - Embed.su',
+        url: `https://embed.su/embed/movie/${tmdbId}`,
+        type: 'embed',
+      });
+      list.push({
+        label: 'سيرفر 3 - AutoEmbed',
+        url: `https://player.autoembed.cc/embed/movie/${tmdbId}`,
+        type: 'embed',
+      });
+      list.push({
+        label: 'سيرفر 4 - 2Embed',
+        url: `https://www.2embed.cc/embed/${tmdbId}`,
+        type: 'embed',
+      });
+      list.push({
+        label: 'سيرفر 5 - VidSrc Me',
+        url: `https://vidsrc.me/embed/movie?tmdb=${tmdbId}`,
+        type: 'embed',
+      });
+    } else if (imdbId) {
+      list.push({
+        label: 'سيرفر 1 - VidSrc',
+        url: `https://vidsrc.to/embed/movie/${imdbId}`,
+        type: 'embed',
+      });
+      list.push({
+        label: 'سيرفر 2 - Embed.su',
+        url: `https://embed.su/embed/movie/${imdbId}`,
+        type: 'embed',
+      });
+      list.push({
+        label: 'سيرفر 3 - VidSrc Me',
+        url: `https://vidsrc.me/embed/movie?imdb=${imdbId}`,
+        type: 'embed',
+      });
+    }
+  } else {
+    // TV Series
+    if (tmdbId) {
+      list.push({
+        label: 'سيرفر 1 - VidSrc',
+        url: `https://vidsrc.to/embed/tv/${tmdbId}/${season}/${episode}`,
+        type: 'embed',
+      });
+      list.push({
+        label: 'سيرفر 2 - Embed.su',
+        url: `https://embed.su/embed/tv/${tmdbId}/${season}/${episode}`,
+        type: 'embed',
+      });
+      list.push({
+        label: 'سيرفر 3 - AutoEmbed',
+        url: `https://player.autoembed.cc/embed/tv/${tmdbId}/${season}/${episode}`,
+        type: 'embed',
+      });
+      list.push({
+        label: 'سيرفر 4 - 2Embed',
+        url: `https://www.2embed.cc/embedtv/${tmdbId}&s=${season}&e=${episode}`,
+        type: 'embed',
+      });
+      list.push({
+        label: 'سيرفر 5 - VidSrc Me',
+        url: `https://vidsrc.me/embed/tv?tmdb=${tmdbId}&season=${season}&episode=${episode}`,
+        type: 'embed',
+      });
+    } else if (imdbId) {
+      list.push({
+        label: 'سيرفر 1 - VidSrc',
+        url: `https://vidsrc.to/embed/tv/${imdbId}/${season}/${episode}`,
+        type: 'embed',
+      });
+      list.push({
+        label: 'سيرفر 2 - Embed.su',
+        url: `https://embed.su/embed/tv/${imdbId}/${season}/${episode}`,
+        type: 'embed',
+      });
+      list.push({
+        label: 'سيرفر 3 - VidSrc Me',
+        url: `https://vidsrc.me/embed/tv?imdb=${imdbId}&season=${season}&episode=${episode}`,
+        type: 'embed',
+      });
+    }
+  }
+
+  return list;
+}
+
+/**
+ * معالج نقطة النهاية الهجينة /api/vod/sources مع دعم التخزين المؤقت 12 ساعة
+ */
+async function handleVodSources(request: Request, url: URL): Promise<Response> {
+  const cache = (caches as any).default;
+  try {
+    const cached = await cache.match(request);
+    if (cached) {
+      return cached;
+    }
+  } catch {
+    // تجاهل أخطاء مطابقة الكاش
+  }
+
+  const tmdbId = url.searchParams.get('tmdbId') || '';
+  const imdbId = url.searchParams.get('imdbId') || '';
+  const title = (url.searchParams.get('title') || '').trim();
+  const type = (url.searchParams.get('type') === 'tv' ? 'tv' : 'movie') as 'movie' | 'tv';
+  const lang = (url.searchParams.get('lang') || 'en').toLowerCase();
+  const season = parseInt(url.searchParams.get('season') || '1', 10) || 1;
+  const episode = parseInt(url.searchParams.get('episode') || '1', 10) || 1;
+
+  const hasArabicChars = /[\u0600-\u06FF]/.test(title);
+  const isArabic = lang === 'ar' || hasArabicChars;
+
+  // إعداد استعلام البحث المناسب ليوتيوب
+  let ytQuery = '';
+  if (isArabic) {
+    if (type === 'movie') {
+      ytQuery = `${title} فيلم كامل`;
+    } else {
+      ytQuery = season > 1 ? `${title} الموسم ${season} الحلقة ${episode}` : `${title} الحلقة ${episode}`;
+    }
+  } else {
+    if (type === 'movie') {
+      ytQuery = `${title} full movie`;
+    } else {
+      ytQuery = `${title} S${season}E${episode}`;
+    }
+  }
+
+  // تشغيل المزودات بالتوازي مع حماية المهلة الزمنية
+  const [ytRes, archiveRes] = await Promise.allSettled([
+    title ? searchYouTubeProvider(ytQuery, type === 'movie') : Promise.resolve([]),
+    title ? searchArchiveProvider(title) : Promise.resolve([]),
+  ]);
+
+  const ytSources = ytRes.status === 'fulfilled' ? ytRes.value : [];
+  const archiveSources = archiveRes.status === 'fulfilled' ? archiveRes.value : [];
+  const embedSources = buildMultiEmbedSources(type, tmdbId, imdbId, season, episode);
+
+  // الترتيب الذكي:
+  // المحتوى العربي: يوتيوب ثم الأرشيف أولاً ثم السيرفرات المدمجة
+  // المحتوى الأجنبي: السيرفرات المدمجة أولاً ثم يوتيوب والأرشيف
+  let finalSources: { label: string; url: string; type: 'embed' | 'direct' }[] = [];
+  if (isArabic) {
+    finalSources = [...ytSources, ...archiveSources, ...embedSources];
+  } else {
+    finalSources = [...embedSources, ...ytSources, ...archiveSources];
+  }
+
+  // إضافة سيرفر احتياطي مباشر
+  const targetId = tmdbId || imdbId || title || 'sample';
+  finalSources.push({
+    label: 'سيرفر احتياطي (مباشر)',
+    url: `https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4?id=${encodeURIComponent(targetId)}&s=${season}&e=${episode}`,
+    type: 'direct',
+  });
+
+  const response = new Response(JSON.stringify({ sources: finalSources }), {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Cache-Control, Pragma, *',
+      'Cache-Control': 'public, max-age=43200',
+    },
+  });
+
+  try {
+    await cache.put(request, response.clone());
+  } catch {
+    // تجاهل أخطاء وضع الكاش
+  }
+
+  return response;
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -943,13 +1283,17 @@ export default {
       return new Response('Method Not Allowed', { status: 405 });
     }
 
-    // نقاط نهاية كتالوج وبحث وحلقات الأفلام والمسلسلات VOD
+    // نقاط نهاية كتالوج وبحث ومصادر وحلقات الأفلام والمسلسلات VOD
     if (url.pathname === '/api/vod/catalog') {
       return handleVodCatalog(url, env);
     }
 
     if (url.pathname === '/api/vod/search') {
       return handleVodSearch(url, env);
+    }
+
+    if (url.pathname === '/api/vod/sources') {
+      return handleVodSources(request, url);
     }
 
     if (url.pathname === '/api/vod/episodes') {

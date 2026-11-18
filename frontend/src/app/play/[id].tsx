@@ -34,6 +34,9 @@ export default function PlayerScreen(): React.JSX.Element {
     type?: string;
     tmdbId?: string;
     imdbId?: string;
+    season?: string;
+    episode?: string;
+    lang?: string;
   }>();
 
   const { favoriteIds, toggleFavorite } = useAppStore();
@@ -84,11 +87,16 @@ export default function PlayerScreen(): React.JSX.Element {
     );
   }, [params.type, channelId]);
 
+  const initialSeason = params.season ? parseInt(params.season, 10) || 1 : 1;
+  const initialEpisode = params.episode ? parseInt(params.episode, 10) || 1 : 1;
+
   const [seasons, setSeasons] = useState<{ season: number; episodes: any[] }[]>([]);
-  const [selectedSeason, setSelectedSeason] = useState<number>(1);
-  const [selectedEpisode, setSelectedEpisode] = useState<number>(1);
+  const [selectedSeason, setSelectedSeason] = useState<number>(initialSeason);
+  const [selectedEpisode, setSelectedEpisode] = useState<number>(initialEpisode);
   const [showEpisodesModal, setShowEpisodesModal] = useState<boolean>(false);
   const [customSources, setCustomSources] = useState<StreamSource[] | null>(null);
+  const [vodSources, setVodSources] = useState<StreamSource[] | null>(null);
+  const [isLoadingSources, setIsLoadingSources] = useState<boolean>(false);
 
   useEffect(() => {
     if (!isTvSeries) return;
@@ -119,8 +127,77 @@ export default function PlayerScreen(): React.JSX.Element {
     };
   }, [isTvSeries, channelTitle, params.imdbId]);
 
+  // جلب السيرفرات الهجينة من خادم /api/vod/sources للأفلام والمسلسلات تلقائياً
+  useEffect(() => {
+    const isVod =
+      params.type === 'movie' ||
+      params.type === 'tv' ||
+      Boolean(params.tmdbId || params.imdbId) ||
+      channelId.startsWith('tmdb-') ||
+      channelId.startsWith('tvm-');
+
+    if (!isVod) return;
+
+    let isMounted = true;
+    setIsLoadingSources(true);
+
+    const fetchHybridSources = async () => {
+      try {
+        const queryParams = new URLSearchParams();
+        if (params.tmdbId) queryParams.set('tmdbId', params.tmdbId);
+        if (params.imdbId) queryParams.set('imdbId', params.imdbId);
+        if (channelTitle) queryParams.set('title', channelTitle);
+        queryParams.set('type', isTvSeries ? 'tv' : 'movie');
+        if (params.lang) queryParams.set('lang', params.lang);
+        queryParams.set('season', String(selectedSeason));
+        queryParams.set('episode', String(selectedEpisode));
+
+        const res = await fetch(
+          `https://iptv-backend.moaznsm.workers.dev/api/vod/sources?${queryParams.toString()}`
+        );
+
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && data.sources && Array.isArray(data.sources) && data.sources.length > 0) {
+            setVodSources(data.sources);
+            setActiveSourceIndex(0);
+            setIsBuffering(true);
+            setPlaybackError(null);
+            setRetryKey((prev) => prev + 1);
+            setIsLoadingSources(false);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('[Player] Failed to load hybrid VOD sources:', err);
+      }
+      if (isMounted) {
+        setIsLoadingSources(false);
+      }
+    };
+
+    fetchHybridSources();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [
+    params.tmdbId,
+    params.imdbId,
+    channelTitle,
+    isTvSeries,
+    params.lang,
+    selectedSeason,
+    selectedEpisode,
+    params.type,
+    channelId,
+  ]);
+
   // مصادر البث المتعددة للقناة أو العمل
   const channelSources: StreamSource[] = useMemo(() => {
+    if (vodSources && vodSources.length > 0) {
+      return vodSources;
+    }
     if (customSources && customSources.length > 0) {
       return customSources;
     }
@@ -137,58 +214,20 @@ export default function PlayerScreen(): React.JSX.Element {
     }
     const found = channels.find((c) => c.id === channelId);
     return found?.sources || [];
-  }, [customSources, params.sources, channels, channelId]);
+  }, [vodSources, customSources, params.sources, channels, channelId]);
 
   const [activeSourceIndex, setActiveSourceIndex] = useState<number>(0);
   const [hlsLevels, setHlsLevels] = useState<HlsLevelOption[]>([]);
   const [selectedHlsLevel, setSelectedHlsLevel] = useState<number>(-1);
   const [showQualityModal, setShowQualityModal] = useState<boolean>(false);
 
-  // اختيار حلقة معينة وإعادة بناء سيرفرات البث لها
+  // اختيار حلقة معينة للمسلسلات
   const handleSelectEpisode = (seasonNum: number, episodeNum: number) => {
     setSelectedSeason(seasonNum);
     setSelectedEpisode(episodeNum);
     setShowEpisodesModal(false);
-
-    const tmdb = params.tmdbId;
-    const imdb = params.imdbId;
-    const targetId = tmdb || imdb || channelId;
-    const newSources: StreamSource[] = [];
-
-    if (tmdb) {
-      newSources.push({
-        label: 'سيرفر 1 (VidSrc)',
-        url: `https://vidsrc.to/embed/tv/${tmdb}/${seasonNum}/${episodeNum}`,
-      });
-      newSources.push({
-        label: 'سيرفر 2 (Embed.su)',
-        url: `https://embed.su/embed/tv/${tmdb}/${seasonNum}/${episodeNum}`,
-      });
-      newSources.push({
-        label: 'سيرفر 3 (VidSrc Me)',
-        url: `https://vidsrc.me/embed/tv?tmdb=${tmdb}&season=${seasonNum}&episode=${episodeNum}`,
-      });
-    } else if (imdb) {
-      newSources.push({
-        label: 'سيرفر 1 (VidSrc)',
-        url: `https://vidsrc.to/embed/tv/${imdb}/${seasonNum}/${episodeNum}`,
-      });
-      newSources.push({
-        label: 'سيرفر 2 (VidSrc Me)',
-        url: `https://vidsrc.me/embed/tv?imdb=${imdb}&season=${seasonNum}&episode=${episodeNum}`,
-      });
-    }
-
-    newSources.push({
-      label: `سيرفر ${newSources.length + 1} (مباشر)`,
-      url: `https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4?id=${targetId}&s=${seasonNum}&e=${episodeNum}`,
-    });
-
-    setCustomSources(newSources);
-    setActiveSourceIndex(0);
     setIsBuffering(true);
     setPlaybackError(null);
-    setRetryKey((prev) => prev + 1);
   };
 
   // إعادة تعيين مؤشر المصدر عند تغيير القناة
@@ -292,6 +331,16 @@ export default function PlayerScreen(): React.JSX.Element {
           <Text style={styles.noUrlText}>رابط تشغيل القناة غير متوفر</Text>
         </View>
       ) : null}
+
+      {/* مؤشر جلب السيرفرات الهجينة الذكية */}
+      {isLoadingSources && (
+        <View style={styles.loadingSourcesOverlay}>
+          <ActivityIndicator size="small" color="#38bdf8" />
+          <Text style={styles.loadingSourcesText}>
+            جاري جلب أفضل سيرفرات المشاهدة...
+          </Text>
+        </View>
+      )}
 
       {/* 2. طبقة حساسة للنقر لاستعادة الواجهة عند اختفائها */}
       {!showOverlay && !playbackError && !showQualityModal && (
@@ -475,6 +524,12 @@ export default function PlayerScreen(): React.JSX.Element {
                   <View style={styles.optionsWrap}>
                     {channelSources.map((src, idx) => {
                       const isCurrentSource = idx === activeSourceIndex;
+                      const isYouTube =
+                        src.label.includes('يوتيوب') || src.url.includes('youtube');
+                      const isArchive =
+                        src.label.includes('أرشيف') || src.url.includes('archive.org');
+                      const isDirect = src.label.includes('مباشر');
+
                       return (
                         <Pressable
                           key={`source-${idx}`}
@@ -492,11 +547,35 @@ export default function PlayerScreen(): React.JSX.Element {
                         >
                           {({ focused }) => (
                             <View style={styles.optionContent}>
-                              {isCurrentSource && (
+                              {isCurrentSource ? (
                                 <MaterialIcons
                                   name="check"
                                   size={18}
                                   color={focused ? '#000000' : '#38bdf8'}
+                                />
+                              ) : isYouTube ? (
+                                <MaterialIcons
+                                  name="ondemand-video"
+                                  size={18}
+                                  color={focused ? '#000000' : '#ef4444'}
+                                />
+                              ) : isArchive ? (
+                                <MaterialIcons
+                                  name="cloud-download"
+                                  size={18}
+                                  color={focused ? '#000000' : '#38bdf8'}
+                                />
+                              ) : isDirect ? (
+                                <MaterialIcons
+                                  name="videocam"
+                                  size={18}
+                                  color={focused ? '#000000' : '#10b981'}
+                                />
+                              ) : (
+                                <MaterialIcons
+                                  name="dns"
+                                  size={18}
+                                  color={focused ? '#000000' : '#c084fc'}
                                 />
                               )}
                               <Text
@@ -1021,6 +1100,29 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     marginTop: 16,
+  },
+  loadingSourcesOverlay: {
+    position: 'absolute',
+    top: 70,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    zIndex: 80,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.3)',
+    shadowColor: '#000',
+    shadowOpacity: 0.6,
+    shadowRadius: 10,
+  },
+  loadingSourcesText: {
+    color: '#38bdf8',
+    fontSize: 13,
+    fontWeight: '700',
   },
   noUrlBox: {
     justifyContent: 'center',

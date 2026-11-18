@@ -39,6 +39,7 @@ export interface VodItem {
   episodeInfo?: string;
   releaseDate?: string;
   isUnreleased?: boolean;
+  originalLanguage?: string;
   sources: VodSource[];
 }
 
@@ -283,6 +284,9 @@ export default function MoviesScreen(): React.JSX.Element {
       return;
     }
 
+    const detectedLang =
+      item.originalLanguage || (item.category?.includes('عربي') ? 'ar' : 'en');
+
     if (item.type === 'tv') {
       // توجيه المسلسل لشاشة تفاصيل واختيار الحلقات
       router.push({
@@ -298,6 +302,7 @@ export default function MoviesScreen(): React.JSX.Element {
           category: item.category || 'مسلسل',
           tmdbId: item.tmdbId ? String(item.tmdbId) : undefined,
           imdbId: item.imdbId,
+          originalLanguage: detectedLang,
         },
       });
     } else {
@@ -314,6 +319,7 @@ export default function MoviesScreen(): React.JSX.Element {
           type: item.type,
           tmdbId: item.tmdbId ? String(item.tmdbId) : undefined,
           imdbId: item.imdbId,
+          lang: detectedLang,
         },
       });
     }
