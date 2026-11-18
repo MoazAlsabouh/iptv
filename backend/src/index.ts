@@ -49,69 +49,250 @@ const ARAB_COUNTRIES: CountrySource[] = [
   { code: 'km', name: 'جزر القمر' },
 ];
 
+const ARAB_COUNTRY_MAP: Record<string, string> = {
+  SY: 'سوريا',
+  SA: 'السعودية',
+  EG: 'مصر',
+  AE: 'الإمارات',
+  JO: 'الأردن',
+  LB: 'لبنان',
+  PS: 'فلسطين',
+  IQ: 'العراق',
+  QA: 'قطر',
+  KW: 'الكويت',
+  MA: 'المغرب',
+  DZ: 'الجزائر',
+  TN: 'تونس',
+  OM: 'عُمان',
+  BH: 'البحرين',
+  LY: 'ليبيا',
+  YE: 'اليمن',
+  SD: 'السودان',
+  MR: 'موريتانيا',
+  SO: 'الصومال',
+  DJ: 'جيبوتي',
+  KM: 'جزر القمر',
+};
+
+const ARAB_COUNTRY_NAME_MAP: Record<string, string> = {
+  egypt: 'مصر',
+  'saudi arabia': 'السعودية',
+  syria: 'سوريا',
+  'united arab emirates': 'الإمارات',
+  uae: 'الإمارات',
+  jordan: 'الأردن',
+  lebanon: 'لبنان',
+  palestine: 'فلسطين',
+  iraq: 'العراق',
+  qatar: 'قطر',
+  kuwait: 'الكويت',
+  morocco: 'المغرب',
+  algeria: 'الجزائر',
+  tunisia: 'تونس',
+  oman: 'عُمان',
+  bahrain: 'البحرين',
+  libya: 'ليبيا',
+  yemen: 'اليمن',
+  sudan: 'السودان',
+  mauritania: 'موريتانيا',
+  somalia: 'الصومال',
+  djibouti: 'جيبوتي',
+  comoros: 'جزر القمر',
+};
+
+/**
+ * فحص ما إذا كان سطر القناة ينتمي لإحدى الدول العربية الـ 22
+ */
+function detectArabCountry(extinf: string): string | null {
+  // 1. فحص tvg-country="..."
+  const countryMatch = extinf.match(/tvg-country="([^"]*)"/i);
+  if (countryMatch) {
+    const code = countryMatch[1].trim().toUpperCase();
+    if (ARAB_COUNTRY_MAP[code]) {
+      return ARAB_COUNTRY_MAP[code];
+    }
+    const nameLower = countryMatch[1].trim().toLowerCase();
+    if (ARAB_COUNTRY_NAME_MAP[nameLower]) {
+      return ARAB_COUNTRY_NAME_MAP[nameLower];
+    }
+  }
+
+  // 2. فحص group-title="..."
+  const groupMatch = extinf.match(/group-title="([^"]*)"/i);
+  if (groupMatch) {
+    const rawGroup = groupMatch[1].trim().toLowerCase();
+    for (const [eng, ara] of Object.entries(ARAB_COUNTRY_NAME_MAP)) {
+      if (rawGroup.includes(eng)) {
+        return ara;
+      }
+    }
+  }
+
+  // 3. فحص tvg-id="...code"
+  const idMatch = extinf.match(/tvg-id="([^"]*)"/i);
+  if (idMatch) {
+    const idLower = idMatch[1].trim().toLowerCase();
+    for (const code of Object.keys(ARAB_COUNTRY_MAP)) {
+      const c = code.toLowerCase();
+      if (idLower.endsWith(`.${c}`) || idLower.includes(`.${c}@`)) {
+        return ARAB_COUNTRY_MAP[code];
+      }
+    }
+  }
+
+  return null;
+}
+
 /**
  * تعريب وتوحيد تصنيفات القنوات إلى أحد الأقسام العربية المعتمدة حصراً:
  * (رياضة، أخبار واقتصاد، أفلام ومسلسلات، أطفال وعائلة، وثائقيات وتعليم، قنوات دينية، موسيقى، قنوات عامة ومنوعة)
  */
-function translateCategory(rawCategory: string): string {
-  if (!rawCategory || rawCategory.trim().length === 0) {
-    return 'قنوات عامة ومنوعة';
+function translateCategory(rawCategory: string, channelName: string = ''): string {
+  const combined = `${rawCategory} ${channelName}`.toLowerCase();
+
+  if (['sport', 'sports', 'outdoor', 'auto', 'motorsport', 'رياض'].some((k) => combined.includes(k))) {
+    return 'رياضة';
   }
-
-  // دعم التصنيفات المركبة مثل Documentary;News
-  const parts = rawCategory.split(';').map((p) => p.trim().toLowerCase());
-
-  for (const part of parts) {
-    if (['sports', 'sport', 'outdoor', 'auto', 'motorsport'].some((k) => part.includes(k))) {
-      return 'رياضة';
-    }
-    if (['news', 'business', 'weather', 'legislative', 'finance'].some((k) => part.includes(k))) {
-      return 'أخبار واقتصاد';
-    }
-    if (['movie', 'movies', 'series', 'entertainment', 'comedy', 'drama', 'cinema'].some((k) => part.includes(k))) {
-      return 'أفلام ومسلسلات';
-    }
-    if (['kids', 'animation', 'family', 'children'].some((k) => part.includes(k))) {
-      return 'أطفال وعائلة';
-    }
-    if (['documentary', 'doc', 'science', 'education', 'travel', 'nature', 'history'].some((k) => part.includes(k))) {
-      return 'وثائقيات وتعليم';
-    }
-    if (['religious', 'islamic', 'quran', 'religion'].some((k) => part.includes(k))) {
-      return 'قنوات دينية';
-    }
-    if (['music', 'song'].some((k) => part.includes(k))) {
-      return 'موسيقى';
-    }
-    if (['general', 'undefined', 'classic', 'culture', 'lifestyle', 'shop', 'relax'].some((k) => part.includes(k))) {
-      return 'قنوات عامة ومنوعة';
-    }
+  if (['news', 'business', 'weather', 'legislative', 'finance', 'أخبار', 'اقتصاد', 'حدث', 'عاجل'].some((k) => combined.includes(k))) {
+    return 'أخبار واقتصاد';
+  }
+  if (['movie', 'movies', 'series', 'entertainment', 'comedy', 'drama', 'cinema', 'aflam', 'دراما', 'سينما', 'مسلسل', 'فيلم'].some((k) => combined.includes(k))) {
+    return 'أفلام ومسلسلات';
+  }
+  if (['kids', 'animation', 'family', 'children', 'cartoon', 'اطفال', 'أطفال', 'كرتون'].some((k) => combined.includes(k))) {
+    return 'أطفال وعائلة';
+  }
+  if (['documentary', 'doc', 'science', 'education', 'travel', 'nature', 'history', 'وثائق', 'تعليم'].some((k) => combined.includes(k))) {
+    return 'وثائقيات وتعليم';
+  }
+  if (['religious', 'islamic', 'quran', 'religion', 'coptic', 'huda', 'قرآن', 'دين', 'دعوة', 'إسلام'].some((k) => combined.includes(k))) {
+    return 'قنوات دينية';
+  }
+  if (['music', 'song', 'طرب', 'أغاني', 'اغاني', 'موسيقى'].some((k) => combined.includes(k))) {
+    return 'موسيقى';
   }
 
   return 'قنوات عامة ومنوعة';
 }
 
 /**
- * جلب قائمة M3U فردية لدولة معينة بأمان
+ * جلب آمن للروابط مع مهلة زمنية (Timeout) لتجنب تعليق العامل السحابي
  */
-async function fetchCountrySource(country: CountrySource): Promise<{ country: CountrySource; content: string }> {
-  const url = `https://iptv-org.github.io/iptv/countries/${country.code}.m3u`;
+async function fetchWithTimeout(url: string, timeoutMs: number = 8000): Promise<string> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
     const res = await fetch(url, {
+      signal: controller.signal,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTVStream/1.0',
       },
     });
-    if (!res.ok) return { country, content: '' };
-    const content = await res.text();
-    return { country, content };
+    clearTimeout(timeoutId);
+    if (!res.ok) return '';
+    return await res.text();
   } catch {
-    return { country, content: '' };
+    clearTimeout(timeoutId);
+    return '';
   }
 }
 
 /**
- * معالجة نص M3U للدولة واستخراج القنوات مع تعريب التصنيف وإضافة tvg-country وإلغاء التكرار
+ * تنظيف وتصفية سطر #EXTINF وحذف الشعارات المعطوبة
+ */
+function sanitizeExtinf(
+  rawExtinf: string,
+  countryName: string,
+  categoryName: string
+): string {
+  let updated = rawExtinf;
+
+  // 1. group-title
+  const groupTitleRegex = /group-title="([^"]*)"/i;
+  if (groupTitleRegex.test(updated)) {
+    updated = updated.replace(groupTitleRegex, `group-title="${categoryName}"`);
+  } else {
+    const commaIdx = updated.lastIndexOf(',');
+    if (commaIdx !== -1) {
+      updated = `${updated.substring(0, commaIdx)} group-title="${categoryName}"${updated.substring(commaIdx)}`;
+    } else {
+      updated = `${updated} group-title="${categoryName}"`;
+    }
+  }
+
+  // 2. tvg-country
+  const countryRegex = /tvg-country="([^"]*)"/i;
+  if (countryRegex.test(updated)) {
+    updated = updated.replace(countryRegex, `tvg-country="${countryName}"`);
+  } else {
+    const commaIdx = updated.lastIndexOf(',');
+    if (commaIdx !== -1) {
+      updated = `${updated.substring(0, commaIdx)} tvg-country="${countryName}"${updated.substring(commaIdx)}`;
+    } else {
+      updated = `${updated} tvg-country="${countryName}"`;
+    }
+  }
+
+  // 3. تنظيف tvg-logo
+  const logoRegex = /tvg-logo="([^"]*)"/i;
+  const logoMatch = updated.match(logoRegex);
+  if (logoMatch) {
+    const rawLogo = logoMatch[1].trim();
+    const isBroken =
+      (!rawLogo.startsWith('http://') && !rawLogo.startsWith('https://')) ||
+      rawLogo.includes('twimg.com') ||
+      rawLogo.includes('pbs.twimg') ||
+      rawLogo.includes('example.com') ||
+      rawLogo.length < 10;
+
+    if (isBroken) {
+      updated = updated.replace(logoRegex, 'tvg-logo=""');
+    }
+  }
+
+  return updated;
+}
+
+/**
+ * معالجة قائمة Free-TV (الأولوية الأولى - الأكثر استقراراً)
+ */
+function processFreeTVM3U(
+  content: string,
+  urlSet: Set<string>,
+  entries: ChannelEntry[]
+): void {
+  const lines = content.split('\n');
+  const total = lines.length;
+  let currentExtinf = '';
+
+  for (let i = 0; i < total; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    if (line.startsWith('#EXTINF:')) {
+      currentExtinf = line;
+    } else if (!line.startsWith('#') && currentExtinf) {
+      if (line.startsWith('http://') || line.startsWith('https://')) {
+        const country = detectArabCountry(currentExtinf);
+        if (country) {
+          if (!urlSet.has(line)) {
+            urlSet.add(line);
+            const commaIdx = currentExtinf.lastIndexOf(',');
+            const chName = commaIdx !== -1 ? currentExtinf.substring(commaIdx + 1) : '';
+            const category = translateCategory('', chName);
+            const sanitized = sanitizeExtinf(currentExtinf, country, category);
+            entries.push({ extinf: sanitized, url: line });
+          }
+        }
+      }
+      currentExtinf = '';
+    }
+  }
+}
+
+/**
+ * معالجة نص M3U للدول وتوحيده
  */
 function processCountryM3U(
   content: string,
@@ -131,60 +312,18 @@ function processCountryM3U(
       currentExtinf = line;
     } else if (!line.startsWith('#') && currentExtinf) {
       if (line.startsWith('http://') || line.startsWith('https://')) {
-        // إزالة القنوات المكررة بناءً على رابط البث المباشر
         if (!urlSet.has(line)) {
           urlSet.add(line);
 
-          let updatedExtinf = currentExtinf;
-
-          // 1. تعريب وتوحيد group-title بدقة
           const groupTitleRegex = /group-title="([^"]*)"/i;
-          const groupMatch = updatedExtinf.match(groupTitleRegex);
-          const rawGroup = groupMatch ? groupMatch[1] : '';
-          const translatedGroup = translateCategory(rawGroup);
+          const match = currentExtinf.match(groupTitleRegex);
+          const rawGroup = match ? match[1] : '';
+          const commaIdx = currentExtinf.lastIndexOf(',');
+          const chName = commaIdx !== -1 ? currentExtinf.substring(commaIdx + 1) : '';
+          const category = translateCategory(rawGroup, chName);
 
-          if (groupMatch) {
-            updatedExtinf = updatedExtinf.replace(groupTitleRegex, `group-title="${translatedGroup}"`);
-          } else {
-            const commaIdx = updatedExtinf.lastIndexOf(',');
-            if (commaIdx !== -1) {
-              updatedExtinf = `${updatedExtinf.substring(0, commaIdx)} group-title="${translatedGroup}"${updatedExtinf.substring(commaIdx)}`;
-            } else {
-              updatedExtinf = `${updatedExtinf} group-title="${translatedGroup}"`;
-            }
-          }
-
-          // 2. إضافة أو تحديث سمة tvg-country بالاسم العربي للدولة
-          const countryRegex = /tvg-country="([^"]*)"/i;
-          if (countryRegex.test(updatedExtinf)) {
-            updatedExtinf = updatedExtinf.replace(countryRegex, `tvg-country="${countryName}"`);
-          } else {
-            const commaIdx = updatedExtinf.lastIndexOf(',');
-            if (commaIdx !== -1) {
-              updatedExtinf = `${updatedExtinf.substring(0, commaIdx)} tvg-country="${countryName}"${updatedExtinf.substring(commaIdx)}`;
-            } else {
-              updatedExtinf = `${updatedExtinf} tvg-country="${countryName}"`;
-            }
-          }
-
-          // 3. تنظيف وتفريغ روابط tvg-logo التالفة أو القديمة (مثل twimg.com أو التي لا تبدأ بـ http)
-          const logoRegex = /tvg-logo="([^"]*)"/i;
-          const logoMatch = updatedExtinf.match(logoRegex);
-          if (logoMatch) {
-            const rawLogo = logoMatch[1].trim();
-            const isBroken =
-              (!rawLogo.startsWith('http://') && !rawLogo.startsWith('https://')) ||
-              rawLogo.includes('twimg.com') ||
-              rawLogo.includes('pbs.twimg') ||
-              rawLogo.includes('example.com') ||
-              rawLogo.length < 10;
-
-            if (isBroken) {
-              updatedExtinf = updatedExtinf.replace(logoRegex, 'tvg-logo=""');
-            }
-          }
-
-          entries.push({ extinf: updatedExtinf, url: line });
+          const sanitized = sanitizeExtinf(currentExtinf, countryName, category);
+          entries.push({ extinf: sanitized, url: line });
         }
       }
       currentExtinf = '';
@@ -193,18 +332,135 @@ function processCountryM3U(
 }
 
 /**
- * جلب وتوحيد كافة القنوات العربية من قوائم الدول بالتوازي باستخدام Promise.allSettled
- * لضمان عدم تأثر باقي الدول في حال غياب أو تعطل ملف دولة معينة
+ * معالجة قائمة اللغة العربية (ara.m3u) لتغطية القنوات العربية الدولية
  */
-async function fetchAndNormalizeArabChannels(): Promise<string> {
-  const results = await Promise.allSettled(ARAB_COUNTRIES.map(fetchCountrySource));
+function processAraM3U(
+  content: string,
+  urlSet: Set<string>,
+  entries: ChannelEntry[]
+): void {
+  const lines = content.split('\n');
+  const total = lines.length;
+  let currentExtinf = '';
+
+  for (let i = 0; i < total; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    if (line.startsWith('#EXTINF:')) {
+      currentExtinf = line;
+    } else if (!line.startsWith('#') && currentExtinf) {
+      if (line.startsWith('http://') || line.startsWith('https://')) {
+        if (!urlSet.has(line)) {
+          urlSet.add(line);
+
+          const detectedCountry = detectArabCountry(currentExtinf) || 'قنوات عربية دولية';
+          const groupTitleRegex = /group-title="([^"]*)"/i;
+          const match = currentExtinf.match(groupTitleRegex);
+          const rawGroup = match ? match[1] : '';
+          const commaIdx = currentExtinf.lastIndexOf(',');
+          const chName = commaIdx !== -1 ? currentExtinf.substring(commaIdx + 1) : '';
+          const category = translateCategory(rawGroup, chName);
+
+          const sanitized = sanitizeExtinf(currentExtinf, detectedCountry, category);
+          entries.push({ extinf: sanitized, url: line });
+        }
+      }
+      currentExtinf = '';
+    }
+  }
+}
+
+/**
+ * معالجة قائمة DistroTV
+ */
+function processDistroM3U(
+  content: string,
+  urlSet: Set<string>,
+  entries: ChannelEntry[]
+): void {
+  const lines = content.split('\n');
+  const total = lines.length;
+  let currentExtinf = '';
+
+  for (let i = 0; i < total; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    if (line.startsWith('#EXTINF:')) {
+      currentExtinf = line;
+    } else if (!line.startsWith('#') && currentExtinf) {
+      if (line.startsWith('http://') || line.startsWith('https://')) {
+        const lower = currentExtinf.toLowerCase();
+        // تصفية المحتوى العربي أو الشرق أوسطي أو الأفلام الوثائقية
+        const isTarget =
+          lower.includes('arabic') ||
+          lower.includes('arab') ||
+          lower.includes('middle east') ||
+          detectArabCountry(currentExtinf);
+
+        if (isTarget && !urlSet.has(line)) {
+          urlSet.add(line);
+          const country = detectArabCountry(currentExtinf) || 'قنوات عربية دولية';
+          const commaIdx = currentExtinf.lastIndexOf(',');
+          const chName = commaIdx !== -1 ? currentExtinf.substring(commaIdx + 1) : '';
+          const category = translateCategory('', chName);
+
+          const sanitized = sanitizeExtinf(currentExtinf, country, category);
+          entries.push({ extinf: sanitized, url: line });
+        }
+      }
+      currentExtinf = '';
+    }
+  }
+}
+
+/**
+ * جلب وتوحيد كافة المصادر بالتوازي باستخدام Promise.allSettled
+ * مع منح الأولوية الأولى لقنوات Free-TV الموثوقة لتأخذ صدارة البث
+ */
+async function fetchAndNormalizeAllIPTV(): Promise<string> {
   const urlSet = new Set<string>();
   const entries: ChannelEntry[] = [];
 
-  for (const res of results) {
-    if (res.status === 'fulfilled' && res.value.content) {
-      processCountryM3U(res.value.content, res.value.country.name, urlSet, entries);
+  // جلب كافة المصادر بالتوازي وبأمان
+  const [freeTvRes, countryResults, araRes, distroRes] = await Promise.allSettled([
+    fetchWithTimeout('https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8', 12000),
+    Promise.allSettled(
+      ARAB_COUNTRIES.map(async (c) => {
+        const content = await fetchWithTimeout(
+          `https://iptv-org.github.io/iptv/countries/${c.code}.m3u`,
+          6000
+        );
+        return { country: c, content };
+      })
+    ),
+    fetchWithTimeout('https://iptv-org.github.io/iptv/languages/ara.m3u', 10000),
+    fetchWithTimeout('https://www.apsattv.com/distro.m3u', 6000),
+  ]);
+
+  // 1. الأولوية الأولى: قائمة Free-TV (تدخل في البداية لتكون "مصدر 1")
+  if (freeTvRes.status === 'fulfilled' && freeTvRes.value) {
+    processFreeTVM3U(freeTvRes.value, urlSet, entries);
+  }
+
+  // 2. الأولوية الثانية: قوائم الدول العربية الـ 22 من iptv-org
+  if (countryResults.status === 'fulfilled') {
+    for (const res of countryResults.value) {
+      if (res.status === 'fulfilled' && res.value.content) {
+        processCountryM3U(res.value.content, res.value.country.name, urlSet, entries);
+      }
     }
+  }
+
+  // 3. الأولوية الثالثة: قائمة اللغة العربية iptv-org لتغطية القنوات العربية الدولية
+  if (araRes.status === 'fulfilled' && araRes.value) {
+    processAraM3U(araRes.value, urlSet, entries);
+  }
+
+  // 4. الأولوية الرابعة: قائمة DistroTV
+  if (distroRes.status === 'fulfilled' && distroRes.value) {
+    processDistroM3U(distroRes.value, urlSet, entries);
   }
 
   const lines = ['#EXTM3U'];
@@ -276,9 +532,9 @@ export default {
       try {
         const apiKey = env.TMDB_API_KEY || 'YOUR_TMDB_API_KEY';
 
-        // جلب وتجميع قنوات الدول العربية مع الأفلام الرائجة بالتوازي
+        // جلب وتجميع كافة المصادر بالتوازي
         const [channelsM3U, movies] = await Promise.all([
-          fetchAndNormalizeArabChannels(),
+          fetchAndNormalizeAllIPTV(),
           fetchTrendingMovies(apiKey),
         ]);
 
@@ -300,7 +556,7 @@ export default {
           },
         });
       } catch (error) {
-        return new Response('خطأ في توليد قائمة M3U', { status: 500 });
+        return new Response('خطأ في توليد قائمة القنوات', { status: 500 });
       }
     }
 

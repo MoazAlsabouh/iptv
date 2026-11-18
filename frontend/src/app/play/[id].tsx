@@ -94,6 +94,13 @@ export default function PlayerScreen(): React.JSX.Element {
   const [selectedHlsLevel, setSelectedHlsLevel] = useState<number>(-1);
   const [showQualityModal, setShowQualityModal] = useState<boolean>(false);
 
+  // إعادة تعيين مؤشر المصدر عند تغيير القناة
+  useEffect(() => {
+    setActiveSourceIndex(0);
+    setPlaybackError(null);
+    setIsBuffering(true);
+  }, [channelId]);
+
   // رابط البث الفعلي بناءً على المصدر المختار
   const currentStreamUrl = useMemo(() => {
     if (channelSources.length > 0 && channelSources[activeSourceIndex]) {
@@ -140,7 +147,25 @@ export default function PlayerScreen(): React.JSX.Element {
     onAnyKey: resetOverlayTimer,
   });
 
+  // التبديل التلقائي الصامت للمصدر البديل عند حدوث خطأ
+  const handlePlayerError = useCallback(
+    (errorMsg: string) => {
+      if (channelSources.length > 1 && activeSourceIndex < channelSources.length - 1) {
+        // يوجد مصدر بديل للقناة، نقوم بالتبديل التلقائي الصامت للمصدر التالي
+        setIsBuffering(true);
+        setPlaybackError(null);
+        setActiveSourceIndex((prev) => prev + 1);
+      } else {
+        // تم استنفاد جميع المصادر المتاحة
+        setPlaybackError(errorMsg);
+        setIsBuffering(false);
+      }
+    },
+    [channelSources, activeSourceIndex]
+  );
+
   const handleRetry = () => {
+    setActiveSourceIndex(0);
     setPlaybackError(null);
     setIsBuffering(true);
     setRetryKey((prev) => prev + 1);
@@ -160,10 +185,7 @@ export default function PlayerScreen(): React.JSX.Element {
           onLevelsLoaded={(levels) => setHlsLevels(levels)}
           style={StyleSheet.absoluteFillObject}
           onBuffering={(buffering) => setIsBuffering(buffering)}
-          onError={(errorMsg) => {
-            setPlaybackError(errorMsg);
-            setIsBuffering(false);
-          }}
+          onError={handlePlayerError}
         />
       ) : (
         <View style={styles.noUrlBox}>
@@ -440,7 +462,11 @@ export default function PlayerScreen(): React.JSX.Element {
       {isBuffering && !playbackError && currentStreamUrl ? (
         <View style={styles.bufferingContainer} pointerEvents="none">
           <ActivityIndicator size="large" color="#38bdf8" />
-          <Text style={styles.bufferingText}>جاري تهيئة البث المباشر...</Text>
+          <Text style={styles.bufferingText}>
+            {activeSourceIndex > 0
+              ? 'جاري الاتصال بمصدر بث بديل...'
+              : 'جاري تهيئة البث المباشر...'}
+          </Text>
         </View>
       ) : null}
 

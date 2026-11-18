@@ -69,6 +69,7 @@ export function groupChannelsByCategory(channels: MediaItem[]): CategoryGroup[] 
  * ترتيب الدول المفضل لعرضها بشكل منظم في واجهة التلفاز
  */
 const PREFERRED_COUNTRY_ORDER: string[] = [
+  'قنوات عربية دولية',
   'سوريا',
   'السعودية',
   'مصر',
