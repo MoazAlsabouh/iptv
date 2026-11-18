@@ -70,7 +70,7 @@ export function groupChannelsByCategory(channels: MediaItem[]): CategoryGroup[] 
 
 /**
  * Hook مخصص لإدارة جلب وتحليل بيانات الوسائط وحفظها مؤقتاً بواسطة React Query.
- * يدعم فلترة التصنيفات والقنوات تلقائياً عند تفعيل وضع الطفل (isChildMode).
+ * يتصل مباشرة بالرابط (بدون بروكسي خارجي) لأن خادمنا السحابي يدعم CORS مباشرة.
  */
 export function useMediaData() {
   const playlistUrl = useAppStore((state) => state.playlistUrl);
@@ -78,7 +78,7 @@ export function useMediaData() {
 
   const query = useQuery<MediaItem[], Error>({
     queryKey: ['playlistMedia', playlistUrl],
-    queryFn: () => fetchAndParseM3U(playlistUrl, true),
+    queryFn: () => fetchAndParseM3U(playlistUrl, false), // اتصال مباشر بدون بروكسي لتفادي خطأ 522
     enabled: Boolean(playlistUrl && playlistUrl.trim().length > 0),
     staleTime: 1000 * 60 * 30, // 30 دقيقة
     retry: 2,

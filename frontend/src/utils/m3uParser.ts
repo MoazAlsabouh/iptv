@@ -111,11 +111,11 @@ export function parseM3U(content: string): MediaItem[] {
 
 /**
  * دالة غير متزامنة لجلب قائمة تشغيل M3U من رابط خارجي وتحليلها مباشرة.
- * تدعم تمرير الرابط عبر خادم وكيل (CORS Proxy) لمعالجة قيود المتصفح والشبكة عند طلب روابط مجانية.
+ * تدعم الاتصال المباشر (Direct Fetch) افتراضياً لأن خادمنا يدعم CORS مباشرة.
  *
  * @param playlistUrl رابط قائمة التشغيل M3U
- * @param useProxy خيار تفعيل خادم الوسيط (CORS Proxy) لحل مشاكل الحظر
- * @param proxyPrefix رابط خدمة البروكسي المجانية (افتراضياً: api.allorigins.win)
+ * @param useProxy خيار تفعيل خادم الوسيط (CORS Proxy) - افتراضياً false
+ * @param proxyPrefix رابط خدمة البروكسي عند الرغبة في استخدامه
  * @returns وعد (Promise) بمصفوفة MediaItem المحللة
  */
 export async function fetchAndParseM3U(
@@ -129,7 +129,9 @@ export async function fetchAndParseM3U(
     }
 
     const cleanUrl = playlistUrl.trim();
-    const finalUrl = useProxy
+    // روابط خادمنا السحابي (workers.dev) تدعم CORS مباشرة ولا يجوز تغليفها بالبروكسي
+    const isDirectServer = cleanUrl.includes('workers.dev') || cleanUrl.includes('iptv-backend');
+    const finalUrl = (useProxy && !isDirectServer)
       ? `${proxyPrefix}${encodeURIComponent(cleanUrl)}`
       : cleanUrl;
 
@@ -151,10 +153,10 @@ export async function fetchAndParseM3U(
 }
 
 /**
- * دالة مخصصة لجلب وتحليل قائمة التشغيل المدمجة تلقائياً من خادم Cloudflare Worker الخاص بالتطبيق
+ * دالة مخصصة لجلب وتحليل قائمة التشغيل المدمجة تلقائياً وبشكل مباشر من خادم Cloudflare Worker
  * (الرابط: https://iptv-backend.moaznsm.workers.dev)
  *
- * @param useProxy خيار تفعيل البروكسي إذا لزم الأمر
+ * @param useProxy خيار تفعيل البروكسي (افتراضياً: false)
  * @returns مصفوفة القنوات والأفلام المحللة
  */
 export async function fetchBackendPlaylist(useProxy: boolean = false): Promise<MediaItem[]> {
