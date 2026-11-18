@@ -160,6 +160,23 @@ function processCountryM3U(
             }
           }
 
+          // 3. تنظيف وتفريغ روابط tvg-logo التالفة أو القديمة (مثل twimg.com أو التي لا تبدأ بـ http)
+          const logoRegex = /tvg-logo="([^"]*)"/i;
+          const logoMatch = updatedExtinf.match(logoRegex);
+          if (logoMatch) {
+            const rawLogo = logoMatch[1].trim();
+            const isBroken =
+              (!rawLogo.startsWith('http://') && !rawLogo.startsWith('https://')) ||
+              rawLogo.includes('twimg.com') ||
+              rawLogo.includes('pbs.twimg') ||
+              rawLogo.includes('example.com') ||
+              rawLogo.length < 10;
+
+            if (isBroken) {
+              updatedExtinf = updatedExtinf.replace(logoRegex, 'tvg-logo=""');
+            }
+          }
+
           entries.push({ extinf: updatedExtinf, url: line });
         }
       }

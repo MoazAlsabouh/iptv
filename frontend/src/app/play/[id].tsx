@@ -12,6 +12,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../../store/useAppStore';
 import { TVPlayer } from '../../components/player/TVPlayer';
 import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
+import { ChannelLogo } from '../../components/ChannelLogo';
 
 /**
  * شاشة مشغل الفيديو بتصميم ملء الشاشة الداكن والتحكم الكامل بالريموت كنترول.
@@ -20,7 +21,7 @@ export default function PlayerScreen(): React.JSX.Element {
   useKeepAwake();
 
   const router = useRouter();
-  const params = useLocalSearchParams<{ id: string; url: string; title?: string }>();
+  const params = useLocalSearchParams<{ id: string; url: string; title?: string; logo?: string }>();
 
   const { favoriteIds, toggleFavorite } = useAppStore();
 
@@ -50,6 +51,15 @@ export default function PlayerScreen(): React.JSX.Element {
       ? decodeURIComponent(params.title[0])
       : '';
   }, [params.title]);
+
+  const channelLogo = useMemo(() => {
+    if (!params.logo) return '';
+    return typeof params.logo === 'string'
+      ? decodeURIComponent(params.logo)
+      : params.logo[0]
+      ? decodeURIComponent(params.logo[0])
+      : '';
+  }, [params.logo]);
 
   const [isBuffering, setIsBuffering] = useState<boolean>(true);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
@@ -149,9 +159,15 @@ export default function PlayerScreen(): React.JSX.Element {
               )}
             </Pressable>
 
-            {/* عنوان القناة */}
+            {/* عنوان وشعار القناة */}
             {channelTitle ? (
               <View style={styles.titleBadge}>
+                <ChannelLogo
+                  uri={channelLogo}
+                  name={channelTitle}
+                  size={26}
+                  style={styles.playerChannelLogo}
+                />
                 <Text numberOfLines={1} style={styles.titleBadgeText}>
                   {channelTitle}
                 </Text>
@@ -319,18 +335,25 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   titleBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: 'rgba(15, 23, 42, 0.85)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.15)',
-    paddingVertical: 10,
-    paddingHorizontal: 18,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
     borderRadius: 30,
-    maxWidth: 360,
+    maxWidth: 400,
+    gap: 10,
+  },
+  playerChannelLogo: {
+    borderRadius: 8,
   },
   titleBadgeText: {
     color: '#f8fafc',
     fontSize: 14,
     fontWeight: '700',
+    flexShrink: 1,
   },
   favoriteBtn: {
     backgroundColor: 'rgba(15, 23, 42, 0.85)',

@@ -13,6 +13,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../../store/useAppStore';
 import { useMediaData } from '../../hooks/useMediaData';
 import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
+import { ChannelLogo } from '../../components/ChannelLogo';
 import { MediaItem } from '../../types/media';
 
 interface FavoriteChannelCardProps {
@@ -21,9 +22,6 @@ interface FavoriteChannelCardProps {
 }
 
 const FavoriteChannelCard: React.FC<FavoriteChannelCardProps> = ({ item, onSelect }) => {
-  const [imageError, setImageError] = useState<boolean>(false);
-  const hasValidLogo = Boolean(item.logo && item.logo.trim().length > 0) && !imageError;
-
   return (
     <Pressable
       onPress={() => onSelect(item)}
@@ -38,22 +36,13 @@ const FavoriteChannelCard: React.FC<FavoriteChannelCardProps> = ({ item, onSelec
             <MaterialIcons name="star" size={18} color="#eab308" />
           </View>
 
-          <View style={[styles.logoWrapper, focused && styles.logoWrapperFocused]}>
-            {hasValidLogo ? (
-              <Image
-                source={{ uri: item.logo }}
-                onError={() => setImageError(true)}
-                resizeMode="contain"
-                style={styles.logoImage}
-              />
-            ) : (
-              <MaterialIcons
-                name="tv"
-                size={40}
-                color={focused ? '#0284c7' : '#38bdf8'}
-              />
-            )}
-          </View>
+          <ChannelLogo
+            uri={item.logo}
+            name={item.name}
+            size={76}
+            focused={focused}
+            style={[styles.logoWrapper, focused && styles.logoWrapperFocused]}
+          />
 
           <Text
             numberOfLines={2}
@@ -95,7 +84,7 @@ export default function FavoritesScreen(): React.JSX.Element {
   const handleChannelPress = (channel: MediaItem) => {
     router.push({
       pathname: '/play/[id]',
-      params: { id: channel.id, title: channel.name, url: channel.url },
+      params: { id: channel.id, title: channel.name, url: channel.url, logo: channel.logo },
     });
   };
 
