@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   StyleSheet,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -36,6 +37,8 @@ export interface VodItem {
   overview: string;
   category: string;
   episodeInfo?: string;
+  releaseDate?: string;
+  isUnreleased?: boolean;
   sources: VodSource[];
 }
 
@@ -77,7 +80,7 @@ const VodCard: React.FC<VodCardProps> = ({ item, onSelect, index }) => {
     >
       {({ focused }) => (
         <View style={styles.cardInner}>
-          {/* البوستر العمودي مع التدرج الداكن */}
+          {/* البوستر العمودي بنسبة قياسية 2:3 تمنع القص تماماً */}
           <View style={styles.posterContainer}>
             {item.poster && !imageError ? (
               <Image
@@ -111,8 +114,15 @@ const VodCard: React.FC<VodCardProps> = ({ item, onSelect, index }) => {
               ) : null}
             </View>
 
-            {/* شارة رقم وموعد الحلقة (لجدول الحلقات) */}
-            {item.episodeInfo ? (
+            {/* شارة العمل الذي لم يصدر بعد، أو شارة الحلقة المجدولة */}
+            {item.isUnreleased ? (
+              <View style={styles.unreleasedBadge}>
+                <MaterialIcons name="alarm" size={12} color="#ffffff" />
+                <Text numberOfLines={1} style={styles.unreleasedBadgeText}>
+                  قريباً • غير متاح بعد
+                </Text>
+              </View>
+            ) : item.episodeInfo ? (
               <View style={styles.episodeBadge}>
                 <Text numberOfLines={1} style={styles.episodeBadgeText}>
                   {item.episodeInfo}
@@ -132,9 +142,18 @@ const VodCard: React.FC<VodCardProps> = ({ item, onSelect, index }) => {
 
             <View style={styles.subMetaRow}>
               {item.year ? <Text style={styles.metaYear}>{item.year}</Text> : null}
-              <Text style={styles.metaSources}>
-                {item.type === 'tv' ? 'عرض الحلقات' : `${item.sources?.length || 0} سيرفرات`}
-              </Text>
+              {item.isUnreleased ? (
+                <View style={styles.unreleasedDateRow}>
+                  <MaterialIcons name="event" size={13} color="#f97316" />
+                  <Text numberOfLines={1} style={styles.metaUnreleasedDate}>
+                    {item.releaseDate ? `الإصدار: ${item.releaseDate}` : 'قريباً'}
+                  </Text>
+                </View>
+              ) : (
+                <Text style={styles.metaSources}>
+                  {item.type === 'tv' ? 'عرض الحلقات' : `${item.sources?.length || 0} سيرفرات`}
+                </Text>
+              )}
             </View>
           </View>
         </View>
@@ -149,6 +168,16 @@ const VodCard: React.FC<VodCardProps> = ({ item, onSelect, index }) => {
  */
 export default function MoviesScreen(): React.JSX.Element {
   const router = useRouter();
+  const { width } = useWindowDimensions();
+
+  // ضبط عدد الأعمدة بمرونة ليصبح 5 على الشاشات العريضة/التلفاز و 6 على الشاشات الكبيرة
+  const numColumns = useMemo(() => {
+    if (width >= 1600) return 6;
+    if (width >= 1050) return 5;
+    if (width >= 750) return 4;
+    if (width >= 480) return 3;
+    return 2;
+  }, [width]);
 
   const [mainTab, setMainTab] = useState<MainTabType>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('trending');
@@ -161,6 +190,13 @@ export default function MoviesScreen(): React.JSX.Element {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
   const [isError, setIsError] = useState<boolean>(false);
+
+  // حالة النافذة التنبيهية للأعمال التي لم تصدر بعد
+  const [unreleasedNotice, setUnreleasedNotice] = useState<{
+    visible: boolean;
+    title: string;
+    releaseDate?: string;
+  } | null>(null);
 
   // Debounce للبحث 500ms
   useEffect(() => {
@@ -221,6 +257,10 @@ export default function MoviesScreen(): React.JSX.Element {
   }, [fetchCatalogData]);
 
   const handleGoBack = () => {
+    if (unreleasedNotice?.visible) {
+      setUnreleasedNotice(null);
+      return;
+    }
     if (router.canGoBack()) {
       router.back();
     } else {
@@ -233,6 +273,16 @@ export default function MoviesScreen(): React.JSX.Element {
   });
 
   const handleSelect = (item: VodItem) => {
+    // التحقق أولاً إن كان العمل لم يصدر بعد
+    if (item.isUnreleased) {
+      setUnreleasedNotice({
+        visible: true,
+        title: item.title,
+        releaseDate: item.releaseDate,
+      });
+      return;
+    }
+
     if (item.type === 'tv') {
       // توجيه المسلسل لشاشة تفاصيل واختيار الحلقات
       router.push({
@@ -456,9 +506,10 @@ export default function MoviesScreen(): React.JSX.Element {
         </View>
       ) : (
         <FlatList<VodItem>
+          key={`vod-grid-${numColumns}`}
           data={items}
           keyExtractor={(item) => `${item.id}-${item.episodeInfo || ''}`}
-          numColumns={4}
+          numColumns={numColumns}
           contentContainerStyle={styles.gridContent}
           showsVerticalScrollIndicator={false}
           renderItem={({ item, index }) => (
@@ -494,6 +545,54 @@ export default function MoviesScreen(): React.JSX.Element {
             )
           }
         />
+      )}
+
+      {/* 4. نافذة تنبيه فاخرة للأعمال التي لم تصدر بعد */}
+      {unreleasedNotice?.visible && (
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalBox}>
+            <View style={styles.modalIconCircle}>
+              <MaterialIcons name="schedule" size={36} color="#f97316" />
+            </View>
+
+            <Text style={styles.modalTitle}>هذا العمل لم يصدر بعد</Text>
+
+            <Text style={styles.modalItemName} numberOfLines={2}>
+              {unreleasedNotice.title}
+            </Text>
+
+            <View style={styles.modalDateBadge}>
+              <MaterialIcons name="event" size={16} color="#f97316" />
+              <Text style={styles.modalDateText}>
+                تاريخ الإصدار المتوقع: {unreleasedNotice.releaseDate || 'قريباً'}
+              </Text>
+            </View>
+
+            <Text style={styles.modalDesc}>
+              هذا العمل لا يزال قيد الإنتاج أو في صالات العرض السينمائي ولم يتم طرحه على منصات البث الرقمي بعد. سيتم توفيره فور صدوره رسمياً.
+            </Text>
+
+            <Pressable
+              hasTVPreferredFocus
+              onPress={() => setUnreleasedNotice(null)}
+              style={({ focused }) => [
+                styles.modalCloseBtn,
+                focused && styles.modalCloseBtnFocused,
+              ]}
+            >
+              {({ focused }) => (
+                <Text
+                  style={[
+                    styles.modalCloseBtnText,
+                    focused && styles.focusedTextDark,
+                  ]}
+                >
+                  حسناً، فهمت
+                </Text>
+              )}
+            </Pressable>
+          </View>
+        </View>
       )}
     </View>
   );
@@ -647,7 +746,6 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: 'rgba(255, 255, 255, 0.08)',
     overflow: 'hidden',
-    height: 330,
   },
   cardFocused: {
     backgroundColor: '#ffffff',
@@ -658,11 +756,11 @@ const styles = StyleSheet.create({
     shadowRadius: 14,
   },
   cardInner: {
-    flex: 1,
+    width: '100%',
   },
   posterContainer: {
     width: '100%',
-    height: 235,
+    aspectRatio: 2 / 3,
     backgroundColor: '#0b1120',
     position: 'relative',
     overflow: 'hidden',
@@ -733,6 +831,29 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
   },
+  unreleasedBadge: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+    right: 8,
+    backgroundColor: 'rgba(234, 88, 12, 0.95)',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    zIndex: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  unreleasedBadgeText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
   episodeBadge: {
     position: 'absolute',
     bottom: 8,
@@ -753,7 +874,7 @@ const styles = StyleSheet.create({
   metaContainer: {
     padding: 10,
     justifyContent: 'space-between',
-    flex: 1,
+    minHeight: 68,
   },
   itemTitle: {
     color: '#ffffff',
@@ -781,6 +902,16 @@ const styles = StyleSheet.create({
     color: '#38bdf8',
     fontSize: 11,
     fontWeight: '700',
+  },
+  unreleasedDateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  metaUnreleasedDate: {
+    color: '#f97316',
+    fontSize: 11,
+    fontWeight: '800',
   },
   centerBox: {
     flex: 1,
@@ -865,5 +996,97 @@ const styles = StyleSheet.create({
     color: '#64748b',
     fontSize: 13,
     fontWeight: '600',
+  },
+  modalBackdrop: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.82)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 99,
+    padding: 20,
+  },
+  modalBox: {
+    backgroundColor: '#1e293b',
+    borderRadius: 20,
+    padding: 28,
+    width: '100%',
+    maxWidth: 480,
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: 'rgba(249, 115, 22, 0.4)',
+    shadowColor: '#000',
+    shadowOpacity: 0.8,
+    shadowRadius: 20,
+  },
+  modalIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(249, 115, 22, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+    borderWidth: 1.5,
+    borderColor: 'rgba(249, 115, 22, 0.3)',
+  },
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#ffffff',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  modalItemName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#38bdf8',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  modalDateBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(249, 115, 22, 0.12)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    gap: 6,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(249, 115, 22, 0.3)',
+  },
+  modalDateText: {
+    color: '#f97316',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  modalDesc: {
+    fontSize: 13,
+    color: '#94a3b8',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  modalCloseBtn: {
+    backgroundColor: '#0284c7',
+    paddingVertical: 12,
+    paddingHorizontal: 36,
+    borderRadius: 12,
+  },
+  modalCloseBtnFocused: {
+    backgroundColor: '#ffffff',
+    transform: [{ scale: 1.05 }],
+    shadowColor: '#38bdf8',
+    shadowOpacity: 0.9,
+    shadowRadius: 12,
+  },
+  modalCloseBtnText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '800',
   },
 });

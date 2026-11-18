@@ -536,6 +536,8 @@ interface VodItem {
   overview: string;
   category: string;
   episodeInfo?: string;
+  releaseDate?: string;
+  isUnreleased?: boolean;
   sources: { label: string; url: string }[];
 }
 
@@ -642,6 +644,7 @@ async function handleVodCatalog(url: URL, env: Env): Promise<Response> {
       }
       const data = (await res.json()) as any[];
       const pageSize = 24;
+      const today = new Date().toISOString().split('T')[0];
       const sliced = data.slice((page - 1) * pageSize, page * pageSize);
       const results: VodItem[] = sliced.map((item) => {
         const show = item.show || {};
@@ -653,7 +656,9 @@ async function handleVodCatalog(url: URL, env: Env): Promise<Response> {
           item.image?.medium ||
           '';
         const rating = show.rating?.average || item.rating?.average || 7.5;
-        const year = item.airdate ? item.airdate.substring(0, 4) : '';
+        const releaseDate = item.airdate || '';
+        const year = releaseDate ? releaseDate.substring(0, 4) : '';
+        const isUnreleased = Boolean(releaseDate && releaseDate > today);
         const summary = (show.summary || item.summary || '').replace(/<[^>]+>/g, '');
         const imdbId = show.externals?.imdb || undefined;
         const season = item.season || 1;
@@ -671,6 +676,8 @@ async function handleVodCatalog(url: URL, env: Env): Promise<Response> {
           overview: summary,
           category: 'جدول الحلقات اليوم',
           episodeInfo,
+          releaseDate,
+          isUnreleased,
           sources: buildVodSources('tv', undefined, imdbId, season, episode),
         };
       });
@@ -736,6 +743,7 @@ async function handleVodCatalog(url: URL, env: Env): Promise<Response> {
     }
     const data = (await res.json()) as any;
     const rawResults = data.results || [];
+    const today = new Date().toISOString().split('T')[0];
     const results: VodItem[] = rawResults.map((item: any) => {
       const isTv =
         item.media_type === 'tv' ||
@@ -747,7 +755,9 @@ async function handleVodCatalog(url: URL, env: Env): Promise<Response> {
       const poster = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : '';
       const backdrop = item.backdrop_path ? `https://image.tmdb.org/t/p/w780${item.backdrop_path}` : undefined;
       const rating = item.vote_average ? Number(Number(item.vote_average).toFixed(1)) : 0;
-      const year = (item.release_date || item.first_air_date || '').substring(0, 4);
+      const releaseDate = item.release_date || item.first_air_date || '';
+      const year = releaseDate ? releaseDate.substring(0, 4) : '';
+      const isUnreleased = Boolean(releaseDate && releaseDate > today);
       const overview = item.overview || '';
 
       return {
@@ -761,6 +771,8 @@ async function handleVodCatalog(url: URL, env: Env): Promise<Response> {
         year,
         overview,
         category: categoryLabel,
+        releaseDate,
+        isUnreleased,
         sources: buildVodSources(itemType, item.id),
       };
     });
@@ -799,13 +811,16 @@ async function handleVodSearch(url: URL, env: Env): Promise<Response> {
       (item: any) => item.media_type === 'movie' || item.media_type === 'tv'
     );
 
+    const today = new Date().toISOString().split('T')[0];
     const results: VodItem[] = rawResults.map((item: any) => {
       const itemType: 'movie' | 'tv' = item.media_type === 'tv' ? 'tv' : 'movie';
       const title = item.title || item.name || 'بدون عنوان';
       const poster = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : '';
       const backdrop = item.backdrop_path ? `https://image.tmdb.org/t/p/w780${item.backdrop_path}` : undefined;
       const rating = item.vote_average ? Number(Number(item.vote_average).toFixed(1)) : 0;
-      const year = (item.release_date || item.first_air_date || '').substring(0, 4);
+      const releaseDate = item.release_date || item.first_air_date || '';
+      const year = releaseDate ? releaseDate.substring(0, 4) : '';
+      const isUnreleased = Boolean(releaseDate && releaseDate > today);
       const overview = item.overview || '';
 
       return {
@@ -819,6 +834,8 @@ async function handleVodSearch(url: URL, env: Env): Promise<Response> {
         year,
         overview,
         category: itemType === 'tv' ? 'مسلسل' : 'فيلم',
+        releaseDate,
+        isUnreleased,
         sources: buildVodSources(itemType, item.id),
       };
     });
