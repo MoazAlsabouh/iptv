@@ -8,7 +8,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useKeepAwake } from 'expo-keep-awake';
+import { useSafeKeepAwake } from '../../hooks/useSafeKeepAwake';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../../store/useAppStore';
 import { useMediaData } from '../../hooks/useMediaData';
@@ -22,7 +22,7 @@ import { StreamSource } from '../../types/media';
  * تدعم التبديل السلس بين مصادر البث وجودات HLS.
  */
 export default function PlayerScreen(): React.JSX.Element {
-  useKeepAwake();
+  useSafeKeepAwake();
 
   const router = useRouter();
   const params = useLocalSearchParams<{
