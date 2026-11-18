@@ -139,10 +139,7 @@ export async function fetchAndParseM3U(
       : cleanUrl;
 
     const response = await fetch(finalUrl, {
-      headers: {
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache',
-      },
+      cache: 'no-store',
     });
 
     if (!response.ok) {
