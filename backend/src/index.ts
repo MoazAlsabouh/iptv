@@ -62,6 +62,18 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
+    // معالجة طلبات الأمان والتحقق المسبق (CORS Preflight) التي يرسلها المتصفح
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type',
+          'Access-Control-Max-Age': '86400',
+        },
+      });
+    }
+
     if (request.method !== 'GET') {
       return new Response('Method Not Allowed', { status: 405 });
     }
