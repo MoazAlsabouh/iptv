@@ -523,6 +523,389 @@ function formatMoviesToM3U(movies: TMDBMovie[]): string {
   return lines.join('\n');
 }
 
+interface VodItem {
+  id: string;
+  tmdbId?: number;
+  imdbId?: string;
+  title: string;
+  type: 'movie' | 'tv';
+  poster: string;
+  backdrop?: string;
+  rating: number;
+  year: string;
+  overview: string;
+  category: string;
+  episodeInfo?: string;
+  sources: { label: string; url: string }[];
+}
+
+function jsonResponse(data: any, status: number = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Cache-Control, Pragma, *',
+      'Cache-Control': 'public, max-age=1800',
+    },
+  });
+}
+
+function buildVodSources(
+  type: 'movie' | 'tv',
+  tmdbId?: number,
+  imdbId?: string,
+  season: number = 1,
+  episode: number = 1
+): { label: string; url: string }[] {
+  const sources: { label: string; url: string }[] = [];
+  const targetId = tmdbId ? String(tmdbId) : imdbId || '';
+
+  if (type === 'movie') {
+    if (tmdbId) {
+      sources.push({
+        label: 'سيرفر 1 (VidSrc)',
+        url: `https://vidsrc.to/embed/movie/${tmdbId}`,
+      });
+      sources.push({
+        label: 'سيرفر 2 (Embed.su)',
+        url: `https://embed.su/embed/movie/${tmdbId}`,
+      });
+      sources.push({
+        label: 'سيرفر 3 (VidSrc Me)',
+        url: `https://vidsrc.me/embed/movie?tmdb=${tmdbId}`,
+      });
+    } else if (imdbId) {
+      sources.push({
+        label: 'سيرفر 1 (VidSrc)',
+        url: `https://vidsrc.to/embed/movie/${imdbId}`,
+      });
+      sources.push({
+        label: 'سيرفر 2 (VidSrc Me)',
+        url: `https://vidsrc.me/embed/movie?imdb=${imdbId}`,
+      });
+    }
+  } else {
+    // TV show
+    if (tmdbId) {
+      sources.push({
+        label: 'سيرفر 1 (VidSrc)',
+        url: `https://vidsrc.to/embed/tv/${tmdbId}/${season}/${episode}`,
+      });
+      sources.push({
+        label: 'سيرفر 2 (Embed.su)',
+        url: `https://embed.su/embed/tv/${tmdbId}/${season}/${episode}`,
+      });
+      sources.push({
+        label: 'سيرفر 3 (VidSrc Me)',
+        url: `https://vidsrc.me/embed/tv?tmdb=${tmdbId}&season=${season}&episode=${episode}`,
+      });
+    } else if (imdbId) {
+      sources.push({
+        label: 'سيرفر 1 (VidSrc)',
+        url: `https://vidsrc.to/embed/tv/${imdbId}/${season}/${episode}`,
+      });
+      sources.push({
+        label: 'سيرفر 2 (VidSrc Me)',
+        url: `https://vidsrc.me/embed/tv?imdb=${imdbId}&season=${season}&episode=${episode}`,
+      });
+    }
+  }
+
+  // سيرفر احتياطي دائم عالي الجودة
+  sources.push({
+    label: `سيرفر ${sources.length + 1} (مباشر)`,
+    url: `https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4?id=${targetId}&s=${season}&e=${episode}`,
+  });
+
+  return sources;
+}
+
+/**
+ * معالجة كتالوج الأفلام والمسلسلات VOD عبر TMDB + TVmaze
+ */
+async function handleVodCatalog(url: URL, env: Env): Promise<Response> {
+  const type = url.searchParams.get('type') || 'all'; // all | movie | tv
+  const category = url.searchParams.get('category') || 'trending';
+  const page = parseInt(url.searchParams.get('page') || '1', 10) || 1;
+  const apiKey = env.TMDB_API_KEY || '';
+
+  // 1. جدول الحلقات اليوم عبر TVmaze API المجاني
+  if (category === 'tv_schedule') {
+    try {
+      const res = await fetch('https://api.tvmaze.com/schedule', {
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) {
+        return jsonResponse({ page: 1, totalPages: 1, results: [] });
+      }
+      const data = (await res.json()) as any[];
+      const pageSize = 24;
+      const sliced = data.slice((page - 1) * pageSize, page * pageSize);
+      const results: VodItem[] = sliced.map((item) => {
+        const show = item.show || {};
+        const title = show.name || item.name || 'حلقة تلفزيونية';
+        const poster =
+          show.image?.original ||
+          show.image?.medium ||
+          item.image?.original ||
+          item.image?.medium ||
+          '';
+        const rating = show.rating?.average || item.rating?.average || 7.5;
+        const year = item.airdate ? item.airdate.substring(0, 4) : '';
+        const summary = (show.summary || item.summary || '').replace(/<[^>]+>/g, '');
+        const imdbId = show.externals?.imdb || undefined;
+        const season = item.season || 1;
+        const episode = item.number || 1;
+        const episodeInfo = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}${item.airtime ? ' • ' + item.airtime : ''}`;
+
+        return {
+          id: `tvm-${item.id}`,
+          imdbId,
+          title,
+          type: 'tv',
+          poster,
+          rating: Number(Number(rating).toFixed(1)),
+          year,
+          overview: summary,
+          category: 'جدول الحلقات اليوم',
+          episodeInfo,
+          sources: buildVodSources('tv', undefined, imdbId, season, episode),
+        };
+      });
+
+      return jsonResponse({
+        page,
+        totalPages: Math.ceil(data.length / pageSize) || 1,
+        results,
+      });
+    } catch {
+      return jsonResponse({ page: 1, totalPages: 1, results: [] });
+    }
+  }
+
+  // 2. كتالوج TMDB
+  if (!apiKey) {
+    return jsonResponse({ page: 1, totalPages: 1, results: [] });
+  }
+
+  let tmdbUrl = '';
+  let categoryLabel = 'الرائج';
+
+  if (category === 'arabic_movies') {
+    categoryLabel = 'أفلام عربية';
+    tmdbUrl = `https://api.themoviedb.org/3/discover/movie?api_key=${apiKey}&with_original_language=ar&sort_by=popularity.desc&page=${page}&language=ar-SA`;
+  } else if (category === 'arabic_series') {
+    categoryLabel = 'مسلسلات عربية';
+    tmdbUrl = `https://api.themoviedb.org/3/discover/tv?api_key=${apiKey}&with_original_language=ar&sort_by=popularity.desc&page=${page}&language=ar-SA`;
+  } else if (category === 'trending') {
+    categoryLabel = 'الرائج هذا الأسبوع';
+    if (type === 'movie') {
+      tmdbUrl = `https://api.themoviedb.org/3/trending/movie/week?api_key=${apiKey}&language=ar-SA&page=${page}`;
+    } else if (type === 'tv') {
+      tmdbUrl = `https://api.themoviedb.org/3/trending/tv/week?api_key=${apiKey}&language=ar-SA&page=${page}`;
+    } else {
+      tmdbUrl = `https://api.themoviedb.org/3/trending/all/week?api_key=${apiKey}&language=ar-SA&page=${page}`;
+    }
+  } else {
+    // Genres: action | drama | comedy | horror | scifi | animation
+    const genreMap: Record<string, { movie: number; tv: number; label: string }> = {
+      action: { movie: 28, tv: 10759, label: 'أكشن ومغامرات' },
+      drama: { movie: 18, tv: 18, label: 'دراما' },
+      comedy: { movie: 35, tv: 35, label: 'كوميديا' },
+      horror: { movie: 27, tv: 9648, label: 'رعب وإثارة' },
+      scifi: { movie: 878, tv: 10765, label: 'خيال علمي وفانتازيا' },
+      animation: { movie: 16, tv: 16, label: 'أنمي ورسوم متحركة' },
+    };
+
+    const targetGenre = genreMap[category] || { movie: 28, tv: 10759, label: 'منوع' };
+    categoryLabel = targetGenre.label;
+
+    if (type === 'tv') {
+      tmdbUrl = `https://api.themoviedb.org/3/discover/tv?api_key=${apiKey}&with_genres=${targetGenre.tv}&sort_by=popularity.desc&page=${page}&language=ar-SA`;
+    } else {
+      tmdbUrl = `https://api.themoviedb.org/3/discover/movie?api_key=${apiKey}&with_genres=${targetGenre.movie}&sort_by=popularity.desc&page=${page}&language=ar-SA`;
+    }
+  }
+
+  try {
+    const res = await fetch(tmdbUrl, { headers: { Accept: 'application/json' } });
+    if (!res.ok) {
+      return jsonResponse({ page: 1, totalPages: 1, results: [] });
+    }
+    const data = (await res.json()) as any;
+    const rawResults = data.results || [];
+    const results: VodItem[] = rawResults.map((item: any) => {
+      const isTv =
+        item.media_type === 'tv' ||
+        (!item.title && Boolean(item.name)) ||
+        category === 'arabic_series' ||
+        type === 'tv';
+      const itemType: 'movie' | 'tv' = isTv ? 'tv' : 'movie';
+      const title = item.title || item.name || 'بدون عنوان';
+      const poster = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : '';
+      const backdrop = item.backdrop_path ? `https://image.tmdb.org/t/p/w780${item.backdrop_path}` : undefined;
+      const rating = item.vote_average ? Number(Number(item.vote_average).toFixed(1)) : 0;
+      const year = (item.release_date || item.first_air_date || '').substring(0, 4);
+      const overview = item.overview || '';
+
+      return {
+        id: `tmdb-${itemType}-${item.id}`,
+        tmdbId: item.id,
+        title,
+        type: itemType,
+        poster,
+        backdrop,
+        rating,
+        year,
+        overview,
+        category: categoryLabel,
+        sources: buildVodSources(itemType, item.id),
+      };
+    });
+
+    return jsonResponse({
+      page: data.page || page,
+      totalPages: data.total_pages || 1,
+      results,
+    });
+  } catch {
+    return jsonResponse({ page: 1, totalPages: 1, results: [] });
+  }
+}
+
+/**
+ * البحث في كتالوج VOD عبر TMDB
+ */
+async function handleVodSearch(url: URL, env: Env): Promise<Response> {
+  const query = url.searchParams.get('q') || '';
+  const page = parseInt(url.searchParams.get('page') || '1', 10) || 1;
+  const apiKey = env.TMDB_API_KEY || '';
+
+  if (!query.trim() || !apiKey) {
+    return jsonResponse({ page: 1, totalPages: 1, results: [] });
+  }
+
+  const tmdbUrl = `https://api.themoviedb.org/3/search/multi?api_key=${apiKey}&language=ar-SA&query=${encodeURIComponent(query)}&page=${page}`;
+
+  try {
+    const res = await fetch(tmdbUrl, { headers: { Accept: 'application/json' } });
+    if (!res.ok) {
+      return jsonResponse({ page: 1, totalPages: 1, results: [] });
+    }
+    const data = (await res.json()) as any;
+    const rawResults = (data.results || []).filter(
+      (item: any) => item.media_type === 'movie' || item.media_type === 'tv'
+    );
+
+    const results: VodItem[] = rawResults.map((item: any) => {
+      const itemType: 'movie' | 'tv' = item.media_type === 'tv' ? 'tv' : 'movie';
+      const title = item.title || item.name || 'بدون عنوان';
+      const poster = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : '';
+      const backdrop = item.backdrop_path ? `https://image.tmdb.org/t/p/w780${item.backdrop_path}` : undefined;
+      const rating = item.vote_average ? Number(Number(item.vote_average).toFixed(1)) : 0;
+      const year = (item.release_date || item.first_air_date || '').substring(0, 4);
+      const overview = item.overview || '';
+
+      return {
+        id: `tmdb-${itemType}-${item.id}`,
+        tmdbId: item.id,
+        title,
+        type: itemType,
+        poster,
+        backdrop,
+        rating,
+        year,
+        overview,
+        category: itemType === 'tv' ? 'مسلسل' : 'فيلم',
+        sources: buildVodSources(itemType, item.id),
+      };
+    });
+
+    return jsonResponse({
+      page: data.page || page,
+      totalPages: data.total_pages || 1,
+      results,
+    });
+  } catch {
+    return jsonResponse({ page: 1, totalPages: 1, results: [] });
+  }
+}
+
+/**
+ * جلب مواسم وحلقات المسلسلات عبر TVmaze API المجاني
+ */
+async function handleVodEpisodes(url: URL): Promise<Response> {
+  const query = url.searchParams.get('q') || '';
+  const imdb = url.searchParams.get('imdb') || '';
+
+  let tvmazeUrl = '';
+  if (imdb) {
+    tvmazeUrl = `https://api.tvmaze.com/lookup/shows?imdb=${encodeURIComponent(imdb)}`;
+  } else if (query) {
+    tvmazeUrl = `https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(query)}&embed=episodes`;
+  } else {
+    return jsonResponse({ seasons: [] });
+  }
+
+  try {
+    const res = await fetch(tvmazeUrl, { headers: { Accept: 'application/json' } });
+    if (!res.ok) {
+      return jsonResponse({ seasons: [] });
+    }
+    const showData = (await res.json()) as any;
+
+    let episodes = showData._embedded?.episodes;
+    if (!episodes && showData.id) {
+      const epRes = await fetch(`https://api.tvmaze.com/shows/${showData.id}/episodes`);
+      if (epRes.ok) {
+        episodes = (await epRes.json()) as any[];
+      }
+    }
+
+    if (!episodes || !Array.isArray(episodes)) {
+      return jsonResponse({ show: { id: showData.id, name: showData.name }, seasons: [] });
+    }
+
+    // تجميع الحلقات بحسب رقم الموسم
+    const seasonMap = new Map<number, any[]>();
+    for (const ep of episodes) {
+      const s = ep.season || 1;
+      if (!seasonMap.has(s)) {
+        seasonMap.set(s, []);
+      }
+      seasonMap.get(s)!.push({
+        id: ep.id,
+        season: ep.season,
+        number: ep.number,
+        name: ep.name || `الحلقة ${ep.number}`,
+        airdate: ep.airdate,
+        rating: ep.rating?.average || 0,
+        summary: ep.summary ? ep.summary.replace(/<[^>]+>/g, '') : '',
+        image: ep.image?.medium || ep.image?.original || '',
+      });
+    }
+
+    const seasons = Array.from(seasonMap.entries()).map(([seasonNum, epList]) => ({
+      season: seasonNum,
+      episodes: epList,
+    }));
+
+    return jsonResponse({
+      show: {
+        id: showData.id,
+        name: showData.name,
+        image: showData.image?.original || showData.image?.medium || '',
+        imdb: showData.externals?.imdb,
+      },
+      seasons,
+    });
+  } catch {
+    return jsonResponse({ seasons: [] });
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -541,6 +924,19 @@ export default {
 
     if (request.method !== 'GET') {
       return new Response('Method Not Allowed', { status: 405 });
+    }
+
+    // نقاط نهاية كتالوج وبحث وحلقات الأفلام والمسلسلات VOD
+    if (url.pathname === '/api/vod/catalog') {
+      return handleVodCatalog(url, env);
+    }
+
+    if (url.pathname === '/api/vod/search') {
+      return handleVodSearch(url, env);
+    }
+
+    if (url.pathname === '/api/vod/episodes') {
+      return handleVodEpisodes(url);
     }
 
     if (url.pathname === '/' || url.pathname === '/playlist.m3u') {

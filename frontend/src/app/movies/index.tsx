@@ -1,85 +1,137 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
+  TextInput,
   Pressable,
+  Image,
   FlatList,
+  ScrollView,
   ActivityIndicator,
   StyleSheet,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useMediaData } from '../../hooks/useMediaData';
 import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 import { ChannelLogo } from '../../components/ChannelLogo';
-import { MediaItem } from '../../types/media';
 
-type MovieFilterType = 'all' | 'movies' | 'series';
+const BACKEND_BASE_URL = 'https://iptv-backend.moaznsm.workers.dev';
 
-interface MovieCardProps {
-  item: MediaItem;
-  onSelect: (item: MediaItem) => void;
+export interface VodSource {
+  label: string;
+  url: string;
+}
+
+export interface VodItem {
+  id: string;
+  tmdbId?: number;
+  imdbId?: string;
+  title: string;
+  type: 'movie' | 'tv';
+  poster: string;
+  backdrop?: string;
+  rating: number;
+  year: string;
+  overview: string;
+  category: string;
+  episodeInfo?: string;
+  sources: VodSource[];
+}
+
+type MainTabType = 'all' | 'movie' | 'tv';
+
+interface SubCategory {
+  id: string;
+  title: string;
+  icon: keyof typeof MaterialIcons.glyphMap;
+}
+
+const SUB_CATEGORIES: SubCategory[] = [
+  { id: 'trending', title: 'الرائج', icon: 'whatshot' },
+  { id: 'tv_schedule', title: 'جدول الحلقات اليوم (TVmaze)', icon: 'schedule' },
+  { id: 'arabic_movies', title: 'أفلام عربية', icon: 'local-movies' },
+  { id: 'arabic_series', title: 'مسلسلات عربية', icon: 'tv' },
+  { id: 'action', title: 'أكشن', icon: 'flash-on' },
+  { id: 'drama', title: 'دراما', icon: 'theater-comedy' },
+  { id: 'comedy', title: 'كوميديا', icon: 'sentiment-very-satisfied' },
+  { id: 'horror', title: 'رعب', icon: 'warning' },
+  { id: 'scifi', title: 'خيال علمي', icon: 'rocket' },
+  { id: 'animation', title: 'أنمي', icon: 'animation' },
+];
+
+interface VodCardProps {
+  item: VodItem;
+  onSelect: (item: VodItem) => void;
   index: number;
 }
 
-const MovieCard: React.FC<MovieCardProps> = ({ item, onSelect, index }) => {
+const VodCard: React.FC<VodCardProps> = ({ item, onSelect, index }) => {
+  const [imageError, setImageError] = useState<boolean>(false);
+
   return (
     <Pressable
       hasTVPreferredFocus={index === 0}
       onPress={() => onSelect(item)}
-      style={({ focused }) => [
-        styles.card,
-        focused && styles.cardFocused,
-      ]}
+      style={({ focused }) => [styles.card, focused && styles.cardFocused]}
     >
       {({ focused }) => (
-        <View style={styles.cardContent}>
-          {/* شارة التصنيف */}
-          <View style={styles.badgeRow}>
-            <View style={styles.genreBadge}>
-              <Text numberOfLines={1} style={styles.genreBadgeText}>
-                {item.groupTitle || 'أفلام ومسلسلات'}
-              </Text>
+        <View style={styles.cardInner}>
+          {/* البوستر العمودي الاحترافي بنسبة 2:3 */}
+          <View style={styles.posterContainer}>
+            {item.poster && !imageError ? (
+              <Image
+                source={{ uri: item.poster }}
+                style={styles.posterImage}
+                resizeMode="cover"
+                onError={() => setImageError(true)}
+              />
+            ) : (
+              <View style={styles.fallbackPoster}>
+                <ChannelLogo uri="" name={item.title} size={64} focused={focused} />
+              </View>
+            )}
+
+            {/* شارات الرأس (التقييم ونوع العمل) */}
+            <View style={styles.topBadgesRow}>
+              <View style={[styles.typeBadge, item.type === 'tv' && styles.typeBadgeTv]}>
+                <Text style={styles.typeBadgeText}>
+                  {item.type === 'tv' ? 'مسلسل' : 'فيلم'}
+                </Text>
+              </View>
+
+              {item.rating > 0 ? (
+                <View style={styles.ratingBadge}>
+                  <MaterialIcons name="star" size={13} color="#eab308" />
+                  <Text style={styles.ratingBadgeText}>{item.rating}</Text>
+                </View>
+              ) : null}
             </View>
-            {item.country ? (
-              <Text numberOfLines={1} style={styles.countryBadgeText}>
-                {item.country}
-              </Text>
+
+            {/* شارة رقم وموعد الحلقة (لجدول TVmaze) */}
+            {item.episodeInfo ? (
+              <View style={styles.episodeBadge}>
+                <Text numberOfLines={1} style={styles.episodeBadgeText}>
+                  {item.episodeInfo}
+                </Text>
+              </View>
             ) : null}
           </View>
 
-          {/* بوستر / شعار الفيلم */}
-          <ChannelLogo
-            uri={item.logo}
-            name={item.name}
-            size={80}
-            focused={focused}
-            style={[styles.logoWrapper, focused && styles.logoWrapperFocused]}
-          />
-
-          {/* عنوان المحتوى */}
-          <Text
-            numberOfLines={2}
-            style={[styles.itemTitle, focused && styles.itemTitleFocused]}
-          >
-            {item.name}
-          </Text>
-
-          {/* زر تشغيل فوري */}
-          <View style={[styles.playIndicator, focused && styles.playIndicatorFocused]}>
-            <MaterialIcons
-              name="play-arrow"
-              size={18}
-              color={focused ? '#000000' : '#38bdf8'}
-            />
+          {/* معلومات الفيلم / المسلسل */}
+          <View style={styles.metaContainer}>
             <Text
-              style={[
-                styles.playIndicatorText,
-                focused && styles.playIndicatorTextFocused,
-              ]}
+              numberOfLines={2}
+              style={[styles.itemTitle, focused && styles.itemTitleFocused]}
             >
-              تشغيل
+              {item.title}
             </Text>
+
+            <View style={styles.subMetaRow}>
+              {item.year ? <Text style={styles.metaYear}>{item.year}</Text> : null}
+              {item.sources && item.sources.length > 0 ? (
+                <Text style={styles.metaSources}>{item.sources.length} سيرفرات</Text>
+              ) : null}
+            </View>
           </View>
         </View>
       )}
@@ -88,37 +140,81 @@ const MovieCard: React.FC<MovieCardProps> = ({ item, onSelect, index }) => {
 };
 
 /**
- * شاشة مخصصة لعرض الأفلام والمسلسلات (VOD) فقط بتصميم تلفاز داكن احترافي.
- * تستبعد قنوات البث المباشر التلفزيونية وتدعم التصفية بين (الكل، أفلام، مسلسلات).
+ * شاشة استعراض الأفلام والمسلسلات VOD الموسعة عبر TMDB + TVmaze.
+ * تدعم شريط البحث اللحظي، الأقسام الفرعية، تعدد السيرفرات، والتحكم بالريموت.
  */
 export default function MoviesScreen(): React.JSX.Element {
   const router = useRouter();
-  const { vodItems, isLoading, isError, refetch } = useMediaData();
-  const [filterType, setFilterType] = useState<MovieFilterType>('all');
 
-  // محتوى الأفلام والمسلسلات VOD المسجل حصراً
-  const allMovieItems = useMemo(() => {
-    return vodItems || [];
-  }, [vodItems]);
+  const [mainTab, setMainTab] = useState<MainTabType>('all');
+  const [selectedCategory, setSelectedCategory] = useState<string>('trending');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [debouncedQuery, setDebouncedQuery] = useState<string>('');
 
-  const moviesOnly = useMemo(() => {
-    return allMovieItems.filter((item) => item.type === 'movie' || item.type !== 'series');
-  }, [allMovieItems]);
+  const [items, setItems] = useState<VodItem[]>([]);
+  const [page, setPage] = useState<number>(1);
+  const [totalPages, setTotalPages] = useState<number>(1);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
+  const [isError, setIsError] = useState<boolean>(false);
 
-  const seriesOnly = useMemo(() => {
-    return allMovieItems.filter((item) => item.type === 'series');
-  }, [allMovieItems]);
+  // Debounce للبحث 500ms
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQuery(searchQuery.trim());
+    }, 500);
 
-  // التصفية بحسب التبويب المختار
-  const filteredItems = useMemo(() => {
-    if (filterType === 'movies') {
-      return moviesOnly;
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // إعادة ضبط الصفحة إلى 1 عند تغيير التبويب أو التصنيف أو نص البحث
+  useEffect(() => {
+    setPage(1);
+    setItems([]);
+  }, [mainTab, selectedCategory, debouncedQuery]);
+
+  // جلب البيانات من الخادم السحابي
+  const fetchCatalogData = useCallback(async () => {
+    const isFirstPage = page === 1;
+    if (isFirstPage) {
+      setIsLoading(true);
+    } else {
+      setIsLoadingMore(true);
     }
-    if (filterType === 'series') {
-      return seriesOnly;
+    setIsError(false);
+
+    try {
+      let endpoint = '';
+      if (debouncedQuery.length > 0) {
+        endpoint = `${BACKEND_BASE_URL}/api/vod/search?q=${encodeURIComponent(debouncedQuery)}&page=${page}`;
+      } else {
+        endpoint = `${BACKEND_BASE_URL}/api/vod/catalog?type=${mainTab}&category=${selectedCategory}&page=${page}`;
+      }
+
+      const res = await fetch(endpoint, {
+        headers: { Accept: 'application/json' },
+      });
+
+      if (!res.ok) {
+        throw new Error(`خطأ في جلب البيانات: ${res.status}`);
+      }
+
+      const data = await res.json();
+      const newResults: VodItem[] = data.results || [];
+
+      setTotalPages(data.totalPages || 1);
+      setItems((prev) => (isFirstPage ? newResults : [...prev, ...newResults]));
+    } catch {
+      setIsError(true);
+    } finally {
+      setIsLoading(false);
+      setIsLoadingMore(false);
     }
-    return allMovieItems;
-  }, [allMovieItems, moviesOnly, seriesOnly, filterType]);
+  }, [debouncedQuery, mainTab, selectedCategory, page]);
+
+  useEffect(() => {
+    fetchCatalogData();
+  }, [fetchCatalogData]);
 
   const handleGoBack = () => {
     if (router.canGoBack()) {
@@ -132,191 +228,247 @@ export default function MoviesScreen(): React.JSX.Element {
     onBack: handleGoBack,
   });
 
-  const handleSelect = (item: MediaItem) => {
+  const handleSelect = (item: VodItem) => {
+    const initialUrl = item.sources && item.sources.length > 0 ? item.sources[0].url : '';
+
     router.push({
       pathname: '/play/[id]',
       params: {
         id: item.id,
-        title: item.name,
-        url: item.url,
-        logo: item.logo,
-        sources: item.sources ? JSON.stringify(item.sources) : undefined,
+        title: item.title,
+        url: initialUrl,
+        logo: item.poster,
+        sources: JSON.stringify(item.sources),
+        type: item.type,
+        tmdbId: item.tmdbId ? String(item.tmdbId) : undefined,
+        imdbId: item.imdbId,
       },
     });
   };
 
-  // 1. حالة التحميل
-  if (isLoading) {
-    return (
-      <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color="#38bdf8" />
-        <Text style={styles.loadingTitle}>جاري تحميل الأفلام والمسلسلات...</Text>
-        <Text style={styles.loadingSub}>جاري الاتصال بالخادم لجلب المحتوى...</Text>
-      </View>
-    );
-  }
-
-  // 2. حالة الخطأ
-  if (isError) {
-    return (
-      <View style={styles.centerContainer}>
-        <View style={styles.errorCard}>
-          <MaterialIcons name="error-outline" size={60} color="#ef4444" />
-          <Text style={styles.errorTitle}>تعذر الاتصال بالخادم</Text>
-          <Text style={styles.errorDesc}>يرجى التأكد من الاتصال بالإنترنت ثم إعادة المحاولة</Text>
-          <Pressable
-            hasTVPreferredFocus
-            onPress={() => refetch()}
-            style={({ focused }) => [styles.retryBtn, focused && styles.btnFocused]}
-          >
-            {({ focused }) => (
-              <View style={styles.btnRow}>
-                <MaterialIcons name="refresh" size={20} color={focused ? '#000000' : '#ffffff'} />
-                <Text style={[styles.btnText, focused && styles.btnTextFocused]}>
-                  إعادة المحاولة
-                </Text>
-              </View>
-            )}
-          </Pressable>
-        </View>
-      </View>
-    );
-  }
+  const handleLoadMore = () => {
+    if (!isLoadingMore && page < totalPages) {
+      setPage((prev) => prev + 1);
+    }
+  };
 
   return (
     <View style={styles.container}>
-      {/* شريط العنوان العلوي والتبويبات */}
-      <View style={styles.headerBar}>
-        <View>
-          <Text style={styles.headerTitle}>الأفلام والمسلسلات</Text>
-          <Text style={styles.headerSubtitle}>
-            إجمالي المحتوى المتاح: {filteredItems.length} فيلم ومسلسل
+      {/* 1. الشريط العلوي: العنوان وحقل البحث اللحظي */}
+      <View style={styles.topHeader}>
+        <View style={styles.titleArea}>
+          <Text style={styles.pageTitle}>الأفلام والمسلسلات</Text>
+          <Text style={styles.pageSubtitle}>
+            كتالوج الترفيه العربي والعالمي الشامل • TMDB & TVmaze
           </Text>
         </View>
 
-        {/* أزرار التصفية السريعة */}
-        <View style={styles.tabContainer}>
-          <Pressable
-            onPress={() => setFilterType('all')}
-            style={({ focused }) => [
-              styles.tabBtn,
-              filterType === 'all' && styles.tabBtnActive,
-              focused && styles.tabBtnFocused,
-            ]}
-          >
-            {({ focused }) => (
-              <View style={styles.tabContent}>
-                <MaterialIcons
-                  name="dashboard"
-                  size={18}
-                  color={focused ? '#000000' : filterType === 'all' ? '#ffffff' : '#94a3b8'}
-                />
-                <Text
-                  style={[
-                    styles.tabText,
-                    filterType === 'all' && styles.tabTextActive,
-                    focused && styles.tabTextFocused,
-                  ]}
-                >
-                  الكل ({allMovieItems.length})
-                </Text>
-              </View>
-            )}
-          </Pressable>
-
-          <Pressable
-            onPress={() => setFilterType('movies')}
-            style={({ focused }) => [
-              styles.tabBtn,
-              filterType === 'movies' && styles.tabBtnActive,
-              focused && styles.tabBtnFocused,
-            ]}
-          >
-            {({ focused }) => (
-              <View style={styles.tabContent}>
-                <MaterialIcons
-                  name="movie"
-                  size={18}
-                  color={focused ? '#000000' : filterType === 'movies' ? '#ffffff' : '#94a3b8'}
-                />
-                <Text
-                  style={[
-                    styles.tabText,
-                    filterType === 'movies' && styles.tabTextActive,
-                    focused && styles.tabTextFocused,
-                  ]}
-                >
-                  أفلام ({moviesOnly.length})
-                </Text>
-              </View>
-            )}
-          </Pressable>
-
-          <Pressable
-            onPress={() => setFilterType('series')}
-            style={({ focused }) => [
-              styles.tabBtn,
-              filterType === 'series' && styles.tabBtnActive,
-              focused && styles.tabBtnFocused,
-            ]}
-          >
-            {({ focused }) => (
-              <View style={styles.tabContent}>
-                <MaterialIcons
-                  name="tv"
-                  size={18}
-                  color={focused ? '#000000' : filterType === 'series' ? '#ffffff' : '#94a3b8'}
-                />
-                <Text
-                  style={[
-                    styles.tabText,
-                    filterType === 'series' && styles.tabTextActive,
-                    focused && styles.tabTextFocused,
-                  ]}
-                >
-                  مسلسلات ({seriesOnly.length})
-                </Text>
-              </View>
-            )}
-          </Pressable>
+        {/* حقل البحث الذكي */}
+        <View style={styles.searchBox}>
+          <MaterialIcons name="search" size={22} color="#94a3b8" />
+          <TextInput
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="ابحث عن أي فيلم أو مسلسل..."
+            placeholderTextColor="#64748b"
+            style={styles.searchInput}
+            returnKeyType="search"
+          />
+          {searchQuery.length > 0 && (
+            <Pressable onPress={() => setSearchQuery('')} style={styles.clearBtn}>
+              <MaterialIcons name="close" size={18} color="#94a3b8" />
+            </Pressable>
+          )}
         </View>
       </View>
 
-      {/* المحتوى أو الحالة الفارغة */}
-      {filteredItems.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <MaterialIcons
-            name={filterType === 'series' ? 'tv' : 'local-movies'}
-            size={68}
-            color="#475569"
-          />
+      {/* 2. التبويبات الرئيسية (الكل • أفلام • مسلسلات) */}
+      {debouncedQuery.length === 0 && (
+        <View style={styles.tabsRow}>
+          <View style={styles.mainTabs}>
+            <Pressable
+              onPress={() => setMainTab('all')}
+              style={({ focused }) => [
+                styles.mainTabBtn,
+                mainTab === 'all' && styles.mainTabBtnActive,
+                focused && styles.tabFocused,
+              ]}
+            >
+              {({ focused }) => (
+                <Text
+                  style={[
+                    styles.mainTabText,
+                    mainTab === 'all' && styles.mainTabTextActive,
+                    focused && styles.tabTextFocused,
+                  ]}
+                >
+                  الكل
+                </Text>
+              )}
+            </Pressable>
+
+            <Pressable
+              onPress={() => setMainTab('movie')}
+              style={({ focused }) => [
+                styles.mainTabBtn,
+                mainTab === 'movie' && styles.mainTabBtnActive,
+                focused && styles.tabFocused,
+              ]}
+            >
+              {({ focused }) => (
+                <Text
+                  style={[
+                    styles.mainTabText,
+                    mainTab === 'movie' && styles.mainTabTextActive,
+                    focused && styles.tabTextFocused,
+                  ]}
+                >
+                  أفلام
+                </Text>
+              )}
+            </Pressable>
+
+            <Pressable
+              onPress={() => setMainTab('tv')}
+              style={({ focused }) => [
+                styles.mainTabBtn,
+                mainTab === 'tv' && styles.mainTabBtnActive,
+                focused && styles.tabFocused,
+              ]}
+            >
+              {({ focused }) => (
+                <Text
+                  style={[
+                    styles.mainTabText,
+                    mainTab === 'tv' && styles.mainTabTextActive,
+                    focused && styles.tabTextFocused,
+                  ]}
+                >
+                  مسلسلات
+                </Text>
+              )}
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      {/* 3. شريط الأقسام الفرعية الأفقي */}
+      {debouncedQuery.length === 0 && (
+        <View style={styles.categoriesContainer}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.categoriesScroll}
+          >
+            {SUB_CATEGORIES.map((cat) => {
+              const isActive = selectedCategory === cat.id;
+              return (
+                <Pressable
+                  key={cat.id}
+                  onPress={() => setSelectedCategory(cat.id)}
+                  style={({ focused }) => [
+                    styles.catChip,
+                    isActive && styles.catChipActive,
+                    focused && styles.catChipFocused,
+                  ]}
+                >
+                  {({ focused }) => (
+                    <View style={styles.catChipContent}>
+                      <MaterialIcons
+                        name={cat.icon}
+                        size={16}
+                        color={focused ? '#000000' : isActive ? '#ffffff' : '#38bdf8'}
+                      />
+                      <Text
+                        style={[
+                          styles.catChipText,
+                          isActive && styles.catChipTextActive,
+                          focused && styles.tabTextFocused,
+                        ]}
+                      >
+                        {cat.title}
+                      </Text>
+                    </View>
+                  )}
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* 4. شبكة المحتوى (Grid) أو مؤشر التحميل */}
+      {isLoading ? (
+        <View style={styles.centerBox}>
+          <ActivityIndicator size="large" color="#38bdf8" />
+          <Text style={styles.loadingText}>جاري تحميل الكتالوج من TMDB & TVmaze...</Text>
+        </View>
+      ) : isError ? (
+        <View style={styles.centerBox}>
+          <MaterialIcons name="error-outline" size={60} color="#ef4444" />
+          <Text style={styles.errorTitle}>تعذر الاتصال بالخادم</Text>
+          <Text style={styles.errorSub}>يرجى التحقق من اتصال الإنترنت ثم إعادة المحاولة</Text>
+          <Pressable
+            hasTVPreferredFocus
+            onPress={() => fetchCatalogData()}
+            style={({ focused }) => [styles.retryBtn, focused && styles.tabFocused]}
+          >
+            <Text style={styles.retryBtnText}>إعادة المحاولة</Text>
+          </Pressable>
+        </View>
+      ) : items.length === 0 ? (
+        <View style={styles.centerBox}>
+          <MaterialIcons name="local-movies" size={64} color="#475569" />
           <Text style={styles.emptyTitle}>
-            {filterType === 'series'
-              ? 'لا تتوفر مسلسلات حالياً'
-              : filterType === 'movies'
-              ? 'لا تتوفر أفلام حالياً'
-              : 'لا يتوفر محتوى أفلام أو مسلسلات حالياً'}
+            {debouncedQuery.length > 0
+              ? `لم يتم العثور على نتائج للبحث عن "${debouncedQuery}"`
+              : 'لا يتوفر محتوى حالياً في هذا القسم'}
           </Text>
           <Text style={styles.emptySub}>
-            {filterType === 'series'
-              ? 'سيتم إضافة المسلسلات قريباً'
-              : filterType === 'movies'
-              ? 'سيتم إضافة المزيد من الأفلام قريباً'
-              : 'سيتم تحديث القائمة وإضافة المزيد من المحتوى الترفيهي تلقائياً'}
+            {debouncedQuery.length > 0
+              ? 'تأكد من كتابة الاسم بشكل صحيح أو جرب كلمات أخرى'
+              : 'سيتم إضافة المزيد من الأعمال الترفيهية قريباً'}
           </Text>
         </View>
       ) : (
-        <FlatList<MediaItem>
-          data={filteredItems}
-          keyExtractor={(item) => item.id}
+        <FlatList<VodItem>
+          data={items}
+          keyExtractor={(item) => `${item.id}-${item.episodeInfo || ''}`}
           numColumns={4}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={styles.gridContent}
           showsVerticalScrollIndicator={false}
           renderItem={({ item, index }) => (
-            <View style={styles.col}>
-              <MovieCard item={item} onSelect={handleSelect} index={index} />
+            <View style={styles.gridCol}>
+              <VodCard item={item} onSelect={handleSelect} index={index} />
             </View>
           )}
+          ListFooterComponent={
+            page < totalPages ? (
+              <View style={styles.footerLoader}>
+                <Pressable
+                  onPress={handleLoadMore}
+                  disabled={isLoadingMore}
+                  style={({ focused }) => [
+                    styles.loadMoreBtn,
+                    focused && styles.loadMoreBtnFocused,
+                  ]}
+                >
+                  {isLoadingMore ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <View style={styles.btnRow}>
+                      <MaterialIcons name="expand-more" size={22} color="#ffffff" />
+                      <Text style={styles.loadMoreText}>تحميل المزيد من الأعمال</Text>
+                    </View>
+                  )}
+                </Pressable>
+              </View>
+            ) : (
+              <View style={styles.footerEnd}>
+                <Text style={styles.footerEndText}>تم عرض جميع النتائج المتاحة</Text>
+              </View>
+            )
+          }
         />
       )}
     </View>
@@ -328,72 +480,139 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0f172a',
   },
-  headerBar: {
+  topHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 24,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1e293b',
+    marginBottom: 16,
+    flexWrap: 'wrap',
+    gap: 16,
   },
-  headerTitle: {
+  titleArea: {
+    flex: 1,
+    minWidth: 260,
+  },
+  pageTitle: {
     fontSize: 26,
     fontWeight: '900',
     color: '#ffffff',
   },
-  headerSubtitle: {
-    fontSize: 14,
+  pageSubtitle: {
+    fontSize: 13,
     color: '#94a3b8',
     marginTop: 4,
   },
-  tabContainer: {
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1e293b',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#334155',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    width: 320,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600',
+    padding: 0,
+    textAlign: 'right',
+  },
+  clearBtn: {
+    padding: 4,
+  },
+  tabsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  mainTabs: {
     flexDirection: 'row',
     backgroundColor: '#0b1120',
-    borderRadius: 14,
-    padding: 4,
+    borderRadius: 12,
+    padding: 3,
     borderWidth: 1,
     borderColor: '#1e293b',
-    gap: 6,
+    gap: 4,
   },
-  tabBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+  mainTabBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 20,
     borderRadius: 10,
-    backgroundColor: 'transparent',
   },
-  tabBtnActive: {
+  mainTabBtnActive: {
     backgroundColor: '#0284c7',
   },
-  tabBtnFocused: {
+  mainTabText: {
+    color: '#94a3b8',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  mainTabTextActive: {
+    color: '#ffffff',
+    fontWeight: '800',
+  },
+  tabFocused: {
     backgroundColor: '#ffffff',
     transform: [{ scale: 1.05 }],
     shadowColor: '#38bdf8',
     shadowOpacity: 0.9,
     shadowRadius: 10,
   },
-  tabContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  tabText: {
-    color: '#94a3b8',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  tabTextActive: {
-    color: '#ffffff',
-    fontWeight: '800',
-  },
   tabTextFocused: {
     color: '#000000',
     fontWeight: '900',
   },
-  listContent: {
+  categoriesContainer: {
+    marginBottom: 18,
+  },
+  categoriesScroll: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingVertical: 2,
+  },
+  catChip: {
+    backgroundColor: '#1e293b',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  catChipActive: {
+    backgroundColor: '#0284c7',
+    borderColor: '#38bdf8',
+  },
+  catChipFocused: {
+    backgroundColor: '#ffffff',
+    borderColor: '#ffffff',
+    transform: [{ scale: 1.06 }],
+    shadowColor: '#38bdf8',
+    shadowOpacity: 0.9,
+    shadowRadius: 10,
+  },
+  catChipContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  catChipText: {
+    color: '#94a3b8',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  catChipTextActive: {
+    color: '#ffffff',
+    fontWeight: '800',
+  },
+  gridContent: {
     paddingBottom: 40,
   },
-  col: {
+  gridCol: {
     flex: 1,
     padding: 8,
   },
@@ -402,111 +621,136 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1.5,
     borderColor: '#334155',
-    padding: 16,
-    minHeight: 200,
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    overflow: 'hidden',
+    height: 330,
   },
   cardFocused: {
     backgroundColor: '#ffffff',
     borderColor: '#ffffff',
-    transform: [{ scale: 1.06 }],
+    transform: [{ scale: 1.05 }],
     shadowColor: '#38bdf8',
     shadowOpacity: 0.9,
     shadowRadius: 14,
   },
-  cardContent: {
-    width: '100%',
-    alignItems: 'center',
+  cardInner: {
+    flex: 1,
   },
-  badgeRow: {
+  posterContainer: {
     width: '100%',
+    height: 230,
+    backgroundColor: '#0b1120',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  posterImage: {
+    width: '100%',
+    height: '100%',
+  },
+  fallbackPoster: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#0f172a',
+  },
+  topBadgesRow: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    right: 8,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
   },
-  genreBadge: {
-    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+  typeBadge: {
+    backgroundColor: 'rgba(2, 132, 199, 0.85)',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
-    maxWidth: '65%',
   },
-  genreBadgeText: {
-    color: '#38bdf8',
+  typeBadgeTv: {
+    backgroundColor: 'rgba(124, 58, 237, 0.85)',
+  },
+  typeBadgeText: {
+    color: '#ffffff',
     fontSize: 11,
-    fontWeight: '700',
+    fontWeight: '800',
   },
-  countryBadgeText: {
-    color: '#64748b',
+  ratingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+    gap: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(234, 179, 8, 0.4)',
+  },
+  ratingBadgeText: {
+    color: '#eab308',
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '800',
   },
-  logoWrapper: {
-    marginBottom: 12,
+  episodeBadge: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+    right: 8,
+    backgroundColor: 'rgba(5, 150, 105, 0.9)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
   },
-  logoWrapperFocused: {
-    transform: [{ scale: 1.04 }],
+  episodeBadgeText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  metaContainer: {
+    padding: 10,
+    justifyContent: 'space-between',
+    flex: 1,
   },
   itemTitle: {
-    fontSize: 15,
-    fontWeight: '800',
     color: '#ffffff',
-    textAlign: 'center',
-    marginBottom: 12,
+    fontSize: 14,
+    fontWeight: '800',
+    lineHeight: 18,
+    textAlign: 'right',
   },
   itemTitleFocused: {
     color: '#000000',
     fontWeight: '900',
   },
-  playIndicator: {
+  subMetaRow: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: 'rgba(2, 132, 199, 0.15)',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 8,
-    gap: 4,
+    marginTop: 6,
   },
-  playIndicatorFocused: {
-    backgroundColor: '#0284c7',
-  },
-  playIndicatorText: {
-    color: '#38bdf8',
+  metaYear: {
+    color: '#94a3b8',
     fontSize: 12,
+    fontWeight: '600',
+  },
+  metaSources: {
+    color: '#38bdf8',
+    fontSize: 11,
     fontWeight: '700',
   },
-  playIndicatorTextFocused: {
-    color: '#ffffff',
-    fontWeight: '800',
-  },
-  centerContainer: {
+  centerBox: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#0f172a',
-    padding: 24,
+    paddingVertical: 60,
   },
-  loadingTitle: {
-    color: '#ffffff',
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginTop: 18,
-  },
-  loadingSub: {
-    color: '#94a3b8',
-    fontSize: 14,
-    marginTop: 8,
-  },
-  errorCard: {
-    backgroundColor: '#1e293b',
-    borderRadius: 20,
-    padding: 32,
-    alignItems: 'center',
-    maxWidth: 440,
-    borderWidth: 1,
-    borderColor: '#334155',
+  loadingText: {
+    color: '#38bdf8',
+    fontSize: 16,
+    fontWeight: '700',
+    marginTop: 16,
   },
   errorTitle: {
     color: '#ef4444',
@@ -514,41 +758,23 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginTop: 16,
   },
-  errorDesc: {
+  errorSub: {
     color: '#94a3b8',
-    fontSize: 15,
-    textAlign: 'center',
+    fontSize: 14,
     marginTop: 8,
-    marginBottom: 20,
+    textAlign: 'center',
   },
   retryBtn: {
     backgroundColor: '#0284c7',
     paddingVertical: 12,
     paddingHorizontal: 24,
     borderRadius: 12,
+    marginTop: 20,
   },
-  btnFocused: {
-    backgroundColor: '#ffffff',
-    transform: [{ scale: 1.06 }],
-  },
-  btnRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  btnText: {
+  retryBtnText: {
     color: '#ffffff',
     fontSize: 15,
     fontWeight: 'bold',
-  },
-  btnTextFocused: {
-    color: '#000000',
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 60,
   },
   emptyTitle: {
     color: '#ffffff',
@@ -561,5 +787,41 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 8,
     textAlign: 'center',
+  },
+  footerLoader: {
+    alignItems: 'center',
+    paddingVertical: 24,
+  },
+  loadMoreBtn: {
+    backgroundColor: '#0284c7',
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    borderRadius: 14,
+  },
+  loadMoreBtnFocused: {
+    backgroundColor: '#ffffff',
+    transform: [{ scale: 1.05 }],
+    shadowColor: '#38bdf8',
+    shadowOpacity: 0.9,
+    shadowRadius: 10,
+  },
+  loadMoreText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: 'bold',
+    marginLeft: 6,
+  },
+  btnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  footerEnd: {
+    alignItems: 'center',
+    paddingVertical: 20,
+  },
+  footerEndText: {
+    color: '#64748b',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

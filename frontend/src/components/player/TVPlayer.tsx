@@ -46,9 +46,21 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
   const onLevelsLoadedRef = useRef(onLevelsLoaded);
   onLevelsLoadedRef.current = onLevelsLoaded;
 
+  const isEmbedUrl =
+    streamUrl.includes('/embed/') ||
+    streamUrl.includes('vidsrc') ||
+    streamUrl.includes('embed.su') ||
+    streamUrl.includes('youtube.com/embed') ||
+    streamUrl.includes('player.');
+
   // إعداد hls.js على بيئة الويب وشاشات التلفاز الذكية
   useEffect(() => {
     if (Platform.OS !== 'web' || !streamUrl) {
+      return;
+    }
+
+    if (isEmbedUrl) {
+      onBufferingRef.current?.(false);
       return;
     }
 
@@ -212,6 +224,27 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
   };
 
   if (Platform.OS === 'web') {
+    if (isEmbedUrl) {
+      return (
+        <View style={[styles.container, style]}>
+          <iframe
+            src={streamUrl}
+            style={{
+              width: '100%',
+              height: '100%',
+              border: 'none',
+              backgroundColor: '#000000',
+            }}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+            allowFullScreen
+            onLoad={() => {
+              onBufferingRef.current?.(false);
+            }}
+          />
+        </View>
+      );
+    }
+
     return (
       <View style={[styles.container, style]}>
         <video

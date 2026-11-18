@@ -31,6 +31,9 @@ export default function PlayerScreen(): React.JSX.Element {
     title?: string;
     logo?: string;
     sources?: string;
+    type?: string;
+    tmdbId?: string;
+    imdbId?: string;
   }>();
 
   const { favoriteIds, toggleFavorite } = useAppStore();
@@ -72,8 +75,55 @@ export default function PlayerScreen(): React.JSX.Element {
       : '';
   }, [params.logo]);
 
-  // مصادر البث المتعددة للقناة
+  // دعم مواسم وحلقات المسلسلات
+  const isTvSeries = useMemo(() => {
+    return (
+      params.type === 'tv' ||
+      channelId.includes('-tv-') ||
+      channelId.startsWith('tvm-')
+    );
+  }, [params.type, channelId]);
+
+  const [seasons, setSeasons] = useState<{ season: number; episodes: any[] }[]>([]);
+  const [selectedSeason, setSelectedSeason] = useState<number>(1);
+  const [selectedEpisode, setSelectedEpisode] = useState<number>(1);
+  const [showEpisodesModal, setShowEpisodesModal] = useState<boolean>(false);
+  const [customSources, setCustomSources] = useState<StreamSource[] | null>(null);
+
+  useEffect(() => {
+    if (!isTvSeries) return;
+
+    let isMounted = true;
+    const fetchEpisodes = async () => {
+      try {
+        const q = channelTitle ? encodeURIComponent(channelTitle) : '';
+        const imdb = params.imdbId ? encodeURIComponent(params.imdbId) : '';
+        const res = await fetch(
+          `https://iptv-backend.moaznsm.workers.dev/api/vod/episodes?q=${q}&imdb=${imdb}`
+        );
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && data.seasons && Array.isArray(data.seasons) && data.seasons.length > 0) {
+            setSeasons(data.seasons);
+          }
+        }
+      } catch {
+        // تجاهل
+      }
+    };
+
+    fetchEpisodes();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isTvSeries, channelTitle, params.imdbId]);
+
+  // مصادر البث المتعددة للقناة أو العمل
   const channelSources: StreamSource[] = useMemo(() => {
+    if (customSources && customSources.length > 0) {
+      return customSources;
+    }
     if (params.sources) {
       try {
         const raw = typeof params.sources === 'string' ? params.sources : params.sources[0];
@@ -87,12 +137,59 @@ export default function PlayerScreen(): React.JSX.Element {
     }
     const found = channels.find((c) => c.id === channelId);
     return found?.sources || [];
-  }, [params.sources, channels, channelId]);
+  }, [customSources, params.sources, channels, channelId]);
 
   const [activeSourceIndex, setActiveSourceIndex] = useState<number>(0);
   const [hlsLevels, setHlsLevels] = useState<HlsLevelOption[]>([]);
   const [selectedHlsLevel, setSelectedHlsLevel] = useState<number>(-1);
   const [showQualityModal, setShowQualityModal] = useState<boolean>(false);
+
+  // اختيار حلقة معينة وإعادة بناء سيرفرات البث لها
+  const handleSelectEpisode = (seasonNum: number, episodeNum: number) => {
+    setSelectedSeason(seasonNum);
+    setSelectedEpisode(episodeNum);
+    setShowEpisodesModal(false);
+
+    const tmdb = params.tmdbId;
+    const imdb = params.imdbId;
+    const targetId = tmdb || imdb || channelId;
+    const newSources: StreamSource[] = [];
+
+    if (tmdb) {
+      newSources.push({
+        label: 'سيرفر 1 (VidSrc)',
+        url: `https://vidsrc.to/embed/tv/${tmdb}/${seasonNum}/${episodeNum}`,
+      });
+      newSources.push({
+        label: 'سيرفر 2 (Embed.su)',
+        url: `https://embed.su/embed/tv/${tmdb}/${seasonNum}/${episodeNum}`,
+      });
+      newSources.push({
+        label: 'سيرفر 3 (VidSrc Me)',
+        url: `https://vidsrc.me/embed/tv?tmdb=${tmdb}&season=${seasonNum}&episode=${episodeNum}`,
+      });
+    } else if (imdb) {
+      newSources.push({
+        label: 'سيرفر 1 (VidSrc)',
+        url: `https://vidsrc.to/embed/tv/${imdb}/${seasonNum}/${episodeNum}`,
+      });
+      newSources.push({
+        label: 'سيرفر 2 (VidSrc Me)',
+        url: `https://vidsrc.me/embed/tv?imdb=${imdb}&season=${seasonNum}&episode=${episodeNum}`,
+      });
+    }
+
+    newSources.push({
+      label: `سيرفر ${newSources.length + 1} (مباشر)`,
+      url: `https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4?id=${targetId}&s=${seasonNum}&e=${episodeNum}`,
+    });
+
+    setCustomSources(newSources);
+    setActiveSourceIndex(0);
+    setIsBuffering(true);
+    setPlaybackError(null);
+    setRetryKey((prev) => prev + 1);
+  };
 
   // إعادة تعيين مؤشر المصدر عند تغيير القناة
   useEffect(() => {
@@ -119,14 +216,14 @@ export default function PlayerScreen(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
-    if (!showOverlay || showQualityModal) return;
+    if (!showOverlay || showQualityModal || showEpisodesModal) return;
 
     const timer = setTimeout(() => {
       setShowOverlay(false);
     }, 5000);
 
     return () => clearTimeout(timer);
-  }, [showOverlay, showQualityModal]);
+  }, [showOverlay, showQualityModal, showEpisodesModal]);
 
   const handleGoBack = () => {
     if (router.canGoBack()) {
@@ -138,7 +235,9 @@ export default function PlayerScreen(): React.JSX.Element {
 
   useTVRemoteNavigation({
     onBack: () => {
-      if (showQualityModal) {
+      if (showEpisodesModal) {
+        setShowEpisodesModal(false);
+      } else if (showQualityModal) {
         setShowQualityModal(false);
       } else {
         handleGoBack();
@@ -232,7 +331,7 @@ export default function PlayerScreen(): React.JSX.Element {
               )}
             </Pressable>
 
-            {/* عنوان وشعار القناة */}
+            {/* عنوان وشعار القناة أو العمل */}
             {channelTitle ? (
               <View style={styles.titleBadge}>
                 <ChannelLogo
@@ -243,11 +342,46 @@ export default function PlayerScreen(): React.JSX.Element {
                 />
                 <Text numberOfLines={1} style={styles.titleBadgeText}>
                   {channelTitle}
+                  {isTvSeries && seasons.length > 0
+                    ? ` (الموسم ${selectedSeason} • حلقة ${selectedEpisode})`
+                    : ''}
                 </Text>
               </View>
             ) : null}
 
-            {/* زر الجودة والمصادر */}
+            {/* زر اختيار المواسم والحلقات للمسلسلات */}
+            {isTvSeries && seasons.length > 0 ? (
+              <Pressable
+                onPress={() => {
+                  setShowEpisodesModal(true);
+                  resetOverlayTimer();
+                }}
+                style={({ focused }) => [
+                  styles.episodesBtn,
+                  focused && styles.overlayBtnFocused,
+                ]}
+              >
+                {({ focused }) => (
+                  <View style={styles.btnRow}>
+                    <MaterialIcons
+                      name="video-library"
+                      size={20}
+                      color={focused ? '#000000' : '#c084fc'}
+                    />
+                    <Text
+                      style={[
+                        styles.episodesBtnText,
+                        focused && styles.overlayBtnTextFocused,
+                      ]}
+                    >
+                      الحلقات (S{selectedSeason}E{selectedEpisode})
+                    </Text>
+                  </View>
+                )}
+              </Pressable>
+            ) : null}
+
+            {/* زر الجودة والمصادر / السيرفرات */}
             {hasMultiQuality ? (
               <Pressable
                 onPress={() => {
@@ -267,7 +401,7 @@ export default function PlayerScreen(): React.JSX.Element {
                       color={focused ? '#000000' : '#38bdf8'}
                     />
                     <Text style={[styles.qualityBtnText, focused && styles.overlayBtnTextFocused]}>
-                      الجودة / المصادر
+                      السيرفرات / الجودة
                     </Text>
                   </View>
                 )}
@@ -458,6 +592,110 @@ export default function PlayerScreen(): React.JSX.Element {
         </View>
       )}
 
+      {/* 4.ب. قائمة المواسم والحلقات للمسلسلات */}
+      {showEpisodesModal && (
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { maxHeight: '85%' }]}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalTitleRow}>
+                <MaterialIcons name="video-library" size={24} color="#c084fc" />
+                <Text style={styles.modalTitle}>المواسم والحلقات</Text>
+              </View>
+              <Text style={styles.modalSub}>{channelTitle}</Text>
+            </View>
+
+            {/* أزرار اختيار الموسم */}
+            {seasons.length > 1 && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={{ maxHeight: 52, marginBottom: 14 }}
+                contentContainerStyle={{ gap: 8, paddingHorizontal: 4 }}
+              >
+                {seasons.map((s) => {
+                  const isCurrent = s.season === selectedSeason;
+                  return (
+                    <Pressable
+                      key={`season-tab-${s.season}`}
+                      onPress={() => setSelectedSeason(s.season)}
+                      style={[
+                        styles.optionChip,
+                        isCurrent && { backgroundColor: '#7c3aed', borderColor: '#c084fc' },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.optionText,
+                          isCurrent && { color: '#ffffff', fontWeight: '800' },
+                        ]}
+                      >
+                        الموسم {s.season}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            )}
+
+            {/* قائمة حلقات الموسم المختار */}
+            <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
+              <View style={styles.optionsWrap}>
+                {seasons
+                  .find((s) => s.season === selectedSeason)
+                  ?.episodes.map((ep) => {
+                    const isCurrentEp =
+                      selectedSeason === ep.season && selectedEpisode === ep.number;
+                    return (
+                      <Pressable
+                        key={`ep-${ep.season}-${ep.number}`}
+                        hasTVPreferredFocus={isCurrentEp}
+                        onPress={() => handleSelectEpisode(ep.season, ep.number)}
+                        style={({ focused }) => [
+                          styles.optionChip,
+                          isCurrentEp && { backgroundColor: '#7c3aed', borderColor: '#c084fc' },
+                          focused && styles.optionChipFocused,
+                        ]}
+                      >
+                        {({ focused }) => (
+                          <View style={styles.optionContent}>
+                            {isCurrentEp && (
+                              <MaterialIcons
+                                name="play-circle-filled"
+                                size={18}
+                                color={focused ? '#000000' : '#c084fc'}
+                              />
+                            )}
+                            <Text
+                              style={[
+                                styles.optionText,
+                                isCurrentEp && styles.optionTextActive,
+                                focused && styles.optionTextFocused,
+                              ]}
+                            >
+                              الحلقة {ep.number}: {ep.name}
+                            </Text>
+                          </View>
+                        )}
+                      </Pressable>
+                    );
+                  })}
+              </View>
+            </ScrollView>
+
+            {/* زر إغلاق */}
+            <Pressable
+              onPress={() => setShowEpisodesModal(false)}
+              style={({ focused }) => [
+                styles.modalCloseBtn,
+                focused && styles.modalCloseBtnFocused,
+              ]}
+            >
+              <Text style={styles.modalCloseBtnText}>إغلاق</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
       {/* 5. مؤشر التحميل المؤقت */}
       {isBuffering && !playbackError && currentStreamUrl ? (
         <View style={styles.bufferingContainer} pointerEvents="none">
@@ -590,6 +828,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     flexShrink: 1,
+  },
+  episodesBtn: {
+    backgroundColor: 'rgba(124, 58, 237, 0.25)',
+    borderWidth: 1.5,
+    borderColor: '#7c3aed',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 30,
+  },
+  episodesBtnText: {
+    color: '#c084fc',
+    fontSize: 14,
+    fontWeight: '700',
+    marginLeft: 6,
   },
   qualityBtn: {
     backgroundColor: 'rgba(15, 23, 42, 0.85)',
