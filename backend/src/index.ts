@@ -13,19 +13,151 @@ interface TMDBResponse {
   results: TMDBMovie[];
 }
 
-// 1. جلب القنوات المفتوحة المصدر المجانية (القنوات العربية كمثال)
-async function fetchOpenSourceChannels(): Promise<string> {
-  const url = 'https://iptv-org.github.io/iptv/languages/ara.m3u';
+interface ChannelEntry {
+  extinf: string;
+  url: string;
+}
+
+// مصادر القنوات المفتوحة المصدر الموثوقة من iptv-org
+const CHANNEL_SOURCES = [
+  'https://iptv-org.github.io/iptv/languages/ara.m3u',       // القنوات العربية
+  'https://iptv-org.github.io/iptv/categories/sports.m3u',    // رياضة
+  'https://iptv-org.github.io/iptv/categories/movies.m3u',    // أفلام ومسلسلات
+  'https://iptv-org.github.io/iptv/categories/kids.m3u',      // أطفال
+  'https://iptv-org.github.io/iptv/categories/documentary.m3u', // وثائقيات
+  'https://iptv-org.github.io/iptv/categories/news.m3u',      // أخبار واقتصاد
+];
+
+/**
+ * تعريب وتوحيد تصنيفات القنوات المأخوذة من iptv-org إلى تصنيفات عربية قياسية
+ */
+function translateCategory(rawCategory: string): string {
+  if (!rawCategory || rawCategory.trim().length === 0) {
+    return 'قنوات عامة ومنوعة';
+  }
+
+  // دعم التصنيفات المركبة مثل Documentary;News
+  const parts = rawCategory.split(';').map((p) => p.trim().toLowerCase());
+
+  for (const part of parts) {
+    if (['sports', 'sport', 'outdoor', 'auto', 'motorsport'].includes(part)) {
+      return 'رياضة';
+    }
+    if (['movies', 'movie', 'series', 'entertainment', 'comedy'].includes(part)) {
+      return 'أفلام ومسلسلات';
+    }
+    if (['kids', 'animation', 'family'].includes(part)) {
+      return 'أطفال وعائلة';
+    }
+    if (['documentary', 'science', 'education', 'travel', 'nature'].includes(part)) {
+      return 'وثائقيات وتعليم';
+    }
+    if (['news', 'business', 'weather', 'legislative'].includes(part)) {
+      return 'أخبار واقتصاد';
+    }
+    if (['religious', 'islamic', 'quran'].includes(part)) {
+      return 'قنوات دينية';
+    }
+    if (['music'].includes(part)) {
+      return 'موسيقى';
+    }
+    if (['general', 'undefined', 'classic', 'culture', 'lifestyle', 'shop', 'relax'].includes(part)) {
+      return 'قنوات عامة ومنوعة';
+    }
+  }
+
+  return 'قنوات عامة ومنوعة';
+}
+
+/**
+ * جلب قائمة M3U فردية بأمان
+ */
+async function fetchSource(url: string): Promise<string> {
   try {
-    const response = await fetch(url);
-    if (!response.ok) return '#EXTM3U\n';
-    return await response.text();
-  } catch (error) {
-    return '#EXTM3U\n';
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTVStream/1.0',
+      },
+    });
+    if (!res.ok) return '';
+    return await res.text();
+  } catch {
+    return '';
   }
 }
 
-// 2. جلب الأفلام من TMDB
+/**
+ * معالجة نص M3U واستخراج القنوات مع تعريب التصنيف وإلغاء التكرار
+ */
+function processM3UText(content: string, urlSet: Set<string>, entries: ChannelEntry[]): void {
+  const lines = content.split('\n');
+  const total = lines.length;
+  let currentExtinf = '';
+
+  for (let i = 0; i < total; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    if (line.startsWith('#EXTINF:')) {
+      currentExtinf = line;
+    } else if (!line.startsWith('#') && currentExtinf) {
+      if (line.startsWith('http://') || line.startsWith('https://')) {
+        // إزالة القنوات المكررة بناءً على رابط البث المباشر
+        if (!urlSet.has(line)) {
+          urlSet.add(line);
+
+          // استخراج وترجمة group-title
+          const groupTitleRegex = /group-title="([^"]*)"/i;
+          const match = currentExtinf.match(groupTitleRegex);
+          const rawGroup = match ? match[1] : '';
+          const translatedGroup = translateCategory(rawGroup);
+
+          let updatedExtinf: string;
+          if (match) {
+            updatedExtinf = currentExtinf.replace(groupTitleRegex, `group-title="${translatedGroup}"`);
+          } else {
+            const commaIdx = currentExtinf.lastIndexOf(',');
+            if (commaIdx !== -1) {
+              updatedExtinf = `${currentExtinf.substring(0, commaIdx)} group-title="${translatedGroup}"${currentExtinf.substring(commaIdx)}`;
+            } else {
+              updatedExtinf = `${currentExtinf} group-title="${translatedGroup}"`;
+            }
+          }
+
+          entries.push({ extinf: updatedExtinf, url: line });
+        }
+      }
+      currentExtinf = '';
+    }
+  }
+}
+
+/**
+ * جلب وتوحيد كافة القنوات المفتوحة المصدر بالتوازي
+ */
+async function fetchAndNormalizeAllChannels(): Promise<string> {
+  const texts = await Promise.all(CHANNEL_SOURCES.map(fetchSource));
+  const urlSet = new Set<string>();
+  const entries: ChannelEntry[] = [];
+
+  for (const text of texts) {
+    if (text) {
+      processM3UText(text, urlSet, entries);
+    }
+  }
+
+  const lines = ['#EXTM3U'];
+  for (const entry of entries) {
+    lines.push(entry.extinf);
+    lines.push(entry.url);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * جلب الأفلام الرائجة للأسبوع من TMDB
+ */
 async function fetchTrendingMovies(apiKey: string): Promise<TMDBMovie[]> {
   if (!apiKey) return [];
   const url = `https://api.themoviedb.org/3/trending/movie/week?api_key=${apiKey}&language=ar`;
@@ -34,12 +166,14 @@ async function fetchTrendingMovies(apiKey: string): Promise<TMDBMovie[]> {
     if (!response.ok) return [];
     const data = (await response.json()) as TMDBResponse;
     return data.results || [];
-  } catch (error) {
+  } catch {
     return [];
   }
 }
 
-// 3. تحويل الأفلام إلى صيغة M3U
+/**
+ * تحويل أفلام TMDB إلى صيغة M3U موحدة تحت تصنيف "أفلام رائجة"
+ */
 function formatMoviesToM3U(movies: TMDBMovie[]): string {
   const lines: string[] = [];
   for (const movie of movies) {
@@ -47,7 +181,6 @@ function formatMoviesToM3U(movies: TMDBMovie[]): string {
     const posterUrl = movie.poster_path
       ? `https://image.tmdb.org/t/p/w500${movie.poster_path}`
       : '';
-    // رابط فيديو تجريبي مفتوح المصدر للأفلام
     const streamUrl = `https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4?movie_id=${movie.id}`;
 
     lines.push(
@@ -62,7 +195,7 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    // معالجة طلبات الأمان والتحقق المسبق (CORS Preflight) التي يرسلها المتصفح
+    // معالجة طلبات الأمان (CORS Preflight)
     if (request.method === 'OPTIONS') {
       return new Response(null, {
         headers: {
@@ -82,15 +215,14 @@ export default {
       try {
         const apiKey = env.TMDB_API_KEY || 'YOUR_TMDB_API_KEY';
 
-        // تنفيذ الطلبين في نفس الوقت لتسريع الاستجابة
+        // جلب وتجميع كافة القنوات والأفلام بالتوازي لأعلى أداء
         const [channelsM3U, movies] = await Promise.all([
-          fetchOpenSourceChannels(),
+          fetchAndNormalizeAllChannels(),
           fetchTrendingMovies(apiKey),
         ]);
 
         const moviesM3U = formatMoviesToM3U(movies);
 
-        // تنظيف ومحاذاة ملف القنوات (إزالة سطر فارغ إن وجد) ودمج الأفلام معه
         const cleanChannels = channelsM3U.trim();
         const finalM3U = moviesM3U.length > 0
           ? `${cleanChannels}\n${moviesM3U}`
