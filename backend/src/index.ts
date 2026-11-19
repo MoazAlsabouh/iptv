@@ -1060,24 +1060,26 @@ function findVideoRenderers(obj: any, results: any[] = []): any[] {
 }
 
 /**
- * فحص قابلية تضمين وتشغيل فيديو يوتيوب داخل iframe
- * واستبعاد الفيديوهات المقيدة بالعمر أو المعطل بها التضمين
+ * فحص صارم لقابلية تضمين وتشغيل فيديو يوتيوب داخل iframe
+ * يجلب صفحة watch ويتحقق من ytInitialPlayerResponse:
+ * يشترط أن يكون "status": "OK" و "playableInEmbed": true حصراً
  */
 async function checkYouTubeEmbedPlayable(
   videoId: string,
-  timeoutMs: number = 2500
+  timeoutMs: number = 3500
 ): Promise<boolean> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const embedUrl = `https://www.youtube.com/embed/${videoId}`;
-    const res = await fetch(embedUrl, {
+    const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    const res = await fetch(watchUrl, {
       signal: controller.signal,
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept-Language': 'en,ar;q=0.9',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       },
     });
 
@@ -1086,21 +1088,36 @@ async function checkYouTubeEmbedPlayable(
     }
 
     const html = await res.text();
-    const lower = html.toLowerCase();
+    const marker = 'ytInitialPlayerResponse = ';
+    const idx = html.indexOf(marker);
+    if (idx === -1) {
+      return false;
+    }
 
-    // مؤشرات الحظر والتقييد العمري أو منع التضمين
-    const isRestricted =
-      html.includes('LOGIN_REQUIRED') ||
-      html.includes('UNPLAYABLE') ||
-      html.includes('EMBEDDING_DISABLED') ||
-      html.includes('AGE_VERIFICATION_REQUIRED') ||
-      lower.includes('age-restricted') ||
-      lower.includes('confirm your age') ||
-      lower.includes('sign in to confirm your age');
+    const start = idx + marker.length;
+    const chunk = html.substring(start, start + 40000);
+    const pIdx = chunk.indexOf('"playabilityStatus"');
+    if (pIdx === -1) {
+      return false;
+    }
 
-    return !isRestricted;
+    const statusChunk = chunk.substring(pIdx, pIdx + 1200);
+
+    // استخراج قيمة status
+    const statusMatch = statusChunk.match(/"status"\s*:\s*"([^"]+)"/);
+    const status = statusMatch ? statusMatch[1] : '';
+
+    // استخراج قيمة playableInEmbed
+    const embedMatch = statusChunk.match(/"playableInEmbed"\s*:\s*(true|false)/);
+    const playableInEmbed = embedMatch ? embedMatch[1] === 'true' : false;
+
+    // اشتراط status === 'OK' و playableInEmbed === true معاً حرفياً
+    if (status !== 'OK' || !playableInEmbed) {
+      return false;
+    }
+
+    return true;
   } catch {
-    // في حال انتهاء المهلة أو حدوث خطأ، يعتبر الفيديو غير متاح
     return false;
   } finally {
     clearTimeout(timeoutId);
@@ -1633,11 +1650,17 @@ function buildMultiEmbedSources(
 
 /**
  * معالج نقطة النهاية الهجينة /api/vod/sources مع دعم التخزين المؤقت 12 ساعة
+ * واستخدام مفتاح إصدار v=3 لتخطي الكاش القديم
  */
 async function handleVodSources(request: Request, url: URL): Promise<Response> {
   const cache = (caches as any).default;
+  // استخدام معامل إصدار v=3 لإلغاء أي كاش قديم يحمل روابط معطلة
+  const cacheUrl = new URL(url.toString());
+  cacheUrl.searchParams.set('v', '3');
+  const cacheKey = new Request(cacheUrl.toString(), request);
+
   try {
-    const cached = await cache.match(request);
+    const cached = await cache.match(cacheKey);
     if (cached) {
       return cached;
     }
@@ -1660,17 +1683,30 @@ async function handleVodSources(request: Request, url: URL): Promise<Response> {
   const isArabic = rawLang === 'ar';
 
   const embedSources = buildMultiEmbedSources(type, tmdbId, imdbId, season, episode);
-  const targetId = tmdbId || imdbId || title || 'sample';
-  const backupDirectSource = {
-    label: 'سيرفر احتياطي (مباشر)',
-    url: `https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4?id=${encodeURIComponent(targetId)}&s=${season}&e=${episode}`,
-    type: 'direct' as const,
-  };
 
   // للأعمال غير العربية: إيقاف يوتيوب وديلي موشن تماماً وإرجاع السيرفرات المدمجة الدقيقة فوراً
   if (!isArabic) {
-    const finalSources = [...embedSources, backupDirectSource];
-    const response = new Response(JSON.stringify({ sources: finalSources }), {
+    if (embedSources.length === 0) {
+      const emptyRes = new Response(
+        JSON.stringify({ sources: [], error: 'هذا العمل غير متوفر حالياً على أي مصدر' }),
+        {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, Cache-Control, Pragma, *',
+            'Cache-Control': 'public, max-age=43200',
+          },
+        }
+      );
+      try {
+        await cache.put(cacheKey, emptyRes.clone());
+      } catch {}
+      return emptyRes;
+    }
+
+    const response = new Response(JSON.stringify({ sources: embedSources }), {
       status: 200,
       headers: {
         'Content-Type': 'application/json; charset=utf-8',
@@ -1682,7 +1718,7 @@ async function handleVodSources(request: Request, url: URL): Promise<Response> {
     });
 
     try {
-      await cache.put(request, response.clone());
+      await cache.put(cacheKey, response.clone());
     } catch {
       // تجاهل أخطاء وضع الكاش
     }
@@ -1690,7 +1726,7 @@ async function handleVodSources(request: Request, url: URL): Promise<Response> {
     return response;
   }
 
-  // للأعمال العربية فقط: تشغيل يوتيوب وديلي موشن مع الفحص الدقيق لتطابق العنوان والحلقة
+  // للأعمال العربية فقط: تشغيل يوتيوب وديلي موشن مع الفحص الصارم لتطابق العنوان والحلقة
   let dmQuery = '';
   if (type === 'movie') {
     dmQuery = `${title} فيلم كامل`;
@@ -1711,13 +1747,33 @@ async function handleVodSources(request: Request, url: URL): Promise<Response> {
   const dmSources = dmRes.status === 'fulfilled' ? dmRes.value : [];
   const archiveSources = archiveRes.status === 'fulfilled' ? archiveRes.value : [];
 
+  // إذا لم يُعثر على فيديو يوتيوب صالح، الانتقال التلقائي لمصادر ديلي موشن ثم الأرشيف ثم السيرفرات المدمجة
   const finalSources: { label: string; url: string; type: 'embed' | 'direct' }[] = [
     ...ytSources,
     ...dmSources,
     ...archiveSources,
     ...embedSources,
-    backupDirectSource,
   ];
+
+  if (finalSources.length === 0) {
+    const emptyRes = new Response(
+      JSON.stringify({ sources: [], error: 'هذا العمل غير متوفر حالياً على أي مصدر' }),
+      {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Cache-Control, Pragma, *',
+          'Cache-Control': 'public, max-age=43200',
+        },
+      }
+    );
+    try {
+      await cache.put(cacheKey, emptyRes.clone());
+    } catch {}
+    return emptyRes;
+  }
 
   const response = new Response(JSON.stringify({ sources: finalSources }), {
     status: 200,
@@ -1731,7 +1787,7 @@ async function handleVodSources(request: Request, url: URL): Promise<Response> {
   });
 
   try {
-    await cache.put(request, response.clone());
+    await cache.put(cacheKey, response.clone());
   } catch {
     // تجاهل أخطاء وضع الكاش
   }

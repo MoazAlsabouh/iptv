@@ -168,14 +168,21 @@ export default function PlayerScreen(): React.JSX.Element {
 
         if (res.ok) {
           const data = await res.json();
-          if (isMounted && data.sources && Array.isArray(data.sources) && data.sources.length > 0) {
-            setVodSources(data.sources);
-            setActiveSourceIndex(0);
-            setIsBuffering(true);
-            setPlaybackError(null);
-            setRetryKey((prev) => prev + 1);
-            setIsLoadingSources(false);
-            return;
+          if (isMounted) {
+            if (data.sources && Array.isArray(data.sources) && data.sources.length > 0) {
+              setVodSources(data.sources);
+              setActiveSourceIndex(0);
+              setIsBuffering(true);
+              setPlaybackError(null);
+              setRetryKey((prev) => prev + 1);
+              setIsLoadingSources(false);
+              return;
+            } else {
+              setVodSources([]);
+              if (!rawStreamUrl) {
+                setPlaybackError('عذراً، هذا العمل غير متوفر للمشاهدة حالياً');
+              }
+            }
           }
         }
       } catch (err) {
@@ -296,18 +303,26 @@ export default function PlayerScreen(): React.JSX.Element {
     onAnyKey: resetOverlayTimer,
   });
 
-  // التبديل التلقائي الصامت للمصدر البديل عند حدوث خطأ
+  const [switchToast, setSwitchToast] = useState<string | null>(null);
+
+  // التبديل التلقائي للمصدر البديل عند حدوث خطأ
   const handlePlayerError = useCallback(
     (errorMsg: string) => {
       if (channelSources.length > 1 && activeSourceIndex + 1 < channelSources.length) {
-        // يوجد مصدر تالٍ: ننتقل إليه تلقائياً مع إبقاء مؤشر التحميل ظاهراً
+        // يوجد مصدر تالٍ: ننتقل إليه تلقائياً مع إشعار صغير ومؤشر تحميل
+        setSwitchToast('المصدر غير متاح، جاري الانتقال للمصدر التالي...');
+        setTimeout(() => {
+          setSwitchToast(null);
+        }, 3500);
+
         setIsBuffering(true);
         setPlaybackError(null);
         setActiveSourceIndex((prev) => prev + 1);
       } else {
         // تم استنفاد جميع المصادر المتاحة أو لا توجد مصادر بديلة
         setIsBuffering(false);
-        setPlaybackError(errorMsg || 'تعذر تشغيل هذا البث حالياً، يرجى إعادة المحاولة');
+        setSwitchToast(null);
+        setPlaybackError('عذراً، هذا العمل غير متوفر للمشاهدة حالياً');
       }
     },
     [channelSources, activeSourceIndex]
@@ -794,6 +809,14 @@ export default function PlayerScreen(): React.JSX.Element {
         </View>
       )}
 
+      {/* إشعار الانتقال التلقائي للمصدر التالي */}
+      {switchToast && (
+        <View style={styles.switchToastBadge} pointerEvents="none">
+          <ActivityIndicator size="small" color="#38bdf8" />
+          <Text style={styles.switchToastText}>{switchToast}</Text>
+        </View>
+      )}
+
       {/* 5. مؤشر التحميل المؤقت */}
       {isBuffering && !playbackError && currentStreamUrl ? (
         <View style={styles.bufferingContainer} pointerEvents="none">
@@ -806,13 +829,19 @@ export default function PlayerScreen(): React.JSX.Element {
         </View>
       ) : null}
 
-      {/* 6. واجهة الخطأ مع أزرار التحكم */}
+      {/* 6. واجهة الخطأ مع أزرار التحكم المتوافقة مع ريموت التلفاز */}
       {playbackError ? (
         <View style={styles.errorOverlay}>
-          <MaterialIcons name="error-outline" size={64} color="#ef4444" />
-          <Text style={styles.errorTitle}>تعذر تشغيل البث المباشر</Text>
+          <MaterialIcons name="videocam-off" size={68} color="#ef4444" />
+          <Text style={styles.errorTitle}>
+            {isVod
+              ? 'عذراً، هذا العمل غير متوفر للمشاهدة حالياً'
+              : 'تعذر تشغيل البث المباشر'}
+          </Text>
           <Text style={styles.errorDesc}>
-            {playbackError.includes('HLS') || playbackError.includes('hls')
+            {isVod
+              ? 'لم يتم العثور على مصادر بث صالحة أو تعذر تشغيل كافة المصادر المتوفرة لهذا العمل.'
+              : playbackError.includes('HLS') || playbackError.includes('hls')
               ? 'تعذر تشغيل هذا البث حالياً، يرجى اختيار مصدر آخر أو إعادة المحاولة'
               : playbackError}
           </Text>
@@ -820,28 +849,44 @@ export default function PlayerScreen(): React.JSX.Element {
           <View style={styles.errorActions}>
             <Pressable
               hasTVPreferredFocus
-              onPress={handleRetry}
-              style={({ focused }) => [styles.retryBtn, focused && styles.overlayBtnFocused]}
+              onPress={handleGoBack}
+              style={({ focused }) => [
+                styles.backToListBtn,
+                { backgroundColor: '#0284c7' },
+                focused && styles.overlayBtnFocused,
+              ]}
             >
               {({ focused }) => (
                 <View style={styles.btnRow}>
-                  <MaterialIcons name="refresh" size={20} color={focused ? '#000000' : '#ffffff'} />
-                  <Text style={[styles.retryBtnText, focused && styles.overlayBtnTextFocused]}>
-                    إعادة محاولة الاتصال
+                  <MaterialIcons
+                    name="arrow-back"
+                    size={20}
+                    color={focused ? '#000000' : '#ffffff'}
+                  />
+                  <Text style={[styles.backToListText, focused && styles.overlayBtnTextFocused]}>
+                    رجوع
                   </Text>
                 </View>
               )}
             </Pressable>
 
             <Pressable
-              onPress={handleGoBack}
-              style={({ focused }) => [styles.backToListBtn, focused && styles.overlayBtnFocused]}
+              onPress={handleRetry}
+              style={({ focused }) => [
+                styles.retryBtn,
+                { backgroundColor: '#334155' },
+                focused && styles.overlayBtnFocused,
+              ]}
             >
               {({ focused }) => (
                 <View style={styles.btnRow}>
-                  <MaterialIcons name="arrow-back" size={20} color={focused ? '#000000' : '#ffffff'} />
-                  <Text style={[styles.backToListText, focused && styles.overlayBtnTextFocused]}>
-                    العودة للقنوات
+                  <MaterialIcons
+                    name="refresh"
+                    size={20}
+                    color={focused ? '#000000' : '#ffffff'}
+                  />
+                  <Text style={[styles.retryBtnText, focused && styles.overlayBtnTextFocused]}>
+                    إعادة المحاولة
                   </Text>
                 </View>
               )}
@@ -1142,6 +1187,29 @@ const styles = StyleSheet.create({
   loadingSourcesText: {
     color: '#38bdf8',
     fontSize: 13,
+    fontWeight: '700',
+  },
+  switchToastBadge: {
+    position: 'absolute',
+    top: 70,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+    paddingVertical: 10,
+    paddingHorizontal: 22,
+    borderRadius: 30,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    zIndex: 90,
+    borderWidth: 1.5,
+    borderColor: '#38bdf8',
+    shadowColor: '#38bdf8',
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+  },
+  switchToastText: {
+    color: '#ffffff',
+    fontSize: 14,
     fontWeight: '700',
   },
   noUrlBox: {

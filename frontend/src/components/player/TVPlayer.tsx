@@ -60,6 +60,60 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
     streamUrl.includes('youtu.be') ||
     streamUrl.includes('player.');
 
+  const isYouTube =
+    streamUrl.includes('youtube.com') ||
+    streamUrl.includes('youtu.be');
+
+  const finalEmbedUrl = React.useMemo(() => {
+    if (!isEmbedUrl) return streamUrl;
+    if (isYouTube && !streamUrl.includes('enablejsapi=1')) {
+      return streamUrl + (streamUrl.includes('?') ? '&' : '?') + 'enablejsapi=1';
+    }
+    return streamUrl;
+  }, [streamUrl, isEmbedUrl, isYouTube]);
+
+  // استماع لرسائل أخطاء يوتيوب (postMessage) من الـ iframe للتنقل التلقائي عند الحظر أو تقييد العمر
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !isEmbedUrl) {
+      return;
+    }
+
+    const handleWindowMessage = (event: MessageEvent) => {
+      try {
+        if (
+          event.origin &&
+          (event.origin.includes('youtube.com') || event.origin.includes('youtube-nocookie.com'))
+        ) {
+          let data = event.data;
+          if (typeof data === 'string') {
+            try {
+              data = JSON.parse(data);
+            } catch {
+              return;
+            }
+          }
+          if (!data || typeof data !== 'object') return;
+
+          // أكواد أخطاء يوتيوب: 100 (محذوف)، 101/150 (معطل التضمين)، 152 (مقيد بالعمر)
+          if (data.event === 'onError' || data.info !== undefined) {
+            const code = Number(data.info ?? data.data);
+            if ([100, 101, 150, 152].includes(code)) {
+              console.warn('[TVPlayer] YouTube iframe error received:', code);
+              onErrorRef.current?.(`فيديو يوتيوب غير متاح للتضمين (كود ${code})`);
+            }
+          }
+        }
+      } catch {
+        // تجاهل أي رسائل غير متوافقة
+      }
+    };
+
+    window.addEventListener('message', handleWindowMessage);
+    return () => {
+      window.removeEventListener('message', handleWindowMessage);
+    };
+  }, [isEmbedUrl]);
+
   // إعداد hls.js على بيئة الويب وشاشات التلفاز الذكية
   useEffect(() => {
     if (Platform.OS !== 'web' || !streamUrl) {
@@ -228,7 +282,7 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
       return (
         <View style={[styles.container, style]}>
           <iframe
-            src={streamUrl}
+            src={finalEmbedUrl}
             style={{
               width: '100%',
               height: '100%',
