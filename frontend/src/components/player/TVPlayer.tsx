@@ -237,6 +237,7 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
             }}
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
             allowFullScreen
+            referrerPolicy="strict-origin-when-cross-origin"
             onLoad={() => {
               onBufferingRef.current?.(false);
             }}
