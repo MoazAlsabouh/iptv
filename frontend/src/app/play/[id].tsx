@@ -22,7 +22,7 @@ import { useAuth } from '../../context/AuthContext';
  * شاشة مشغل الفيديو بتصميم ملء الشاشة الداكن والتحكم الكامل بالريموت كنترول.
  * تدعم التبديل السلس بين مصادر البث وجودات HLS.
  */
-export default function PlayerScreen(): React.JSX.Element {
+export function PlayerScreen(): React.JSX.Element {
   useSafeKeepAwake();
 
   const router = useRouter();
@@ -89,6 +89,17 @@ export default function PlayerScreen(): React.JSX.Element {
     );
   }, [params.type, channelId]);
 
+  // التحقق مما إذا كان المحتوى VOD (فيلم أو مسلسل)
+  const isVod = useMemo(() => {
+    return (
+      params.type === 'movie' ||
+      params.type === 'tv' ||
+      Boolean(params.tmdbId || params.imdbId) ||
+      channelId.startsWith('tmdb-') ||
+      channelId.startsWith('tvm-')
+    );
+  }, [params.type, params.tmdbId, params.imdbId, channelId]);
+
   const initialSeason = params.season ? parseInt(params.season, 10) || 1 : 1;
   const initialEpisode = params.episode ? parseInt(params.episode, 10) || 1 : 1;
 
@@ -132,13 +143,6 @@ export default function PlayerScreen(): React.JSX.Element {
 
   // جلب السيرفرات الهجينة من خادم /api/vod/sources للأفلام والمسلسلات تلقائياً
   useEffect(() => {
-    const isVod =
-      params.type === 'movie' ||
-      params.type === 'tv' ||
-      Boolean(params.tmdbId || params.imdbId) ||
-      channelId.startsWith('tmdb-') ||
-      channelId.startsWith('tvm-');
-
     if (!isVod) return;
 
     let isMounted = true;
@@ -215,6 +219,7 @@ export default function PlayerScreen(): React.JSX.Element {
       isMounted = false;
     };
   }, [
+    isVod,
     params.tmdbId,
     params.imdbId,
     channelTitle,
@@ -1294,3 +1299,183 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 });
+
+interface ErrorBoundaryProps {
+  children: React.ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+/**
+ * مكون ErrorBoundary لحماية صفحة المشغل من الانهيار المفاجئ أو الشاشة البيضاء
+ */
+class PlayerErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('[PlayerErrorBoundary] Uncaught player error:', error, errorInfo);
+  }
+
+  handleRetry = () => {
+    this.setState({ hasError: false, error: null });
+  };
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <PlayerCrashFallback
+          error={this.state.error}
+          onRetry={this.handleRetry}
+        />
+      );
+    }
+    return this.props.children;
+  }
+}
+
+/**
+ * واجهة خطأ بديلة متوافقة مع التلفاز وأجهزة التحكم عند حدوث استثناء غير معالج
+ */
+function PlayerCrashFallback({
+  error,
+  onRetry,
+}: {
+  error: Error | null;
+  onRetry: () => void;
+}) {
+  const router = useRouter();
+
+  return (
+    <View style={fallbackStyles.container}>
+      <MaterialIcons name="error-outline" size={72} color="#ef4444" />
+      <Text style={fallbackStyles.title}>حدث خطأ غير متوقع في المشغل</Text>
+      <Text style={fallbackStyles.message}>
+        {error?.message || 'تعذر تشغيل المشغل حالياً. يمكنك إعادة المحاولة أو العودة لقائمة القنوات.'}
+      </Text>
+
+      <View style={fallbackStyles.actions}>
+        <Pressable
+          hasTVPreferredFocus
+          onPress={() => router.replace('/home')}
+          style={({ focused }) => [
+            fallbackStyles.btn,
+            fallbackStyles.primaryBtn,
+            focused && fallbackStyles.btnFocused,
+          ]}
+        >
+          {({ focused }) => (
+            <View style={fallbackStyles.btnContent}>
+              <MaterialIcons
+                name="arrow-back"
+                size={20}
+                color={focused ? '#000000' : '#ffffff'}
+              />
+              <Text style={[fallbackStyles.btnText, focused && fallbackStyles.btnTextFocused]}>
+                العودة للقنوات
+              </Text>
+            </View>
+          )}
+        </Pressable>
+
+        <Pressable
+          onPress={onRetry}
+          style={({ focused }) => [
+            fallbackStyles.btn,
+            fallbackStyles.secondaryBtn,
+            focused && fallbackStyles.btnFocused,
+          ]}
+        >
+          {({ focused }) => (
+            <View style={fallbackStyles.btnContent}>
+              <MaterialIcons
+                name="refresh"
+                size={20}
+                color={focused ? '#000000' : '#ffffff'}
+              />
+              <Text style={[fallbackStyles.btnText, focused && fallbackStyles.btnTextFocused]}>
+                إعادة المحاولة
+              </Text>
+            </View>
+          )}
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+const fallbackStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#0b0f19',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  title: {
+    color: '#ef4444',
+    fontSize: 22,
+    fontWeight: 'bold',
+    marginTop: 16,
+    textAlign: 'center',
+  },
+  message: {
+    color: '#94a3b8',
+    fontSize: 15,
+    marginTop: 10,
+    marginBottom: 24,
+    textAlign: 'center',
+    maxWidth: 480,
+    lineHeight: 22,
+  },
+  actions: {
+    flexDirection: 'row',
+    gap: 16,
+  },
+  btn: {
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+  },
+  primaryBtn: {
+    backgroundColor: '#0284c7',
+  },
+  secondaryBtn: {
+    backgroundColor: '#334155',
+  },
+  btnFocused: {
+    backgroundColor: '#38bdf8',
+    transform: [{ scale: 1.05 }],
+  },
+  btnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  btnText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: 'bold',
+  },
+  btnTextFocused: {
+    color: '#000000',
+  },
+});
+
+export default function SafePlayerScreen() {
+  return (
+    <PlayerErrorBoundary>
+      <PlayerScreen />
+    </PlayerErrorBoundary>
+  );
+}
+

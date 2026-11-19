@@ -51,6 +51,7 @@ function NavigationGuard(): React.JSX.Element {
   const isFullscreen =
     pathname === '/' ||
     pathname.startsWith('/play/') ||
+    pathname.startsWith('/player') ||
     pathname === '/activate' ||
     pathname.startsWith('/admin') ||
     pathname.startsWith('/reseller');
