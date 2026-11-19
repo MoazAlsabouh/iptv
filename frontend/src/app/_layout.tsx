@@ -4,9 +4,8 @@ import { Slot, usePathname, useRouter } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import { MainLayout } from '../components/layout/MainLayout';
-import '../fonts.css';
 
-// حقن تعريفات الخطوط الصريحة في document.head على بيئة الويب لتفادي أخطاء OTS parsing error
+// حقن تعريفات الخطوط الصريحة في document.head فوراً على بيئة الويب لتفادي أخطاء OTS parsing error
 if (Platform.OS === 'web' && typeof document !== 'undefined') {
   const fontStyleId = 'expo-vector-icons-fonts';
   if (!document.getElementById(fontStyleId)) {
@@ -89,7 +88,7 @@ if (Platform.OS === 'web' && typeof document !== 'undefined') {
         font-display: swap;
       }
     `;
-    document.head.appendChild(styleEl);
+    document.head.prepend(styleEl);
   }
 }
 
@@ -101,23 +100,24 @@ function NavigationGuard(): React.JSX.Element {
   const router = useRouter();
   const { token, isLoading } = useAuth();
 
+  const isPublic =
+    pathname === '/' ||
+    pathname === '/activate' ||
+    pathname.startsWith('/admin') ||
+    pathname.startsWith('/reseller');
+
   useEffect(() => {
     if (isLoading) return;
-
-    const isPublic =
-      pathname === '/' ||
-      pathname === '/activate' ||
-      pathname.startsWith('/admin') ||
-      pathname.startsWith('/reseller');
 
     if (!token && !isPublic) {
       router.replace('/activate');
     } else if (token && pathname === '/activate') {
       router.replace('/home');
     }
-  }, [token, isLoading, pathname, router]);
+  }, [token, isLoading, pathname, router, isPublic]);
 
-  if (isLoading) {
+  // لا نعرض شاشة التحميل للمسارات العامة مثل الصفحة التعريفية / أو شاشة التفعيل / أو الإدارة
+  if (isLoading && !isPublic) {
     return (
       <View
         style={{
