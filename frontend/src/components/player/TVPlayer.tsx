@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, Platform, StyleSheet, StyleProp, ViewStyle } from 'react-native';
 import { Video, ResizeMode, AVPlaybackStatus } from 'expo-av';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -11,12 +11,6 @@ export interface HlsLevelOption {
   bitrate?: number;
 }
 
-export interface SubtitleCue {
-  start: number;
-  end: number;
-  text: string;
-}
-
 export interface TVPlayerProps {
   streamUrl: string;
   onBuffering?: (isBuffering: boolean) => void;
@@ -24,19 +18,13 @@ export interface TVPlayerProps {
   onLevelsLoaded?: (levels: HlsLevelOption[]) => void;
   selectedLevel?: number;
   style?: StyleProp<ViewStyle>;
-  enableAdBlock?: boolean;
-  cues?: SubtitleCue[];
-  showSubtitles?: boolean;
-  subtitleOffset?: number;
-  externalCurrentTime?: number;
-  onTimeUpdate?: (currentTime: number) => void;
 }
 
 /**
  * مشغل فيديو متطور يدعم شاشات التلفاز والويب وأجهزة Android/iOS.
  * - يستخدم hls.js لبث قنوات m3u8 الحية بكفاءة عالية على المتصفحات والشاشات الذكية.
- * - يدعم حظر النوافذ المنبثقة والإعلانات (AdBlock Sandbox) في نمط iframe للسيرفرات المدمجة.
- * - طبقة ترجمة عربية مخصصة ومستقلة مع فك الترميز التلقائي والمزامنة الزمنية.
+ * - يدعم استخراج وتبديل مستويات الجودة Hls Levels ومعالجة Autoplay.
+ * - يدعم تشغيل السيرفرات المدمجة مباشرة عبر iframe دون قيود sandbox لضمان التوافق التام.
  */
 export const TVPlayer: React.FC<TVPlayerProps> = ({
   streamUrl,
@@ -45,18 +33,11 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
   onLevelsLoaded,
   selectedLevel = -1,
   style,
-  enableAdBlock = false,
-  cues = [],
-  showSubtitles = false,
-  subtitleOffset = 0,
-  externalCurrentTime = 0,
-  onTimeUpdate,
 }) => {
   const videoHtmlRef = useRef<HTMLVideoElement | null>(null);
   const nativeVideoRef = useRef<Video>(null);
   const hlsRef = useRef<Hls | null>(null);
   const [needsUserPlay, setNeedsUserPlay] = useState<boolean>(false);
-  const [videoCurrentTime, setVideoCurrentTime] = useState<number>(0);
 
   // تخزين دوال رد الاتصال في refs لتجنب إعادة تشغيل useEffect عند كل re-render
   const onBufferingRef = useRef(onBuffering);
@@ -65,8 +46,6 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
   onErrorRef.current = onError;
   const onLevelsLoadedRef = useRef(onLevelsLoaded);
   onLevelsLoadedRef.current = onLevelsLoaded;
-  const onTimeUpdateRef = useRef(onTimeUpdate);
-  onTimeUpdateRef.current = onTimeUpdate;
 
   const isEmbedUrl =
     streamUrl.includes('/embed/') ||
@@ -80,15 +59,6 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
     streamUrl.includes('youtube.com') ||
     streamUrl.includes('youtu.be') ||
     streamUrl.includes('player.');
-
-  // حساب التوقيت الفعلي وجلب كتلة الترجمة النشطة
-  const currentTime = isEmbedUrl ? externalCurrentTime : videoCurrentTime;
-  const effectiveTime = currentTime + subtitleOffset;
-
-  const activeCue = useMemo(() => {
-    if (!showSubtitles || !cues || cues.length === 0) return null;
-    return cues.find((c) => effectiveTime >= c.start && effectiveTime <= c.end) || null;
-  }, [showSubtitles, cues, effectiveTime]);
 
   // إعداد hls.js على بيئة الويب وشاشات التلفاز الذكية
   useEffect(() => {
@@ -137,16 +107,9 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
       onErrorRef.current?.('تعذر الاتصال بمصدر البث، يرجى إعادة المحاولة أو اختيار مصدر آخر');
     };
 
-    const handleTimeUpdate = () => {
-      const ct = videoEl.currentTime;
-      setVideoCurrentTime(ct);
-      onTimeUpdateRef.current?.(ct);
-    };
-
     videoEl.addEventListener('playing', onPlaySuccess);
     videoEl.addEventListener('canplay', onPlaySuccess);
     videoEl.addEventListener('error', onVideoError);
-    videoEl.addEventListener('timeupdate', handleTimeUpdate);
 
     // مؤقت أمان لمدة 10 ثوانٍ
     timeoutId = setTimeout(() => {
@@ -231,7 +194,6 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
       videoEl.removeEventListener('playing', onPlaySuccess);
       videoEl.removeEventListener('canplay', onPlaySuccess);
       videoEl.removeEventListener('error', onVideoError);
-      videoEl.removeEventListener('timeupdate', handleTimeUpdate);
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
@@ -263,12 +225,6 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
 
   if (Platform.OS === 'web') {
     if (isEmbedUrl) {
-      const isVidSrc =
-        streamUrl.includes('vidsrc.to') ||
-        streamUrl.includes('vidsrc.me') ||
-        streamUrl.includes('vidsrc.cc') ||
-        streamUrl.includes('vidsrc');
-
       return (
         <View style={[styles.container, style]}>
           <iframe
@@ -281,23 +237,10 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
             }}
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
             allowFullScreen
-            referrerPolicy="no-referrer"
-            {...(enableAdBlock && !isVidSrc
-              ? { sandbox: 'allow-scripts allow-same-origin allow-forms allow-presentation' }
-              : {})}
             onLoad={() => {
               onBufferingRef.current?.(false);
             }}
           />
-
-          {/* شريط الترجمة العربية المستقل فوق السيرفر المدمج */}
-          {showSubtitles && activeCue && (
-            <View style={styles.subtitleContainer} pointerEvents="none">
-              <View style={styles.subtitleBox}>
-                <Text style={styles.subtitleText}>{activeCue.text}</Text>
-              </View>
-            </View>
-          )}
         </View>
       );
     }
@@ -316,15 +259,6 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
           autoPlay
           controls={false}
         />
-
-        {/* شريط الترجمة العربية المخصص */}
-        {showSubtitles && activeCue && (
-          <View style={styles.subtitleContainer} pointerEvents="none">
-            <View style={styles.subtitleBox}>
-              <Text style={styles.subtitleText}>{activeCue.text}</Text>
-            </View>
-          </View>
-        )}
 
         {/* زر تشغيل يدوي مخصص لأجهزة التلفاز عند حظر المتصفح للتشغيل التلقائي */}
         {needsUserPlay && (
@@ -358,38 +292,24 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
 
   // البيئات الأصلية (Native - Android TV / Fire TV)
   return (
-    <View style={[styles.container, style]}>
-      <Video
-        ref={nativeVideoRef}
-        source={{ uri: streamUrl }}
-        style={StyleSheet.absoluteFillObject}
-        resizeMode={ResizeMode.CONTAIN}
-        shouldPlay
-        isLooping={false}
-        useNativeControls={false}
-        onPlaybackStatusUpdate={(status: AVPlaybackStatus) => {
-          if (!status.isLoaded) {
-            if (status.error) {
-              onErrorRef.current?.(status.error);
-            }
-          } else {
-            onBufferingRef.current?.(status.isBuffering);
-            const posSec = status.positionMillis / 1000;
-            setVideoCurrentTime(posSec);
-            onTimeUpdateRef.current?.(posSec);
+    <Video
+      ref={nativeVideoRef}
+      source={{ uri: streamUrl }}
+      style={[styles.container, style]}
+      resizeMode={ResizeMode.CONTAIN}
+      shouldPlay
+      isLooping={false}
+      useNativeControls={false}
+      onPlaybackStatusUpdate={(status: AVPlaybackStatus) => {
+        if (!status.isLoaded) {
+          if (status.error) {
+            onErrorRef.current?.(status.error);
           }
-        }}
-      />
-
-      {/* شريط الترجمة العربية في البيئات الأصلية */}
-      {showSubtitles && activeCue && (
-        <View style={styles.subtitleContainer} pointerEvents="none">
-          <View style={styles.subtitleBox}>
-            <Text style={styles.subtitleText}>{activeCue.text}</Text>
-          </View>
-        </View>
-      )}
-    </View>
+        } else {
+          onBufferingRef.current?.(status.isBuffering);
+        }
+      }}
+    />
   );
 };
 
@@ -433,34 +353,5 @@ const styles = StyleSheet.create({
   },
   playBtnTextFocused: {
     color: '#000000',
-  },
-  subtitleContainer: {
-    position: 'absolute',
-    bottom: 50,
-    left: 24,
-    right: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 200,
-  },
-  subtitleBox: {
-    backgroundColor: 'rgba(0, 0, 0, 0.78)',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.15)',
-    maxWidth: '85%',
-  },
-  subtitleText: {
-    color: '#ffffff',
-    fontSize: 22,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    lineHeight: 32,
-    writingDirection: 'rtl',
-    textShadowColor: 'rgba(0, 0, 0, 0.95)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 3,
   },
 });

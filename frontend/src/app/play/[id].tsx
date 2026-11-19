@@ -12,7 +12,7 @@ import { useSafeKeepAwake } from '../../hooks/useSafeKeepAwake';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../../store/useAppStore';
 import { useMediaData } from '../../hooks/useMediaData';
-import { TVPlayer, HlsLevelOption, SubtitleCue } from '../../components/player/TVPlayer';
+import { TVPlayer, HlsLevelOption } from '../../components/player/TVPlayer';
 import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 import { ChannelLogo } from '../../components/ChannelLogo';
 import { StreamSource } from '../../types/media';
@@ -97,14 +97,6 @@ export default function PlayerScreen(): React.JSX.Element {
   const [customSources, setCustomSources] = useState<StreamSource[] | null>(null);
   const [vodSources, setVodSources] = useState<StreamSource[] | null>(null);
   const [isLoadingSources, setIsLoadingSources] = useState<boolean>(false);
-
-  // إعدادات حظر الإعلانات والترجمة العربية المستقلة
-  const [enableAdBlock, setEnableAdBlock] = useState<boolean>(false);
-  const [subtitles, setSubtitles] = useState<SubtitleCue[]>([]);
-  const [showSubtitles, setShowSubtitles] = useState<boolean>(true);
-  const [subtitleOffset, setSubtitleOffset] = useState<number>(0);
-  const [embedTimerTime, setEmbedTimerTime] = useState<number>(0);
-  const [isEmbedTimerRunning, setIsEmbedTimerRunning] = useState<boolean>(true);
 
   useEffect(() => {
     if (!isTvSeries) return;
@@ -202,57 +194,6 @@ export default function PlayerScreen(): React.JSX.Element {
     channelId,
   ]);
 
-  // جلب الترجمة العربية التلقائية للأفلام والمسلسلات
-  useEffect(() => {
-    const isVod =
-      params.type === 'movie' ||
-      params.type === 'tv' ||
-      Boolean(params.tmdbId || params.imdbId) ||
-      channelId.startsWith('tmdb-') ||
-      channelId.startsWith('tvm-');
-
-    if (!isVod || (!params.tmdbId && !params.imdbId)) return;
-
-    let isMounted = true;
-    const fetchSubtitles = async () => {
-      try {
-        const queryParams = new URLSearchParams();
-        if (params.tmdbId) queryParams.set('tmdbId', params.tmdbId);
-        if (isTvSeries) {
-          queryParams.set('season', String(selectedSeason));
-          queryParams.set('episode', String(selectedEpisode));
-        }
-
-        const res = await fetch(
-          `https://iptv-backend.moaznsm.workers.dev/api/vod/subtitles?${queryParams.toString()}`
-        );
-        if (res.ok) {
-          const data = await res.json();
-          if (isMounted && data.cues && Array.isArray(data.cues) && data.cues.length > 0) {
-            setSubtitles(data.cues);
-            setShowSubtitles(true);
-          }
-        }
-      } catch (err) {
-        console.warn('[Player] Failed to load subtitles:', err);
-      }
-    };
-
-    fetchSubtitles();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [
-    params.tmdbId,
-    params.imdbId,
-    isTvSeries,
-    selectedSeason,
-    selectedEpisode,
-    params.type,
-    channelId,
-  ]);
-
   // مصادر البث المتعددة للقناة أو العمل
   const channelSources: StreamSource[] = useMemo(() => {
     if (vodSources && vodSources.length > 0) {
@@ -304,36 +245,6 @@ export default function PlayerScreen(): React.JSX.Element {
     }
     return rawStreamUrl;
   }, [channelSources, activeSourceIndex, rawStreamUrl]);
-
-  const isCurrentEmbed = useMemo(() => {
-    const u = currentStreamUrl.toLowerCase();
-    return (
-      u.includes('/embed/') ||
-      u.includes('vidsrc') ||
-      u.includes('vidlink.pro') ||
-      u.includes('embed.su') ||
-      u.includes('autoembed') ||
-      u.includes('2embed') ||
-      u.includes('dailymotion.com') ||
-      u.includes('youtube.com/embed') ||
-      u.includes('youtube.com') ||
-      u.includes('youtu.be') ||
-      u.includes('player.')
-    );
-  }, [currentStreamUrl]);
-
-  useEffect(() => {
-    if (!isCurrentEmbed || !isEmbedTimerRunning || !showSubtitles) return;
-    const interval = setInterval(() => {
-      setEmbedTimerTime((prev) => prev + 1);
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [isCurrentEmbed, isEmbedTimerRunning, showSubtitles]);
-
-  useEffect(() => {
-    setEmbedTimerTime(0);
-    setSubtitleOffset(0);
-  }, [currentStreamUrl, selectedSeason, selectedEpisode]);
 
   const [isBuffering, setIsBuffering] = useState<boolean>(true);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
@@ -414,11 +325,6 @@ export default function PlayerScreen(): React.JSX.Element {
           style={StyleSheet.absoluteFillObject}
           onBuffering={(buffering) => setIsBuffering(buffering)}
           onError={handlePlayerError}
-          enableAdBlock={enableAdBlock}
-          cues={subtitles}
-          showSubtitles={showSubtitles}
-          subtitleOffset={subtitleOffset}
-          externalCurrentTime={embedTimerTime}
         />
       ) : !currentStreamUrl ? (
         <View style={styles.noUrlBox}>
@@ -550,182 +456,6 @@ export default function PlayerScreen(): React.JSX.Element {
                   </View>
                 )}
               </Pressable>
-            ) : null}
-
-            {/* زر حظر الإعلانات والنوافذ المنبثقة */}
-            <Pressable
-              onPress={() => {
-                setEnableAdBlock((prev) => !prev);
-                resetOverlayTimer();
-              }}
-              style={({ focused }) => [
-                styles.adBlockBtn,
-                enableAdBlock && styles.adBlockBtnActive,
-                focused && styles.overlayBtnFocused,
-              ]}
-            >
-              {({ focused }) => (
-                <View style={styles.btnRow}>
-                  <MaterialIcons
-                    name={enableAdBlock ? 'gpp-good' : 'gpp-maybe'}
-                    size={20}
-                    color={
-                      focused
-                        ? '#000000'
-                        : enableAdBlock
-                        ? '#22c55e'
-                        : '#94a3b8'
-                    }
-                  />
-                  <Text
-                    style={[
-                      styles.adBlockBtnText,
-                      enableAdBlock && styles.adBlockBtnTextActive,
-                      focused && styles.overlayBtnTextFocused,
-                    ]}
-                  >
-                    حظر الإعلانات: {enableAdBlock ? 'مفعل' : 'معطل'}
-                  </Text>
-                </View>
-              )}
-            </Pressable>
-
-            {/* زر تشغيل / إيقاف الترجمة العربية */}
-            <Pressable
-              onPress={() => {
-                setShowSubtitles((prev) => !prev);
-                resetOverlayTimer();
-              }}
-              style={({ focused }) => [
-                styles.subtitleToggleBtn,
-                showSubtitles && styles.subtitleToggleBtnActive,
-                focused && styles.overlayBtnFocused,
-              ]}
-            >
-              {({ focused }) => (
-                <View style={styles.btnRow}>
-                  <MaterialIcons
-                    name="subtitles"
-                    size={20}
-                    color={
-                      focused
-                        ? '#000000'
-                        : showSubtitles
-                        ? '#f59e0b'
-                        : '#94a3b8'
-                    }
-                  />
-                  <Text
-                    style={[
-                      styles.subtitleToggleBtnText,
-                      showSubtitles && styles.subtitleToggleBtnTextActive,
-                      focused && styles.overlayBtnTextFocused,
-                    ]}
-                  >
-                    الترجمة العربية: {showSubtitles ? 'مفعلة' : 'معطلة'}
-                  </Text>
-                </View>
-              )}
-            </Pressable>
-
-            {/* أزرار المزامنة السريعة للترجمة */}
-            {showSubtitles ? (
-              <View style={styles.syncGroup}>
-                <Pressable
-                  onPress={() => {
-                    setSubtitleOffset((prev) => Math.round((prev - 0.5) * 10) / 10);
-                    resetOverlayTimer();
-                  }}
-                  style={({ focused }) => [
-                    styles.syncBtn,
-                    focused && styles.overlayBtnFocused,
-                  ]}
-                >
-                  {({ focused }) => (
-                    <Text style={[styles.syncBtnText, focused && styles.overlayBtnTextFocused]}>
-                      -0.5ث
-                    </Text>
-                  )}
-                </Pressable>
-
-                <Pressable
-                  onPress={() => {
-                    setSubtitleOffset((prev) => Math.round((prev + 0.5) * 10) / 10);
-                    resetOverlayTimer();
-                  }}
-                  style={({ focused }) => [
-                    styles.syncBtn,
-                    focused && styles.overlayBtnFocused,
-                  ]}
-                >
-                  {({ focused }) => (
-                    <Text style={[styles.syncBtnText, focused && styles.overlayBtnTextFocused]}>
-                      +0.5ث
-                    </Text>
-                  )}
-                </Pressable>
-
-                {subtitleOffset !== 0 ? (
-                  <View style={styles.offsetBadge}>
-                    <Text style={styles.offsetBadgeText}>
-                      {subtitleOffset > 0 ? `+${subtitleOffset}ث` : `${subtitleOffset}ث`}
-                    </Text>
-                  </View>
-                ) : null}
-
-                {/* تحكم بمؤقت الترجمة في نمط السيرفرات المدمجة */}
-                {isCurrentEmbed ? (
-                  <>
-                    <Pressable
-                      onPress={() => {
-                        setIsEmbedTimerRunning((prev) => !prev);
-                        resetOverlayTimer();
-                      }}
-                      style={({ focused }) => [
-                        styles.timerToggleBtn,
-                        isEmbedTimerRunning && styles.timerToggleBtnActive,
-                        focused && styles.overlayBtnFocused,
-                      ]}
-                    >
-                      {({ focused }) => (
-                        <View style={styles.btnRow}>
-                          <MaterialIcons
-                            name={isEmbedTimerRunning ? 'pause' : 'play-arrow'}
-                            size={16}
-                            color={focused ? '#000000' : '#38bdf8'}
-                          />
-                          <Text
-                            style={[
-                              styles.timerToggleText,
-                              focused && styles.overlayBtnTextFocused,
-                            ]}
-                          >
-                            {isEmbedTimerRunning ? 'إيقاف المؤقت' : 'تشغيل المؤقت'}
-                          </Text>
-                        </View>
-                      )}
-                    </Pressable>
-
-                    <Pressable
-                      onPress={() => {
-                        setEmbedTimerTime(0);
-                        setSubtitleOffset(0);
-                        resetOverlayTimer();
-                      }}
-                      style={({ focused }) => [
-                        styles.syncBtn,
-                        focused && styles.overlayBtnFocused,
-                      ]}
-                    >
-                      {({ focused }) => (
-                        <Text style={[styles.syncBtnText, focused && styles.overlayBtnTextFocused]}>
-                          تصفير
-                        </Text>
-                      )}
-                    </Pressable>
-                  </>
-                ) : null}
-              </View>
             ) : null}
 
             {/* زر المفضلة */}
@@ -1236,100 +966,6 @@ const styles = StyleSheet.create({
   },
   favoriteTextActive: {
     color: '#facc15',
-  },
-  adBlockBtn: {
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 30,
-  },
-  adBlockBtnActive: {
-    backgroundColor: 'rgba(34, 197, 94, 0.2)',
-    borderColor: '#22c55e',
-  },
-  adBlockBtnText: {
-    color: '#94a3b8',
-    fontSize: 14,
-    fontWeight: '700',
-    marginLeft: 6,
-  },
-  adBlockBtnTextActive: {
-    color: '#4ade80',
-  },
-  subtitleToggleBtn: {
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 30,
-  },
-  subtitleToggleBtnActive: {
-    backgroundColor: 'rgba(245, 158, 11, 0.2)',
-    borderColor: '#f59e0b',
-  },
-  subtitleToggleBtnText: {
-    color: '#94a3b8',
-    fontSize: 14,
-    fontWeight: '700',
-    marginLeft: 6,
-  },
-  subtitleToggleBtnTextActive: {
-    color: '#fbbf24',
-  },
-  syncGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(15, 23, 42, 0.75)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.15)',
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 24,
-  },
-  syncBtn: {
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 16,
-  },
-  syncBtnText: {
-    color: '#f8fafc',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  offsetBadge: {
-    backgroundColor: '#0284c7',
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 12,
-  },
-  offsetBadgeText: {
-    color: '#ffffff',
-    fontSize: 11,
-    fontWeight: 'bold',
-  },
-  timerToggleBtn: {
-    backgroundColor: 'rgba(56, 189, 248, 0.15)',
-    borderWidth: 1,
-    borderColor: '#38bdf8',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 16,
-  },
-  timerToggleBtnActive: {
-    backgroundColor: 'rgba(56, 189, 248, 0.25)',
-  },
-  timerToggleText: {
-    color: '#38bdf8',
-    fontSize: 12,
-    fontWeight: '700',
-    marginLeft: 4,
   },
   helpHint: {
     backgroundColor: 'rgba(15, 23, 42, 0.7)',
