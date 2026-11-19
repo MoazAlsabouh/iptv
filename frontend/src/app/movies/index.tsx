@@ -284,8 +284,11 @@ export default function MoviesScreen(): React.JSX.Element {
       return;
     }
 
-    const detectedLang =
-      item.originalLanguage || (item.category?.includes('عربي') ? 'ar' : 'en');
+    const isExplicitArabic =
+      item.originalLanguage === 'ar' ||
+      item.category === 'arabic_movies' ||
+      item.category === 'arabic_series';
+    const detectedLang = isExplicitArabic ? 'ar' : (item.originalLanguage || 'en');
 
     if (item.type === 'tv') {
       // توجيه المسلسل لشاشة تفاصيل واختيار الحلقات
@@ -303,6 +306,7 @@ export default function MoviesScreen(): React.JSX.Element {
           tmdbId: item.tmdbId ? String(item.tmdbId) : undefined,
           imdbId: item.imdbId,
           originalLanguage: detectedLang,
+          lang: detectedLang,
         },
       });
     } else {
@@ -320,6 +324,7 @@ export default function MoviesScreen(): React.JSX.Element {
           tmdbId: item.tmdbId ? String(item.tmdbId) : undefined,
           imdbId: item.imdbId,
           lang: detectedLang,
+          originalLanguage: detectedLang,
         },
       });
     }

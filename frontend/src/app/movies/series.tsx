@@ -199,8 +199,11 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
   const handlePlayEpisode = (seasonNum: number, episodeNum: number) => {
     const sources = buildEpisodeSources(params.tmdbId, params.imdbId, seasonNum, episodeNum);
     const initialUrl = sources[0]?.url || '';
-    const detectedLang =
-      params.originalLanguage || (params.category?.includes('عربي') ? 'ar' : 'en');
+    const isExplicitArabic =
+      params.originalLanguage === 'ar' ||
+      params.lang === 'ar' ||
+      params.category === 'arabic_series';
+    const detectedLang = isExplicitArabic ? 'ar' : (params.originalLanguage || params.lang || 'en');
 
     router.push({
       pathname: '/play/[id]',
@@ -216,6 +219,7 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
         season: String(seasonNum),
         episode: String(episodeNum),
         lang: detectedLang,
+        originalLanguage: detectedLang,
       },
     });
   };

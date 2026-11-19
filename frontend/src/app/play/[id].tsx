@@ -147,9 +147,18 @@ export default function PlayerScreen(): React.JSX.Element {
         const queryParams = new URLSearchParams();
         if (params.tmdbId) queryParams.set('tmdbId', params.tmdbId);
         if (params.imdbId) queryParams.set('imdbId', params.imdbId);
-        if (channelTitle) queryParams.set('title', channelTitle);
+
+        // تنظيف العنوان لإزالة أي زوائد مواسم وحلقات قد تكون ملحقة بالعنوان
+        let cleanTitle = channelTitle || '';
+        cleanTitle = cleanTitle
+          .replace(/\s*-\s*الموسم\s*\d+\s*الحلقة\s*\d+/g, '')
+          .replace(/\s*-\s*الحلقة\s*\d+/g, '')
+          .trim();
+        if (cleanTitle) queryParams.set('title', cleanTitle);
+
         queryParams.set('type', isTvSeries ? 'tv' : 'movie');
-        if (params.lang) queryParams.set('lang', params.lang);
+        const effectiveLang = (params.lang || params.originalLanguage || 'en').toLowerCase();
+        queryParams.set('lang', effectiveLang);
         queryParams.set('season', String(selectedSeason));
         queryParams.set('episode', String(selectedEpisode));
 
@@ -188,6 +197,7 @@ export default function PlayerScreen(): React.JSX.Element {
     channelTitle,
     isTvSeries,
     params.lang,
+    params.originalLanguage,
     selectedSeason,
     selectedEpisode,
     params.type,

@@ -1108,12 +1108,145 @@ async function checkYouTubeEmbedPlayable(
 }
 
 /**
+ * تسوية وتوحيد النصوص العربية لإزالة التشكيل وتوحيد الحروف المتشابهة
+ */
+function normalizeArabic(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/[\u064B-\u065F\u0670]/g, '')
+    .replace(/\u0640/g, '')
+    .replace(/[أإآٱ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/[ىي]/g, 'ي')
+    .replace(/[\u0660-\u0669]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0x0660 + 48))
+    .replace(/[\u06F0-\u06F9]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0x06F0 + 48))
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const ARABIC_ORDINALS: Record<number, string[]> = {
+  1: ['الاولي', 'الاول', 'واحد'],
+  2: ['الثانيه', 'الثاني', 'اثنين'],
+  3: ['الثالثه', 'الثالث', 'ثلاثه'],
+  4: ['الرابعه', 'الرابع', 'اربعه'],
+  5: ['الخامسه', 'الخامس', 'خمسه'],
+  6: ['السادسه', 'السادس', 'سته'],
+  7: ['السابعه', 'السابع', 'سبعه'],
+  8: ['الثامنه', 'الثامن', 'ثمانيه'],
+  9: ['التاسعه', 'التاسع', 'تسعه'],
+  10: ['العاشره', 'العاشر', 'عشره'],
+  11: ['الحاديه عشره', 'الحادي عشر'],
+  12: ['الثانيه عشره', 'الثاني عشر'],
+  13: ['الثالثه عشره', 'الثالث عشر'],
+  14: ['الرابعه عشره', 'الرابع عشر'],
+  15: ['الخامسه عشره', 'الخامس عشر'],
+  16: ['السادسه عشره', 'السادس عشر'],
+  17: ['السابعه عشره', 'السابع عشر'],
+  18: ['الثامنه عشره', 'الثامن عشر'],
+  19: ['التاسعه عشره', 'التاسع عشر'],
+  20: ['العشرون', 'العشرين'],
+  21: ['الحاديه والعشرون', 'الحاديه والعشرين'],
+  22: ['الثانيه والعشرون', 'الثانيه والعشرين'],
+  23: ['الثالثه والعشرون', 'الثالثه والعشرين'],
+  24: ['الرابعه والعشرون', 'الرابعه والعشرين'],
+  25: ['الخامسه والعشرون', 'الخامسه والعشرين'],
+  26: ['السادسه والعشرون', 'السادسه والعشرين'],
+  27: ['السابعه والعشرون', 'السابعه والعشرين'],
+  28: ['الثامنه والعشرون', 'الثامنه والعشرين'],
+  29: ['التاسعه والعشرون', 'التاسعه والعشرين'],
+  30: ['الثلاثون', 'الثلاثين'],
+};
+
+function checkEpisodeMatch(normTitle: string, episode: number): boolean {
+  // 1. فحص مباشر لأرقام الحلقات الصريحة مثل: حلقة 1، الحلقة 1، ح 1، ep 1
+  const epPattern = /(?:حلقه|الحلقه|ح|ep|episode|e)\s*[:#\-]?\s*(\d+)/i;
+  const match = normTitle.match(epPattern);
+  if (match) {
+    const num = parseInt(match[1], 10);
+    return num === episode;
+  }
+
+  // 2. فحص الكلمات الترتيبية (الأولى، الثانية...)
+  const ordinals = ARABIC_ORDINALS[episode] || [];
+  for (const ord of ordinals) {
+    const normOrd = normalizeArabic(ord);
+    if (new RegExp('(?:^|\\s)' + normOrd + '(?:$|\\s)').test(normTitle)) {
+      return true;
+    }
+  }
+
+  // 3. فحص الرقم ككلمة مستقلة (بما في ذلك 01 إذا كانت 1)
+  const padded = episode < 10 ? '0' + episode : String(episode);
+  const looseNum = new RegExp('(?:^|\\s)(?:' + episode + '|' + padded + ')(?:$|\\s)').test(normTitle);
+  return looseNum;
+}
+
+function wordMatches(normVid: string, word: string): boolean {
+  if (normVid.includes(word)) return true;
+  if (word.startsWith('و') && word.length > 3 && normVid.includes(word.slice(1))) return true;
+  if (word.startsWith('ال') && word.length > 4 && normVid.includes(word.slice(2))) return true;
+  return false;
+}
+
+/**
+ * فحص التطابق الدقيق لعنوان الفيديو العربي ورقم الحلقة (Title Relevance Check)
+ */
+function isArabicTitleRelevant(
+  videoTitle: string,
+  targetTitle: string,
+  isTv: boolean,
+  episode: number
+): boolean {
+  const normVid = normalizeArabic(videoTitle);
+  const normTarget = normalizeArabic(targetTitle);
+
+  const stopWords = new Set([
+    'مسلسل',
+    'فيلم',
+    'كامل',
+    'كامله',
+    'hd',
+    'الجزء',
+    'الموسم',
+    'الحلقه',
+    'حلقه',
+  ]);
+  let targetWords = normTarget.split(' ').filter((w) => w.length > 1 && !stopWords.has(w));
+
+  if (targetWords.length === 0) {
+    targetWords = normTarget.split(' ').filter((w) => w.length > 0);
+  }
+
+  let matchedWords = 0;
+  for (const w of targetWords) {
+    if (wordMatches(normVid, w)) {
+      matchedWords++;
+    }
+  }
+
+  const ratio = targetWords.length > 0 ? matchedWords / targetWords.length : 1;
+  if (ratio < 0.6) {
+    return false;
+  }
+
+  if (isTv) {
+    return checkEpisodeMatch(normVid, episode);
+  }
+
+  return true;
+}
+
+/**
  * فحص نتائج البحث المباشرة من موقع يوتيوب واستخراج الفيديوهات الطويلة الكاملة
- * مع فحص التضمين الذكي واستبعاد الفيديوهات المقيدة
+ * مع فحص التضمين الذكي وفحص تطابق العنوان والحلقة بدقة
  */
 async function searchYouTubeDirect(
   query: string,
-  isMovie: boolean
+  isMovie: boolean,
+  targetTitle?: string,
+  episode?: number
 ): Promise<{ label: string; url: string; type: 'embed' }[]> {
   const minSeconds = isMovie ? 55 * 60 : 20 * 60; // 55 دقيقة للأفلام، 20 دقيقة لحلقات المسلسلات
   try {
@@ -1158,6 +1291,12 @@ async function searchYouTubeDirect(
 
       const seconds = parseDurationToSeconds(durationText);
       if (videoId && seconds >= minSeconds) {
+        if (targetTitle) {
+          const isTv = !isMovie;
+          if (!isArabicTitleRelevant(title, targetTitle, isTv, episode || 1)) {
+            continue;
+          }
+        }
         candidates.push({ id: videoId, title });
         if (candidates.length >= 5) break; // أخذ أفضل 5 مرشحين بدلاً من 2
       }
@@ -1195,52 +1334,41 @@ async function searchYouTubeDirect(
 }
 
 /**
- * 1. مزود يوتيوب المباشر مع استعلامات مرنة واستبعاد الإعلانات
+ * 1. مزود يوتيوب المباشر مع استعلامات مرنة للمحتوى العربي وفحص التطابق
  */
 async function searchYouTubeProvider(
   title: string,
   season: number,
   episode: number,
-  type: 'movie' | 'tv',
-  isArabic: boolean
+  type: 'movie' | 'tv'
 ): Promise<{ label: string; url: string; type: 'embed' }[]> {
   const isMovie = type === 'movie';
   let primaryQuery = '';
   let fallbackQuery = '';
 
-  if (isArabic) {
-    if (isMovie) {
-      primaryQuery = `${title} فيلم كامل`;
-      const shortTitle = title.replace(/^(مسلسل|فيلم|مغامرات|قصة|حكاية|كرتون)\s+/i, '').trim();
-      fallbackQuery = `${shortTitle} فيلم`;
-    } else {
-      primaryQuery =
-        season > 1
-          ? `${title} الجزء ${season} الحلقة ${episode}`
-          : `${title} الحلقة ${episode}`;
-      const shortTitle = title.replace(/^(مسلسل|فيلم|مغامرات|قصة|حكاية|كرتون)\s+/i, '').trim();
-      fallbackQuery =
-        season > 1
-          ? `${shortTitle} الجزء ${season} الحلقة ${episode}`
-          : `${shortTitle} الحلقة ${episode}`;
-    }
+  if (isMovie) {
+    primaryQuery = `${title} فيلم كامل`;
+    const shortTitle = title.replace(/^(مسلسل|فيلم|مغامرات|قصة|حكاية|كرتون)\s+/i, '').trim();
+    fallbackQuery = `${shortTitle} فيلم`;
   } else {
-    if (isMovie) {
-      primaryQuery = `${title} full movie`;
-      fallbackQuery = `${title} movie`;
-    } else {
-      primaryQuery = `${title} S${season}E${episode}`;
-      fallbackQuery = `${title} season ${season} episode ${episode}`;
-    }
+    primaryQuery =
+      season > 1
+        ? `${title} الجزء ${season} الحلقة ${episode}`
+        : `${title} الحلقة ${episode}`;
+    const shortTitle = title.replace(/^(مسلسل|فيلم|مغامرات|قصة|حكاية|كرتون)\s+/i, '').trim();
+    fallbackQuery =
+      season > 1
+        ? `${shortTitle} الجزء ${season} الحلقة ${episode}`
+        : `${shortTitle} الحلقة ${episode}`;
   }
 
-  // 1. تجربة البحث بالاستعلام الأساسي
-  let results = await searchYouTubeDirect(primaryQuery, isMovie);
+  // 1. تجربة البحث بالاستعلام الأساسي مع فحص التطابق
+  let results = await searchYouTubeDirect(primaryQuery, isMovie, title, episode);
   if (results.length > 0) return results;
 
   // 2. تجربة البحث بالاستعلام البديل المختصر
   if (fallbackQuery && fallbackQuery !== primaryQuery) {
-    results = await searchYouTubeDirect(fallbackQuery, isMovie);
+    results = await searchYouTubeDirect(fallbackQuery, isMovie, title, episode);
     if (results.length > 0) return results;
   }
 
@@ -1248,17 +1376,19 @@ async function searchYouTubeProvider(
 }
 
 /**
- * 2. مزود Dailymotion الرسمي المجاني (بدون مفتاح API)
+ * 2. مزود Dailymotion الرسمي المجاني (بدون مفتاح API) مع فحص التطابق
  */
 async function searchDailymotionProvider(
   query: string,
-  isMovie: boolean
+  isMovie: boolean,
+  targetTitle?: string,
+  episode?: number
 ): Promise<{ label: string; url: string; type: 'embed' }[]> {
   const minSeconds = isMovie ? 55 * 60 : 20 * 60;
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 4000);
-    const searchUrl = `https://api.dailymotion.com/videos?search=${encodeURIComponent(query)}&fields=id,title,duration,embed_url&limit=8`;
+    const searchUrl = `https://api.dailymotion.com/videos?search=${encodeURIComponent(query)}&fields=id,title,duration,embed_url&limit=10`;
     const res = await fetch(searchUrl, {
       headers: { Accept: 'application/json' },
       signal: controller.signal,
@@ -1272,6 +1402,12 @@ async function searchDailymotionProvider(
 
     for (const item of list) {
       if (item.id && typeof item.duration === 'number' && item.duration >= minSeconds) {
+        if (targetTitle) {
+          const isTv = !isMovie;
+          if (!isArabicTitleRelevant(item.title || '', targetTitle, isTv, episode || 1)) {
+            continue;
+          }
+        }
         valid.push({ id: item.id, title: item.title });
         if (valid.length >= 2) break;
       }
@@ -1511,63 +1647,77 @@ async function handleVodSources(request: Request, url: URL): Promise<Response> {
 
   const tmdbId = url.searchParams.get('tmdbId') || '';
   const imdbId = url.searchParams.get('imdbId') || '';
-  const title = (url.searchParams.get('title') || '').trim();
+  let title = (url.searchParams.get('title') || '').trim();
   const type = (url.searchParams.get('type') === 'tv' ? 'tv' : 'movie') as 'movie' | 'tv';
-  const lang = (url.searchParams.get('lang') || 'en').toLowerCase();
+  const rawLang = (url.searchParams.get('lang') || 'en').toLowerCase();
   const season = parseInt(url.searchParams.get('season') || '1', 10) || 1;
   const episode = parseInt(url.searchParams.get('episode') || '1', 10) || 1;
 
-  const hasArabicChars = /[\u0600-\u06FF]/.test(title);
-  const isArabic = lang === 'ar' || hasArabicChars;
+  // إزالة أي لواحق مواسم أو حلقات من العنوان لضمان دقة البحث
+  title = title.replace(/\s*-\s*الموسم\s*\d+\s*الحلقة\s*\d+/g, '').replace(/\s*-\s*الحلقة\s*\d+/g, '').trim();
 
-  // صياغة استعلام البحث المناسب لديلي موشن
-  let dmQuery = '';
-  if (isArabic) {
-    if (type === 'movie') {
-      dmQuery = `${title} فيلم كامل`;
-    } else {
-      dmQuery =
-        season > 1
-          ? `${title} الجزء ${season} الحلقة ${episode}`
-          : `${title} الحلقة ${episode}`;
+  // التحقق الصارم من اللغة الأصلية: لا يُعتبر العمل عربياً إلا إذا كانت لغته الأصلية صراحة 'ar'
+  const isArabic = rawLang === 'ar';
+
+  const embedSources = buildMultiEmbedSources(type, tmdbId, imdbId, season, episode);
+  const targetId = tmdbId || imdbId || title || 'sample';
+  const backupDirectSource = {
+    label: 'سيرفر احتياطي (مباشر)',
+    url: `https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4?id=${encodeURIComponent(targetId)}&s=${season}&e=${episode}`,
+    type: 'direct' as const,
+  };
+
+  // للأعمال غير العربية: إيقاف يوتيوب وديلي موشن تماماً وإرجاع السيرفرات المدمجة الدقيقة فوراً
+  if (!isArabic) {
+    const finalSources = [...embedSources, backupDirectSource];
+    const response = new Response(JSON.stringify({ sources: finalSources }), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Cache-Control, Pragma, *',
+        'Cache-Control': 'public, max-age=43200',
+      },
+    });
+
+    try {
+      await cache.put(request, response.clone());
+    } catch {
+      // تجاهل أخطاء وضع الكاش
     }
-  } else {
-    if (type === 'movie') {
-      dmQuery = `${title} full movie`;
-    } else {
-      dmQuery = `${title} S${season}E${episode}`;
-    }
+
+    return response;
   }
 
-  // تشغيل المزودات بالتوازي مع حماية المهلة الزمنية الصارمة (4 ثوانٍ)
+  // للأعمال العربية فقط: تشغيل يوتيوب وديلي موشن مع الفحص الدقيق لتطابق العنوان والحلقة
+  let dmQuery = '';
+  if (type === 'movie') {
+    dmQuery = `${title} فيلم كامل`;
+  } else {
+    dmQuery =
+      season > 1
+        ? `${title} الجزء ${season} الحلقة ${episode}`
+        : `${title} الحلقة ${episode}`;
+  }
+
   const [ytRes, dmRes, archiveRes] = await Promise.allSettled([
-    title ? searchYouTubeProvider(title, season, episode, type, isArabic) : Promise.resolve([]),
-    title ? searchDailymotionProvider(dmQuery, type === 'movie') : Promise.resolve([]),
-    title ? searchArchiveProvider(title) : Promise.resolve([]),
+    title ? searchYouTubeProvider(title, season, episode, type) : Promise.resolve([]),
+    title ? searchDailymotionProvider(dmQuery, type === 'movie', title, episode) : Promise.resolve([]),
+    title && type === 'movie' ? searchArchiveProvider(title) : Promise.resolve([]),
   ]);
 
   const ytSources = ytRes.status === 'fulfilled' ? ytRes.value : [];
   const dmSources = dmRes.status === 'fulfilled' ? dmRes.value : [];
   const archiveSources = archiveRes.status === 'fulfilled' ? archiveRes.value : [];
-  const embedSources = buildMultiEmbedSources(type, tmdbId, imdbId, season, episode);
 
-  // الترتيب الذكي:
-  // المحتوى العربي: يوتيوب ثم ديلي موشن ثم الأرشيف أولاً ثم السيرفرات المدمجة كبدائل
-  // المحتوى الأجنبي: السيرفرات المدمجة أولاً ثم يوتيوب وديلي موشن والأرشيف
-  let finalSources: { label: string; url: string; type: 'embed' | 'direct' }[] = [];
-  if (isArabic) {
-    finalSources = [...ytSources, ...dmSources, ...archiveSources, ...embedSources];
-  } else {
-    finalSources = [...embedSources, ...ytSources, ...dmSources, ...archiveSources];
-  }
-
-  // إضافة سيرفر احتياطي مباشر دائم
-  const targetId = tmdbId || imdbId || title || 'sample';
-  finalSources.push({
-    label: 'سيرفر احتياطي (مباشر)',
-    url: `https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4?id=${encodeURIComponent(targetId)}&s=${season}&e=${episode}`,
-    type: 'direct',
-  });
+  const finalSources: { label: string; url: string; type: 'embed' | 'direct' }[] = [
+    ...ytSources,
+    ...dmSources,
+    ...archiveSources,
+    ...embedSources,
+    backupDirectSource,
+  ];
 
   const response = new Response(JSON.stringify({ sources: finalSources }), {
     status: 200,
