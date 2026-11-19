@@ -9,6 +9,7 @@ import {
   ScrollView,
   useWindowDimensions,
   Platform,
+  Modal,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -17,6 +18,8 @@ import { BACKEND_BASE_URL } from '../../context/AuthContext';
 interface SubscriptionCode {
   id: number;
   code: string;
+  resellerId?: number | null;
+  resellerName?: string | null;
   durationDays: number;
   maxDevices: number;
   deviceCount: number;
@@ -29,6 +32,26 @@ interface SubscriptionCode {
   isExpired: boolean;
 }
 
+interface ResellerStats {
+  total: number;
+  active: number;
+  unused: number;
+  suspended: number;
+  expired: number;
+  activated: number;
+}
+
+interface Reseller {
+  id: number;
+  name: string;
+  username: string;
+  email?: string | null;
+  status: 'active' | 'suspended';
+  note: string;
+  createdAt: string;
+  stats: ResellerStats;
+}
+
 interface Stats {
   total: number;
   active: number;
@@ -37,18 +60,27 @@ interface Stats {
   suspended: number;
 }
 
+const ADMIN_TOKEN_KEY = 'iptv_admin_token';
 const ADMIN_STORAGE_KEY = 'iptv_admin_key';
 
 export default function AdminScreen(): React.JSX.Element {
   const router = useRouter();
   const { width } = useWindowDimensions();
-  const isWide = width >= 900;
+  const isWide = width >= 960;
 
+  // المصادقة
+  const [adminToken, setAdminToken] = useState<string>('');
   const [adminKey, setAdminKey] = useState<string>('');
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [keyInput, setKeyInput] = useState<string>('');
+  const [identifierInput, setIdentifierInput] = useState<string>('admin');
+  const [passwordInput, setPasswordInput] = useState<string>('');
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(false);
 
+  // التنقل بين التبويبات الرئيسية
+  const [activeTab, setActiveTab] = useState<'codes' | 'resellers'>('codes');
+
+  // بيانات الأكواد
   const [stats, setStats] = useState<Stats>({
     total: 0,
     active: 0,
@@ -61,112 +93,222 @@ export default function AdminScreen(): React.JSX.Element {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  // حالة نموذج التوليد
+  // بيانات الموزعين
+  const [resellers, setResellers] = useState<Reseller[]>([]);
+  const [resellersLoading, setResellersLoading] = useState<boolean>(false);
+
+  // فلاتر الأكواد
+  const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'unused' | 'expired' | 'suspended'>('all');
+  const [filterReseller, setFilterReseller] = useState<string>('all'); // 'all' | 'admin' | string(id)
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // نموذج توليد الأكواد
   const [genDuration, setGenDuration] = useState<number>(30);
   const [genMaxDevices, setGenMaxDevices] = useState<number>(1);
   const [genCount, setGenCount] = useState<number>(1);
   const [genNote, setGenNote] = useState<string>('');
+  const [genTargetReseller, setGenTargetReseller] = useState<string>('admin');
   const [generatedBatch, setGeneratedBatch] = useState<string[]>([]);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
-  // حالة الفلترة والبحث
-  const [filterTab, setFilterTab] = useState<'all' | 'active' | 'unused' | 'expired' | 'suspended'>('all');
-  const [searchQuery, setSearchQuery] = useState<string>('');
+  // نوافذ المودال للموزعين
+  const [showAddResellerModal, setShowAddResellerModal] = useState<boolean>(false);
+  const [showEditResellerModal, setShowEditResellerModal] = useState<boolean>(false);
+  const [editingReseller, setEditingReseller] = useState<Reseller | null>(null);
 
-  // استرجاع المفتاح المحفوظ
+  // حقول إضافة موزع جديد
+  const [newResellerName, setNewResellerName] = useState<string>('');
+  const [newResellerUsername, setNewResellerUsername] = useState<string>('');
+  const [newResellerEmail, setNewResellerEmail] = useState<string>('');
+  const [newResellerPassword, setNewResellerPassword] = useState<string>('');
+  const [newResellerNote, setNewResellerNote] = useState<string>('');
+  const [newResellerModalError, setNewResellerModalError] = useState<string | null>(null);
+
+  // حقول تعديل موزع
+  const [editResellerName, setEditResellerName] = useState<string>('');
+  const [editResellerUsername, setEditResellerUsername] = useState<string>('');
+  const [editResellerEmail, setEditResellerEmail] = useState<string>('');
+  const [editResellerPassword, setEditResellerPassword] = useState<string>('');
+  const [editResellerNote, setEditResellerNote] = useState<string>('');
+  const [editResellerStatus, setEditResellerStatus] = useState<'active' | 'suspended'>('active');
+  const [editResellerModalError, setEditResellerModalError] = useState<string | null>(null);
+
+  // رؤوس الطلبات للمصادقة
+  const getAuthHeaders = useCallback(() => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (adminToken) {
+      headers['Authorization'] = `Bearer ${adminToken}`;
+    }
+    if (adminKey) {
+      headers['X-Admin-Key'] = adminKey;
+    }
+    return headers;
+  }, [adminToken, adminKey]);
+
+  // استرجاع الجلسة المحفوظة عند التحميل
   useEffect(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const saved = window.sessionStorage.getItem(ADMIN_STORAGE_KEY);
-      if (saved) {
-        setAdminKey(saved);
+      const savedToken = window.sessionStorage.getItem(ADMIN_TOKEN_KEY);
+      const savedKey = window.sessionStorage.getItem(ADMIN_STORAGE_KEY);
+      if (savedToken) {
+        setAdminToken(savedToken);
+        setIsAuthenticated(true);
+      } else if (savedKey) {
+        setAdminKey(savedKey);
         setIsAuthenticated(true);
       }
     }
   }, []);
 
-  // جلب قائمة الأكواد والإحصائيات
-  const fetchAdminData = useCallback(async (keyToUse?: string) => {
-    const key = keyToUse || adminKey;
-    if (!key) return;
+  // جلب الأكواد
+  const fetchCodes = useCallback(
+    async (resellerParam?: string) => {
+      if (!adminToken && !adminKey) return;
+      setIsLoading(true);
 
-    setIsLoading(true);
-    setStatusMessage(null);
+      const targetReseller = resellerParam !== undefined ? resellerParam : filterReseller;
+      const url = `${BACKEND_BASE_URL}/api/admin/codes?resellerId=${encodeURIComponent(targetReseller)}`;
+
+      try {
+        const res = await fetch(url, { headers: getAuthHeaders() });
+        if (res.status === 401) {
+          setIsAuthenticated(false);
+          setAuthError('انتهت صلاحية جلسة الإدارة، يرجى إعادة تسجيل الدخول');
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+            window.sessionStorage.removeItem(ADMIN_STORAGE_KEY);
+          }
+          return;
+        }
+
+        const data = await res.json();
+        if (res.ok) {
+          setStats(data.stats || { total: 0, active: 0, unused: 0, expired: 0, suspended: 0 });
+          setCodes(data.codes || []);
+        }
+      } catch {
+        setStatusMessage('تعذر جلب الأكواد من الخادم');
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [adminToken, adminKey, filterReseller, getAuthHeaders]
+  );
+
+  // جلب الموزعين
+  const fetchResellers = useCallback(async () => {
+    if (!adminToken && !adminKey) return;
+    setResellersLoading(true);
 
     try {
-      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/codes`, {
-        headers: {
-          'X-Admin-Key': key,
-        },
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/resellers`, {
+        headers: getAuthHeaders(),
       });
 
-      if (res.status === 401) {
-        setIsAuthenticated(false);
-        setAuthError('كلمة مرور الإدارة غير صحيحة');
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.sessionStorage.removeItem(ADMIN_STORAGE_KEY);
-        }
-        return;
+      if (res.ok) {
+        const data = await res.json();
+        setResellers(data.resellers || []);
       }
+    } catch {
+      setStatusMessage('تعذر جلب قائمة الموزعين');
+    } finally {
+      setResellersLoading(false);
+    }
+  }, [adminToken, adminKey, getAuthHeaders]);
+
+  // تحديث البيانات عند تسجيل الدخول أو تغيير التبويب
+  useEffect(() => {
+    if (isAuthenticated) {
+      if (activeTab === 'codes') {
+        fetchCodes();
+        fetchResellers(); // لجلب أسماء الموزعين في قائمة الاختيار
+      } else if (activeTab === 'resellers') {
+        fetchResellers();
+      }
+    }
+  }, [isAuthenticated, activeTab, fetchCodes, fetchResellers]);
+
+  // تسجيل الدخول للإدارة
+  const handleLoginSubmit = async () => {
+    const ident = identifierInput.trim();
+    const pass = passwordInput.trim();
+
+    if (!ident || !pass) {
+      setAuthError('يرجى إدخال اسم المستخدم/البريد وكلمة المرور');
+      return;
+    }
+
+    setAuthLoading(true);
+    setAuthError(null);
+
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier: ident, password: pass }),
+      });
 
       const data = await res.json();
-      if (res.ok) {
-        setStats(data.stats || { total: 0, active: 0, unused: 0, expired: 0, suspended: 0 });
-        setCodes(data.codes || []);
+      if (res.ok && data.token) {
+        setAdminToken(data.token);
         setIsAuthenticated(true);
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.sessionStorage.setItem(ADMIN_STORAGE_KEY, key);
+          window.sessionStorage.setItem(ADMIN_TOKEN_KEY, data.token);
+        }
+      } else {
+        // فحص التوافق العكسي إذا كان المستخدم يدخل مفتاح ADMIN_SECRET القديم
+        const fallbackRes = await fetch(`${BACKEND_BASE_URL}/api/admin/codes`, {
+          headers: { 'X-Admin-Key': pass || ident },
+        });
+        if (fallbackRes.ok) {
+          setAdminKey(pass || ident);
+          setIsAuthenticated(true);
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.sessionStorage.setItem(ADMIN_STORAGE_KEY, pass || ident);
+          }
+        } else {
+          setAuthError(data.error || 'فشل تسجيل الدخول: بيانات غير صحيحة');
         }
       }
     } catch {
-      setStatusMessage('تعذر الاتصال بالخادم');
+      setAuthError('تعذر الاتصال بالخادم، يرجى المحاولة لاحقاً');
     } finally {
-      setIsLoading(false);
+      setAuthLoading(false);
     }
-  }, [adminKey]);
-
-  useEffect(() => {
-    if (isAuthenticated && adminKey) {
-      fetchAdminData();
-    }
-  }, [isAuthenticated, adminKey, fetchAdminData]);
-
-  const handleAdminLogin = async () => {
-    if (!keyInput.trim()) {
-      setAuthError('يرجى إدخال كلمة مرور الإدارة');
-      return;
-    }
-    setAuthError(null);
-    setAdminKey(keyInput.trim());
-    await fetchAdminData(keyInput.trim());
   };
 
-  const handleAdminLogout = () => {
+  const handleLogout = () => {
     setIsAuthenticated(false);
+    setAdminToken('');
     setAdminKey('');
-    setKeyInput('');
+    setPasswordInput('');
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.sessionStorage.removeItem(ADMIN_TOKEN_KEY);
       window.sessionStorage.removeItem(ADMIN_STORAGE_KEY);
     }
   };
 
-  // توليد أكواد جديدة
+  // توليد الأكواد
   const handleGenerateCodes = async () => {
     setActionLoading('generate');
     setStatusMessage(null);
     setGeneratedBatch([]);
 
     try {
+      const targetResellerId =
+        genTargetReseller === 'admin' ? null : parseInt(genTargetReseller, 10) || null;
+
       const res = await fetch(`${BACKEND_BASE_URL}/api/admin/codes`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Admin-Key': adminKey,
-        },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           durationDays: genDuration,
           maxDevices: genMaxDevices,
           count: genCount,
           note: genNote.trim(),
+          resellerId: targetResellerId,
         }),
       });
 
@@ -175,32 +317,31 @@ export default function AdminScreen(): React.JSX.Element {
         setGeneratedBatch(data.codes || []);
         setStatusMessage(`تم توليد ${data.count} كود بنجاح!`);
         setGenNote('');
-        fetchAdminData();
+        fetchCodes();
+        fetchResellers();
       } else {
         setStatusMessage(data.error || 'فشل توليد الأكواد');
       }
     } catch {
-      setStatusMessage('حدث خطأ أثناء التوليد');
+      setStatusMessage('حدث خطأ أثناء توليد الأكواد');
     } finally {
       setActionLoading(null);
     }
   };
 
-  // نسخ كود للحافظة
+  // نسخ كود
   const copyToClipboard = (text: string) => {
     if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
       navigator.clipboard.writeText(text);
       setCopiedCode(text);
-      setTimeout(() => {
-        setCopiedCode(null);
-      }, 2500);
+      setTimeout(() => setCopiedCode(null), 2500);
     }
   };
 
-  // إجراءات سريعة على كود معين
+  // إجراءات تعديل كود
   const handleUpdateCode = async (
     code: string,
-    payload: { status?: string; addDays?: number; resetDevices?: boolean }
+    payload: { status?: string; addDays?: number; resetDevices?: boolean; resellerId?: number | null }
   ) => {
     setActionLoading(code);
     setStatusMessage(null);
@@ -208,17 +349,15 @@ export default function AdminScreen(): React.JSX.Element {
     try {
       const res = await fetch(`${BACKEND_BASE_URL}/api/admin/codes/${encodeURIComponent(code)}`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Admin-Key': adminKey,
-        },
+        headers: getAuthHeaders(),
         body: JSON.stringify(payload),
       });
 
       const data = await res.json();
       if (res.ok && data.success) {
         setStatusMessage(data.message || 'تم تحديث الكود بنجاح');
-        fetchAdminData();
+        fetchCodes();
+        fetchResellers();
       } else {
         setStatusMessage(data.error || 'فشل تحديث الكود');
       }
@@ -229,6 +368,7 @@ export default function AdminScreen(): React.JSX.Element {
     }
   };
 
+  // حذف كود نهائياً
   const handleDeleteCode = async (code: string) => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const confirmed = window.confirm(`هل أنت متأكد من حذف الكود ${code} نهائياً؟`);
@@ -241,15 +381,14 @@ export default function AdminScreen(): React.JSX.Element {
     try {
       const res = await fetch(`${BACKEND_BASE_URL}/api/admin/codes/${encodeURIComponent(code)}`, {
         method: 'DELETE',
-        headers: {
-          'X-Admin-Key': adminKey,
-        },
+        headers: getAuthHeaders(),
       });
 
       const data = await res.json();
       if (res.ok && data.success) {
         setStatusMessage('تم حذف الكود بنجاح');
-        fetchAdminData();
+        fetchCodes();
+        fetchResellers();
       } else {
         setStatusMessage(data.error || 'فشل حذف الكود');
       }
@@ -260,24 +399,160 @@ export default function AdminScreen(): React.JSX.Element {
     }
   };
 
-  // تصفية الأكواد
+  // إنشاء موزع جديد
+  const handleCreateResellerSubmit = async () => {
+    if (!newResellerName.trim() || !newResellerUsername.trim() || !newResellerPassword.trim()) {
+      setNewResellerModalError('يرجى ملء الاسم واسم المستخدم وكلمة المرور');
+      return;
+    }
+    if (newResellerPassword.length < 6) {
+      setNewResellerModalError('كلمة المرور يجب أن لا تقل عن 6 أحرف');
+      return;
+    }
+
+    setActionLoading('create_reseller');
+    setNewResellerModalError(null);
+
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/resellers`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          name: newResellerName.trim(),
+          username: newResellerUsername.trim(),
+          email: newResellerEmail.trim() || null,
+          password: newResellerPassword.trim(),
+          note: newResellerNote.trim(),
+          status: 'active',
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setShowAddResellerModal(false);
+        setNewResellerName('');
+        setNewResellerUsername('');
+        setNewResellerEmail('');
+        setNewResellerPassword('');
+        setNewResellerNote('');
+        setStatusMessage('تم إنشاء حساب الموزع بنجاح');
+        fetchResellers();
+      } else {
+        setNewResellerModalError(data.error || 'فشل إنشاء الموزع');
+      }
+    } catch {
+      setNewResellerModalError('حدث خطأ أثناء إنشاء حساب الموزع');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  // حفظ تعديلات موزع
+  const handleEditResellerSubmit = async () => {
+    if (!editingReseller) return;
+    if (!editResellerName.trim() || !editResellerUsername.trim()) {
+      setEditResellerModalError('يرجى إدخال اسم الموزع واسم المستخدم');
+      return;
+    }
+
+    setActionLoading('edit_reseller');
+    setEditResellerModalError(null);
+
+    try {
+      const payload: any = {
+        name: editResellerName.trim(),
+        username: editResellerUsername.trim(),
+        email: editResellerEmail.trim() || null,
+        note: editResellerNote.trim(),
+        status: editResellerStatus,
+      };
+
+      if (editResellerPassword.trim().length >= 6) {
+        payload.password = editResellerPassword.trim();
+      }
+
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/resellers/${editingReseller.id}`, {
+        method: 'PATCH',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setShowEditResellerModal(false);
+        setEditingReseller(null);
+        setStatusMessage('تم تحديث بيانات الموزع بنجاح');
+        fetchResellers();
+      } else {
+        setEditResellerModalError(data.error || 'فشل تحديث بيانات الموزع');
+      }
+    } catch {
+      setEditResellerModalError('حدث خطأ أثناء تحديث الموزع');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  // تبديل حالة الموزع (نشط / موقوف)
+  const handleToggleResellerStatus = async (reseller: Reseller) => {
+    const newStatus = reseller.status === 'active' ? 'suspended' : 'active';
+    const actionText = newStatus === 'suspended' ? 'إيقاف' : 'تفعيل';
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const confirmed = window.confirm(`هل أنت متأكد من ${actionText} حساب الموزع ${reseller.name}؟`);
+      if (!confirmed) return;
+    }
+
+    setActionLoading(`toggle_reseller_${reseller.id}`);
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/resellers/${reseller.id}`, {
+        method: 'PATCH',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ status: newStatus }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setStatusMessage(`تم ${actionText} حساب الموزع بنجاح`);
+        fetchResellers();
+      } else {
+        setStatusMessage(data.error || 'فشل تغيير حالة الموزع');
+      }
+    } catch {
+      setStatusMessage('حدث خطأ أثناء تعديل الحالة');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  // تصفية الأكواد محلياً بالبحث والحالة
   const filteredCodes = useMemo(() => {
     let result = codes;
-    if (filterTab !== 'all') {
-      result = result.filter((c) => c.status === filterTab);
+    if (filterStatus !== 'all') {
+      result = result.filter((c) => c.status === filterStatus);
     }
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       result = result.filter(
         (c) =>
           c.code.toLowerCase().includes(q) ||
-          (c.note && c.note.toLowerCase().includes(q))
+          (c.note && c.note.toLowerCase().includes(q)) ||
+          (c.resellerName && c.resellerName.toLowerCase().includes(q))
       );
     }
     return result;
-  }, [codes, filterTab, searchQuery]);
+  }, [codes, filterStatus, searchQuery]);
 
+  // الانتقال للأكواد مفلترة بموزع معين
+  const viewResellerCodes = (resellerId: number) => {
+    setFilterReseller(String(resellerId));
+    setActiveTab('codes');
+    fetchCodes(String(resellerId));
+  };
+
+  // ==========================================
   // شاشة تسجيل دخول المشرف
+  // ==========================================
   if (!isAuthenticated) {
     return (
       <View style={styles.loginContainer}>
@@ -285,476 +560,1088 @@ export default function AdminScreen(): React.JSX.Element {
           <View style={styles.loginIconCircle}>
             <MaterialIcons name="admin-panel-settings" size={44} color="#f59e0b" />
           </View>
-          <Text style={styles.loginTitle}>لوحة إدارة الاشتراكات</Text>
+          <Text style={styles.loginTitle}>لوحة إدارة المنصة</Text>
           <Text style={styles.loginSub}>
-            هذه الصفحة مخصصة لمدير المنصة فقط. يرجى إدخال مفتاح الإدارة للمتابعة.
+            إدارة الاشتراكات وأكواد التفعيل وشبكة الموزعين المعتمدين.
           </Text>
 
           <View style={styles.loginInputWrapper}>
+            <MaterialIcons name="person" size={20} color="#94a3b8" />
+            <TextInput
+              style={styles.loginInput}
+              value={identifierInput}
+              onChangeText={setIdentifierInput}
+              placeholder="اسم المستخدم أو البريد الإلكتروني"
+              placeholderTextColor="#64748b"
+              autoCapitalize="none"
+            />
+          </View>
+
+          <View style={[styles.loginInputWrapper, { marginTop: 12 }]}>
             <MaterialIcons name="lock" size={20} color="#94a3b8" />
             <TextInput
               style={styles.loginInput}
               secureTextEntry
-              value={keyInput}
-              onChangeText={setKeyInput}
-              placeholder="أدخل مفتاح الإدارة (ADMIN_SECRET)"
+              value={passwordInput}
+              onChangeText={setPasswordInput}
+              placeholder="كلمة المرور"
               placeholderTextColor="#64748b"
-              onSubmitEditing={handleAdminLogin}
+              onSubmitEditing={handleLoginSubmit}
             />
           </View>
 
-          {authError && <Text style={styles.loginErrorText}>{authError}</Text>}
+          {authError && (
+            <View style={styles.errorBox}>
+              <MaterialIcons name="error-outline" size={18} color="#ef4444" />
+              <Text style={styles.errorText}>{authError}</Text>
+            </View>
+          )}
 
           <Pressable
-            onPress={handleAdminLogin}
-            style={({ focused }) => [styles.loginBtn, focused && styles.btnFocused]}
+            style={({ pressed }) => [styles.loginButton, pressed && { opacity: 0.85 }]}
+            onPress={handleLoginSubmit}
+            disabled={authLoading}
           >
-            <Text style={styles.loginBtnText}>دخول لوحة التحكم</Text>
+            {authLoading ? (
+              <ActivityIndicator color="#070b14" size="small" />
+            ) : (
+              <>
+                <Text style={styles.loginButtonText}>تسجيل الدخول للإدارة</Text>
+                <MaterialIcons name="arrow-back" size={20} color="#070b14" />
+              </>
+            )}
           </Pressable>
 
-          <Pressable
-            onPress={() => router.replace('/')}
-            style={{ marginTop: 16, alignItems: 'center' }}
-          >
-            <Text style={{ color: '#64748b', fontSize: 13 }}>العودة للتطبيق الرئيسي</Text>
+          <Pressable style={styles.backToHomeBtn} onPress={() => router.replace('/')}>
+            <MaterialIcons name="home" size={18} color="#94a3b8" />
+            <Text style={styles.backToHomeText}>العودة للواجهة الرئيسية</Text>
           </Pressable>
         </View>
       </View>
     );
   }
 
+  // ==========================================
+  // الشاشة الرئيسية للوحة الإدارة
+  // ==========================================
   return (
     <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.mainScroll} showsVerticalScrollIndicator={false}>
-        {/* شريط الإدارة العلوي */}
-        <View style={styles.topBar}>
-          <View style={styles.topBarRight}>
-            <MaterialIcons name="security" size={28} color="#38bdf8" />
-            <View>
-              <Text style={styles.dashboardTitle}>لوحة إدارة الاشتراكات</Text>
-              <Text style={styles.dashboardSub}>نظام أكواد التفعيل المباشر (Cloudflare D1)</Text>
-            </View>
+      {/* الشريط العلوي */}
+      <View style={styles.topHeader}>
+        <View style={styles.headerTitleRow}>
+          <View style={styles.headerBadge}>
+            <MaterialIcons name="verified-user" size={18} color="#f59e0b" />
+            <Text style={styles.headerBadgeText}>لوحة تحكم المدير العام</Text>
           </View>
-
-          <View style={styles.topBarActions}>
-            <Pressable
-              onPress={() => fetchAdminData()}
-              style={({ focused }) => [styles.topActionBtn, focused && styles.btnFocused]}
-            >
-              <MaterialIcons name="refresh" size={18} color="#38bdf8" />
-              <Text style={styles.topActionText}>تحديث</Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() => router.replace('/')}
-              style={({ focused }) => [styles.topActionBtn, focused && styles.btnFocused]}
-            >
-              <MaterialIcons name="home" size={18} color="#ffffff" />
-              <Text style={styles.topActionText}>الرئيسية</Text>
-            </Pressable>
-
-            <Pressable
-              onPress={handleAdminLogout}
-              style={({ focused }) => [styles.logoutBtn, focused && styles.btnFocused]}
-            >
-              <MaterialIcons name="exit-to-app" size={18} color="#ef4444" />
-              <Text style={[styles.topActionText, { color: '#ef4444' }]}>خروج</Text>
-            </Pressable>
-          </View>
+          <Text style={styles.headerMainTitle}>نظام إدارة المنصة والموزعين</Text>
         </View>
 
-        {/* إشعار الحالة */}
-        {statusMessage && (
-          <View style={styles.statusBanner}>
-            <MaterialIcons name="info" size={20} color="#38bdf8" />
-            <Text style={styles.statusBannerText}>{statusMessage}</Text>
-          </View>
-        )}
+        <View style={styles.headerActions}>
+          <Pressable
+            style={styles.refreshBtn}
+            onPress={() => {
+              if (activeTab === 'codes') fetchCodes();
+              else fetchResellers();
+            }}
+          >
+            <MaterialIcons name="refresh" size={18} color="#38bdf8" />
+            <Text style={styles.refreshBtnText}>تحديث</Text>
+          </Pressable>
 
-        {/* 1. بطاقات الإحصائيات السريعة */}
-        <View style={styles.statsGrid}>
-          <View style={[styles.statCard, { borderLeftColor: '#38bdf8' }]}>
-            <Text style={styles.statLabel}>إجمالي الأكواد</Text>
-            <Text style={[styles.statValue, { color: '#38bdf8' }]}>{stats.total}</Text>
-          </View>
-          <View style={[styles.statCard, { borderLeftColor: '#10b981' }]}>
-            <Text style={styles.statLabel}>النشطة</Text>
-            <Text style={[styles.statValue, { color: '#10b981' }]}>{stats.active}</Text>
-          </View>
-          <View style={[styles.statCard, { borderLeftColor: '#6366f1' }]}>
-            <Text style={styles.statLabel}>غير مستخدمة</Text>
-            <Text style={[styles.statValue, { color: '#6366f1' }]}>{stats.unused}</Text>
-          </View>
-          <View style={[styles.statCard, { borderLeftColor: '#94a3b8' }]}>
-            <Text style={styles.statLabel}>المنتهية</Text>
-            <Text style={[styles.statValue, { color: '#94a3b8' }]}>{stats.expired}</Text>
-          </View>
-          <View style={[styles.statCard, { borderLeftColor: '#f59e0b' }]}>
-            <Text style={styles.statLabel}>الموقوفة</Text>
-            <Text style={[styles.statValue, { color: '#f59e0b' }]}>{stats.suspended}</Text>
-          </View>
+          <Pressable style={styles.logoutBtn} onPress={handleLogout}>
+            <MaterialIcons name="logout" size={18} color="#ef4444" />
+            <Text style={styles.logoutBtnText}>خروج</Text>
+          </Pressable>
         </View>
+      </View>
 
-        {/* 2. قسم توليد أكواد جديدة */}
-        <View style={styles.sectionCard}>
-          <View style={styles.sectionHeader}>
-            <MaterialIcons name="add-circle-outline" size={22} color="#10b981" />
-            <Text style={styles.sectionTitle}>توليد أكواد اشتراك جديدة</Text>
-          </View>
+      {/* تبويبات التنقل الرئيسية */}
+      <View style={styles.mainNavTabs}>
+        <Pressable
+          style={[styles.mainNavTab, activeTab === 'codes' && styles.mainNavTabActive]}
+          onPress={() => setActiveTab('codes')}
+        >
+          <MaterialIcons
+            name="vpn-key"
+            size={20}
+            color={activeTab === 'codes' ? '#38bdf8' : '#94a3b8'}
+          />
+          <Text
+            style={[styles.mainNavTabText, activeTab === 'codes' && styles.mainNavTabTextActive]}
+          >
+            الأكواد والاشتراكات ({stats.total})
+          </Text>
+        </Pressable>
 
-          <View style={styles.generatorRow}>
-            {/* اختيار المدة */}
-            <View style={styles.genCol}>
-              <Text style={styles.fieldLabel}>المدة:</Text>
-              <View style={styles.pillRow}>
-                {[
-                  { label: 'شهر (30)', days: 30 },
-                  { label: '3 أشهر (90)', days: 90 },
-                  { label: '6 أشهر (180)', days: 180 },
-                  { label: 'سنة (365)', days: 365 },
-                ].map((opt) => (
-                  <Pressable
-                    key={`dur-${opt.days}`}
-                    onPress={() => setGenDuration(opt.days)}
-                    style={[
-                      styles.pillBtn,
-                      genDuration === opt.days && styles.pillBtnActive,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.pillBtnText,
-                        genDuration === opt.days && styles.pillBtnTextActive,
-                      ]}
-                    >
-                      {opt.label}
-                    </Text>
-                  </Pressable>
-                ))}
+        <Pressable
+          style={[styles.mainNavTab, activeTab === 'resellers' && styles.mainNavTabActive]}
+          onPress={() => setActiveTab('resellers')}
+        >
+          <MaterialIcons
+            name="group"
+            size={20}
+            color={activeTab === 'resellers' ? '#f59e0b' : '#94a3b8'}
+          />
+          <Text
+            style={[
+              styles.mainNavTabText,
+              activeTab === 'resellers' && styles.mainNavTabTextActive,
+            ]}
+          >
+            شبكة الموزعين ({resellers.length})
+          </Text>
+        </Pressable>
+      </View>
+
+      {statusMessage && (
+        <View style={styles.statusBar}>
+          <MaterialIcons name="info" size={18} color="#38bdf8" />
+          <Text style={styles.statusBarText}>{statusMessage}</Text>
+          <Pressable onPress={() => setStatusMessage(null)}>
+            <MaterialIcons name="close" size={18} color="#94a3b8" />
+          </Pressable>
+        </View>
+      )}
+
+      {/* محتوى التبويب */}
+      <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent}>
+        {activeTab === 'codes' ? (
+          <>
+            {/* بطاقات الإحصائيات العامة للأكواد */}
+            <View style={styles.statsGrid}>
+              <View style={[styles.statCard, { borderTopColor: '#38bdf8' }]}>
+                <Text style={styles.statLabel}>إجمالي الأكواد</Text>
+                <Text style={[styles.statValue, { color: '#38bdf8' }]}>{stats.total}</Text>
+              </View>
+              <View style={[styles.statCard, { borderTopColor: '#10b981' }]}>
+                <Text style={styles.statLabel}>اشتراكات جارية</Text>
+                <Text style={[styles.statValue, { color: '#10b981' }]}>{stats.active}</Text>
+              </View>
+              <View style={[styles.statCard, { borderTopColor: '#f59e0b' }]}>
+                <Text style={styles.statLabel}>أكواد جديدة غير مستخدمة</Text>
+                <Text style={[styles.statValue, { color: '#f59e0b' }]}>{stats.unused}</Text>
+              </View>
+              <View style={[styles.statCard, { borderTopColor: '#64748b' }]}>
+                <Text style={styles.statLabel}>اشتراكات منتهية</Text>
+                <Text style={[styles.statValue, { color: '#64748b' }]}>{stats.expired}</Text>
+              </View>
+              <View style={[styles.statCard, { borderTopColor: '#ef4444' }]}>
+                <Text style={styles.statLabel}>موقوفة إدارياً</Text>
+                <Text style={[styles.statValue, { color: '#ef4444' }]}>{stats.suspended}</Text>
               </View>
             </View>
 
-            {/* عدد الأجهزة */}
-            <View style={styles.genCol}>
-              <Text style={styles.fieldLabel}>أقصى عدد للأجهزة:</Text>
-              <View style={styles.pillRow}>
-                {[1, 2, 3, 5].map((num) => (
-                  <Pressable
-                    key={`dev-${num}`}
-                    onPress={() => setGenMaxDevices(num)}
-                    style={[
-                      styles.pillBtn,
-                      genMaxDevices === num && styles.pillBtnActive,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.pillBtnText,
-                        genMaxDevices === num && styles.pillBtnTextActive,
-                      ]}
-                    >
-                      {num} {num === 1 ? 'جهاز' : 'أجهزة'}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-
-            {/* عدد الأكواد وملاحظة المشترك */}
-            <View style={styles.genInputsRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.fieldLabel}>ملاحظة / اسم المشترك:</Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={genNote}
-                  onChangeText={setGenNote}
-                  placeholder="مثال: أحمد محمد - اشتراك سنوي"
-                  placeholderTextColor="#64748b"
-                />
+            {/* نموذج توليد أكواد جديدة */}
+            <View style={styles.cardSection}>
+              <View style={styles.cardHeader}>
+                <MaterialIcons name="add-circle-outline" size={22} color="#38bdf8" />
+                <Text style={styles.cardTitle}>توليد أكواد اشتراك جديدة</Text>
               </View>
 
-              <View style={{ width: 110 }}>
-                <Text style={styles.fieldLabel}>العدد:</Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={String(genCount)}
-                  onChangeText={(t) => setGenCount(parseInt(t || '1', 10) || 1)}
-                  keyboardType="numeric"
-                  placeholder="1"
-                  placeholderTextColor="#64748b"
-                />
-              </View>
-
-              <View style={{ alignSelf: 'flex-end' }}>
-                <Pressable
-                  disabled={actionLoading === 'generate'}
-                  onPress={handleGenerateCodes}
-                  style={({ focused }) => [
-                    styles.primaryBtn,
-                    focused && styles.btnFocused,
-                    actionLoading === 'generate' && { opacity: 0.6 },
-                  ]}
-                >
-                  {actionLoading === 'generate' ? (
-                    <ActivityIndicator size="small" color="#000000" />
-                  ) : (
-                    <>
-                      <MaterialIcons name="auto-fix-high" size={20} color="#000000" />
-                      <Text style={styles.primaryBtnText}>توليد الأكواد</Text>
-                    </>
-                  )}
-                </Pressable>
-              </View>
-            </View>
-          </View>
-
-          {/* صندوق الأكواد التي تم توليدها للتو مع زر نسخ سريع */}
-          {generatedBatch.length > 0 && (
-            <View style={styles.batchBox}>
-              <View style={styles.batchHeader}>
-                <Text style={styles.batchTitle}>
-                  تم توليد الأكواد التالية (انقر للنسخ والإرسال):
-                </Text>
-                <Pressable
-                  onPress={() => copyToClipboard(generatedBatch.join('\n'))}
-                  style={styles.copyAllBtn}
-                >
-                  <MaterialIcons name="content-copy" size={16} color="#38bdf8" />
-                  <Text style={styles.copyAllText}>نسخ كافة الأكواد</Text>
-                </Pressable>
-              </View>
-
-              <View style={styles.batchList}>
-                {generatedBatch.map((c) => {
-                  const isCopied = copiedCode === c;
-                  return (
+              <View style={isWide ? styles.formGridWide : styles.formGridCol}>
+                {/* الجهة المالكة للكود */}
+                <View style={styles.formGroup}>
+                  <Text style={styles.inputLabel}>الجهة المالكة للكود:</Text>
+                  <View style={styles.pillsRow}>
                     <Pressable
-                      key={`batch-${c}`}
-                      onPress={() => copyToClipboard(c)}
-                      style={[styles.batchChip, isCopied && styles.batchChipCopied]}
+                      style={[
+                        styles.selectorPill,
+                        genTargetReseller === 'admin' && styles.selectorPillActive,
+                      ]}
+                      onPress={() => setGenTargetReseller('admin')}
                     >
-                      <Text style={[styles.batchCodeText, isCopied && { color: '#10b981' }]}>
-                        {c}
+                      <Text
+                        style={[
+                          styles.selectorPillText,
+                          genTargetReseller === 'admin' && styles.selectorPillTextActive,
+                        ]}
+                      >
+                        الإدارة المباشرة
                       </Text>
-                      <MaterialIcons
-                        name={isCopied ? 'check' : 'content-copy'}
-                        size={16}
-                        color={isCopied ? '#10b981' : '#94a3b8'}
-                      />
                     </Pressable>
+                    {resellers.map((r) => (
+                      <Pressable
+                        key={r.id}
+                        style={[
+                          styles.selectorPill,
+                          genTargetReseller === String(r.id) && styles.selectorPillActive,
+                        ]}
+                        onPress={() => setGenTargetReseller(String(r.id))}
+                      >
+                        <Text
+                          style={[
+                            styles.selectorPillText,
+                            genTargetReseller === String(r.id) && styles.selectorPillTextActive,
+                          ]}
+                        >
+                          {r.name}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+
+                {/* مدة الاشتراك */}
+                <View style={styles.formGroup}>
+                  <Text style={styles.inputLabel}>مدة الاشتراك:</Text>
+                  <View style={styles.pillsRow}>
+                    {[
+                      { label: 'شهر (30 يوم)', val: 30 },
+                      { label: '3 أشهر (90 يوم)', val: 90 },
+                      { label: '6 أشهر (180 يوم)', val: 180 },
+                      { label: 'سنة (365 يوم)', val: 365 },
+                    ].map((item) => (
+                      <Pressable
+                        key={item.val}
+                        style={[
+                          styles.selectorPill,
+                          genDuration === item.val && styles.selectorPillActive,
+                        ]}
+                        onPress={() => setGenDuration(item.val)}
+                      >
+                        <Text
+                          style={[
+                            styles.selectorPillText,
+                            genDuration === item.val && styles.selectorPillTextActive,
+                          ]}
+                        >
+                          {item.label}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+
+                {/* عدد الأجهزة والكمية */}
+                <View style={styles.formGroup}>
+                  <Text style={styles.inputLabel}>الحد الأقصى للأجهزة المتزامنة:</Text>
+                  <View style={styles.pillsRow}>
+                    {[1, 2, 3, 4, 5].map((num) => (
+                      <Pressable
+                        key={num}
+                        style={[
+                          styles.selectorPillSmall,
+                          genMaxDevices === num && styles.selectorPillActive,
+                        ]}
+                        onPress={() => setGenMaxDevices(num)}
+                      >
+                        <Text
+                          style={[
+                            styles.selectorPillText,
+                            genMaxDevices === num && styles.selectorPillTextActive,
+                          ]}
+                        >
+                          {num} {num === 1 ? 'جهاز' : 'أجهزة'}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.inputLabel}>الكمية المراد توليدها:</Text>
+                  <View style={styles.pillsRow}>
+                    {[1, 5, 10, 20, 50].map((num) => (
+                      <Pressable
+                        key={num}
+                        style={[
+                          styles.selectorPillSmall,
+                          genCount === num && styles.selectorPillActive,
+                        ]}
+                        onPress={() => setGenCount(num)}
+                      >
+                        <Text
+                          style={[
+                            styles.selectorPillText,
+                            genCount === num && styles.selectorPillTextActive,
+                          ]}
+                        >
+                          {num} كود
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.inputLabel}>ملاحظة / اسم المشترك (اختياري):</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={genNote}
+                    onChangeText={setGenNote}
+                    placeholder="مثال: اشتراك عائلي - أو اسم العميل"
+                    placeholderTextColor="#64748b"
+                  />
+                </View>
+              </View>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.generateButton,
+                  pressed && { opacity: 0.85 },
+                  actionLoading === 'generate' && { opacity: 0.6 },
+                ]}
+                onPress={handleGenerateCodes}
+                disabled={actionLoading === 'generate'}
+              >
+                {actionLoading === 'generate' ? (
+                  <ActivityIndicator color="#070b14" size="small" />
+                ) : (
+                  <>
+                    <MaterialIcons name="auto-awesome" size={20} color="#070b14" />
+                    <Text style={styles.generateButtonText}>
+                      توليد {genCount} كود الآن ({genDuration} يوم)
+                    </Text>
+                  </>
+                )}
+              </Pressable>
+
+              {/* الأكواد المولدة حديثاً */}
+              {generatedBatch.length > 0 && (
+                <View style={styles.batchContainer}>
+                  <Text style={styles.batchTitle}>
+                    الأكواد التي تم توليدها حديثاً ({generatedBatch.length}):
+                  </Text>
+                  <View style={styles.batchList}>
+                    {generatedBatch.map((code) => (
+                      <View key={code} style={styles.batchItem}>
+                        <Text style={styles.batchCodeText}>{code}</Text>
+                        <Pressable
+                          style={[
+                            styles.copyPill,
+                            copiedCode === code && styles.copyPillSuccess,
+                          ]}
+                          onPress={() => copyToClipboard(code)}
+                        >
+                          <MaterialIcons
+                            name={copiedCode === code ? 'check' : 'content-copy'}
+                            size={16}
+                            color={copiedCode === code ? '#10b981' : '#38bdf8'}
+                          />
+                          <Text
+                            style={[
+                              styles.copyPillText,
+                              copiedCode === code && styles.copyPillTextSuccess,
+                            ]}
+                          >
+                            {copiedCode === code ? 'تم النسخ!' : 'نسخ الكود'}
+                          </Text>
+                        </Pressable>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
+            </View>
+
+            {/* أدوات البحث والفلترة */}
+            <View style={styles.filterSection}>
+              {/* فلتر الموزع */}
+              <View style={styles.resellerFilterBar}>
+                <Text style={styles.filterHeaderLabel}>عرض أكواد:</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <Pressable
+                    style={[
+                      styles.resellerPill,
+                      filterReseller === 'all' && styles.resellerPillActive,
+                    ]}
+                    onPress={() => {
+                      setFilterReseller('all');
+                      fetchCodes('all');
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.resellerPillText,
+                        filterReseller === 'all' && styles.resellerPillTextActive,
+                      ]}
+                    >
+                      كافة الأكواد
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[
+                      styles.resellerPill,
+                      filterReseller === 'admin' && styles.resellerPillActive,
+                    ]}
+                    onPress={() => {
+                      setFilterReseller('admin');
+                      fetchCodes('admin');
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.resellerPillText,
+                        filterReseller === 'admin' && styles.resellerPillTextActive,
+                      ]}
+                    >
+                      أكواد الإدارة فقط
+                    </Text>
+                  </Pressable>
+                  {resellers.map((r) => (
+                    <Pressable
+                      key={r.id}
+                      style={[
+                        styles.resellerPill,
+                        filterReseller === String(r.id) && styles.resellerPillActive,
+                      ]}
+                      onPress={() => {
+                        setFilterReseller(String(r.id));
+                        fetchCodes(String(r.id));
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.resellerPillText,
+                          filterReseller === String(r.id) && styles.resellerPillTextActive,
+                        ]}
+                      >
+                        {r.name} ({r.stats?.total || 0})
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              </View>
+
+              {/* شريط البحث */}
+              <View style={styles.searchBar}>
+                <MaterialIcons name="search" size={20} color="#94a3b8" />
+                <TextInput
+                  style={styles.searchInput}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholder="ابحث عن كود، ملاحظة، أو اسم موزع..."
+                  placeholderTextColor="#64748b"
+                />
+                {searchQuery.length > 0 && (
+                  <Pressable onPress={() => setSearchQuery('')}>
+                    <MaterialIcons name="close" size={18} color="#94a3b8" />
+                  </Pressable>
+                )}
+              </View>
+
+              {/* تبويبات حالة الكود */}
+              <View style={styles.statusTabs}>
+                {[
+                  { key: 'all', label: 'الكل' },
+                  { key: 'active', label: 'جارية' },
+                  { key: 'unused', label: 'غير مستخدمة' },
+                  { key: 'expired', label: 'منتهية' },
+                  { key: 'suspended', label: 'موقوفة' },
+                ].map((t) => (
+                  <Pressable
+                    key={t.key}
+                    style={[
+                      styles.statusTabPill,
+                      filterStatus === t.key && styles.statusTabPillActive,
+                    ]}
+                    onPress={() => setFilterStatus(t.key as any)}
+                  >
+                    <Text
+                      style={[
+                        styles.statusTabPillText,
+                        filterStatus === t.key && styles.statusTabPillTextActive,
+                      ]}
+                    >
+                      {t.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            {/* قائمة الأكواد */}
+            {isLoading ? (
+              <View style={styles.loadingBox}>
+                <ActivityIndicator size="large" color="#38bdf8" />
+                <Text style={styles.loadingText}>جاري جلب الأكواد...</Text>
+              </View>
+            ) : filteredCodes.length === 0 ? (
+              <View style={styles.emptyBox}>
+                <MaterialIcons name="inbox" size={48} color="#475569" />
+                <Text style={styles.emptyText}>لا توجد أكواد مطابقة لخيارات البحث الحالية</Text>
+              </View>
+            ) : (
+              <View style={styles.codesGrid}>
+                {filteredCodes.map((item) => {
+                  const statusColors: Record<string, { bg: string; text: string; label: string }> = {
+                    active: { bg: '#064e3b', text: '#34d399', label: 'نشط وجاري' },
+                    unused: { bg: '#451a03', text: '#fbbf24', label: 'غير مستخدم' },
+                    expired: { bg: '#1e293b', text: '#94a3b8', label: 'منتهي' },
+                    suspended: { bg: '#450a0a', text: '#f87171', label: 'موقوف' },
+                  };
+                  const curStatus = statusColors[item.status] || statusColors.unused;
+
+                  return (
+                    <View key={item.id} style={styles.codeCard}>
+                      <View style={styles.codeCardTop}>
+                        {/* الموزع المالك */}
+                        <View style={styles.ownerBadge}>
+                          <MaterialIcons
+                            name={item.resellerName ? 'store' : 'admin-panel-settings'}
+                            size={14}
+                            color={item.resellerName ? '#f59e0b' : '#38bdf8'}
+                          />
+                          <Text
+                            style={[
+                              styles.ownerBadgeText,
+                              { color: item.resellerName ? '#f59e0b' : '#38bdf8' },
+                            ]}
+                          >
+                            {item.resellerName ? `الموزع: ${item.resellerName}` : 'الإدارة'}
+                          </Text>
+                        </View>
+
+                        {/* شارة الحالة */}
+                        <View style={[styles.badge, { backgroundColor: curStatus.bg }]}>
+                          <Text style={[styles.badgeText, { color: curStatus.text }]}>
+                            {curStatus.label}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* الكود والنسخ */}
+                      <View style={styles.codeMainRow}>
+                        <Text style={styles.codeValueText}>{item.code}</Text>
+                        <Pressable
+                          style={[
+                            styles.copyIconBtn,
+                            copiedCode === item.code && styles.copyIconBtnSuccess,
+                          ]}
+                          onPress={() => copyToClipboard(item.code)}
+                        >
+                          <MaterialIcons
+                            name={copiedCode === item.code ? 'check' : 'content-copy'}
+                            size={18}
+                            color={copiedCode === item.code ? '#10b981' : '#38bdf8'}
+                          />
+                        </Pressable>
+                      </View>
+
+                      {/* التفاصيل */}
+                      <View style={styles.codeDetails}>
+                        <View style={styles.detailRow}>
+                          <MaterialIcons name="timer" size={16} color="#94a3b8" />
+                          <Text style={styles.detailLabel}>المدة:</Text>
+                          <Text style={styles.detailVal}>{item.durationDays} يوم</Text>
+                          {item.status === 'active' && (
+                            <Text style={styles.remainingVal}>
+                              (متبقي {item.remainingDays} يوم)
+                            </Text>
+                          )}
+                        </View>
+
+                        <View style={styles.detailRow}>
+                          <MaterialIcons name="devices" size={16} color="#94a3b8" />
+                          <Text style={styles.detailLabel}>الأجهزة:</Text>
+                          <Text style={styles.detailVal}>
+                            {item.deviceCount} من {item.maxDevices} مسموح
+                          </Text>
+                        </View>
+
+                        {item.note ? (
+                          <View style={styles.detailRow}>
+                            <MaterialIcons name="notes" size={16} color="#94a3b8" />
+                            <Text style={styles.detailLabel}>ملاحظة:</Text>
+                            <Text style={styles.detailVal}>{item.note}</Text>
+                          </View>
+                        ) : null}
+
+                        {item.expiresAt ? (
+                          <View style={styles.detailRow}>
+                            <MaterialIcons name="event" size={16} color="#94a3b8" />
+                            <Text style={styles.detailLabel}>الانتهاء:</Text>
+                            <Text style={styles.detailVal}>
+                              {new Date(item.expiresAt).toLocaleDateString('ar-EG')}
+                            </Text>
+                          </View>
+                        ) : null}
+                      </View>
+
+                      {/* أزرار الإجراءات السريعة */}
+                      <View style={styles.codeActions}>
+                        <Pressable
+                          style={styles.actionBtnSmall}
+                          onPress={() => handleUpdateCode(item.code, { addDays: 30 })}
+                          disabled={actionLoading === item.code}
+                        >
+                          <MaterialIcons name="add-alarm" size={14} color="#38bdf8" />
+                          <Text style={styles.actionBtnSmallText}>+30 يوم</Text>
+                        </Pressable>
+
+                        {item.status === 'suspended' ? (
+                          <Pressable
+                            style={[styles.actionBtnSmall, { borderColor: '#10b981' }]}
+                            onPress={() => handleUpdateCode(item.code, { status: 'active' })}
+                            disabled={actionLoading === item.code}
+                          >
+                            <MaterialIcons name="play-arrow" size={14} color="#10b981" />
+                            <Text style={[styles.actionBtnSmallText, { color: '#10b981' }]}>
+                              تفعيل
+                            </Text>
+                          </Pressable>
+                        ) : (
+                          <Pressable
+                            style={[styles.actionBtnSmall, { borderColor: '#ef4444' }]}
+                            onPress={() => handleUpdateCode(item.code, { status: 'suspended' })}
+                            disabled={actionLoading === item.code}
+                          >
+                            <MaterialIcons name="pause" size={14} color="#ef4444" />
+                            <Text style={[styles.actionBtnSmallText, { color: '#ef4444' }]}>
+                              إيقاف
+                            </Text>
+                          </Pressable>
+                        )}
+
+                        <Pressable
+                          style={styles.actionBtnSmall}
+                          onPress={() => handleUpdateCode(item.code, { resetDevices: true })}
+                          disabled={actionLoading === item.code}
+                        >
+                          <MaterialIcons name="device-reset" size={14} color="#f59e0b" />
+                          <Text style={[styles.actionBtnSmallText, { color: '#f59e0b' }]}>
+                            تصفير الأجهزة
+                          </Text>
+                        </Pressable>
+
+                        <Pressable
+                          style={[styles.actionBtnSmall, { borderColor: '#b91c1c' }]}
+                          onPress={() => handleDeleteCode(item.code)}
+                          disabled={actionLoading === item.code}
+                        >
+                          <MaterialIcons name="delete" size={14} color="#f87171" />
+                          <Text style={[styles.actionBtnSmallText, { color: '#f87171' }]}>حذف</Text>
+                        </Pressable>
+                      </View>
+                    </View>
                   );
                 })}
               </View>
-            </View>
-          )}
-        </View>
-
-        {/* 3. شريط البحث والفلترة */}
-        <View style={styles.filterSection}>
-          <View style={styles.filterTabs}>
-            {[
-              { id: 'all', label: `الكل (${stats.total})` },
-              { id: 'active', label: `النشطة (${stats.active})` },
-              { id: 'unused', label: `غير المستخدمة (${stats.unused})` },
-              { id: 'expired', label: `المنتهية (${stats.expired})` },
-              { id: 'suspended', label: `الموقوفة (${stats.suspended})` },
-            ].map((tab) => (
-              <Pressable
-                key={`tab-${tab.id}`}
-                onPress={() => setFilterTab(tab.id as any)}
-                style={[
-                  styles.filterTabBtn,
-                  filterTab === tab.id && styles.filterTabBtnActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.filterTabText,
-                    filterTab === tab.id && styles.filterTabTextActive,
-                  ]}
-                >
-                  {tab.label}
+            )}
+          </>
+        ) : (
+          /* ==========================================
+             تبويب شبكة الموزعين (Resellers)
+             ========================================== */
+          <View style={styles.resellersTabContainer}>
+            <View style={styles.resellersHeaderRow}>
+              <View>
+                <Text style={styles.sectionHeaderTitle}>الموزعون والوكلاء المعتمدون</Text>
+                <Text style={styles.sectionHeaderSub}>
+                  إدارة صلاحيات الموزعين ومتابعة مبيعاتهم واستهلاك الأكواد لكل موزع لحظياً.
                 </Text>
+              </View>
+
+              <Pressable
+                style={styles.addResellerBtn}
+                onPress={() => {
+                  setNewResellerModalError(null);
+                  setShowAddResellerModal(true);
+                }}
+              >
+                <MaterialIcons name="person-add" size={20} color="#070b14" />
+                <Text style={styles.addResellerBtnText}>إضافة موزع جديد</Text>
               </Pressable>
-            ))}
-          </View>
-
-          <View style={styles.searchBox}>
-            <MaterialIcons name="search" size={20} color="#64748b" />
-            <TextInput
-              style={styles.searchInput}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              placeholder="البحث بالكود أو اسم المشترك..."
-              placeholderTextColor="#64748b"
-            />
-            {searchQuery ? (
-              <Pressable onPress={() => setSearchQuery('')}>
-                <MaterialIcons name="close" size={18} color="#94a3b8" />
-              </Pressable>
-            ) : null}
-          </View>
-        </View>
-
-        {/* 4. قائمة وجدول الأكواد */}
-        <View style={styles.tableCard}>
-          {isLoading ? (
-            <View style={{ padding: 40, alignItems: 'center' }}>
-              <ActivityIndicator size="large" color="#38bdf8" />
-              <Text style={{ color: '#94a3b8', marginTop: 12 }}>جاري تحميل الأكواد...</Text>
             </View>
-          ) : filteredCodes.length === 0 ? (
-            <View style={{ padding: 40, alignItems: 'center' }}>
-              <MaterialIcons name="inbox" size={48} color="#334155" />
-              <Text style={{ color: '#64748b', marginTop: 12, fontSize: 16 }}>
-                لا توجد أكواد مطابقة
-              </Text>
-            </View>
-          ) : (
-            filteredCodes.map((item) => {
-              const isItemLoading = actionLoading === item.code;
-              const isCopied = copiedCode === item.code;
 
-              return (
-                <View key={`code-row-${item.id}`} style={styles.codeRow}>
-                  {/* معلومات الكود الأساسية */}
-                  <View style={styles.codeMainInfo}>
-                    <View style={styles.codeTitleRow}>
-                      <Text style={styles.codeText}>{item.code}</Text>
-                      <Pressable
-                        onPress={() => copyToClipboard(item.code)}
-                        style={styles.miniCopyBtn}
-                      >
-                        <MaterialIcons
-                          name={isCopied ? 'check' : 'content-copy'}
-                          size={15}
-                          color={isCopied ? '#10b981' : '#38bdf8'}
-                        />
-                        <Text style={[styles.miniCopyText, isCopied && { color: '#10b981' }]}>
-                          {isCopied ? 'تم النسخ' : 'نسخ'}
-                        </Text>
-                      </Pressable>
-
-                      {/* شارة الحالة */}
-                      <View
-                        style={[
-                          styles.statusBadge,
-                          item.status === 'active' && styles.statusBadgeActive,
-                          item.status === 'unused' && styles.statusBadgeUnused,
-                          item.status === 'expired' && styles.statusBadgeExpired,
-                          item.status === 'suspended' && styles.statusBadgeSuspended,
-                        ]}
-                      >
-                        <Text style={styles.statusBadgeText}>
-                          {item.status === 'active'
-                            ? 'نشط'
-                            : item.status === 'unused'
-                            ? 'غير مستخدم'
-                            : item.status === 'expired'
-                            ? 'منتهي'
-                            : 'موقوف'}
-                        </Text>
+            {resellersLoading ? (
+              <View style={styles.loadingBox}>
+                <ActivityIndicator size="large" color="#f59e0b" />
+                <Text style={styles.loadingText}>جاري تحميل شبكة الموزعين...</Text>
+              </View>
+            ) : resellers.length === 0 ? (
+              <View style={styles.emptyBox}>
+                <MaterialIcons name="group-off" size={48} color="#475569" />
+                <Text style={styles.emptyText}>لم يتم إضافة أي موزع حتى الآن</Text>
+                <Pressable
+                  style={[styles.addResellerBtn, { marginTop: 16 }]}
+                  onPress={() => setShowAddResellerModal(true)}
+                >
+                  <MaterialIcons name="person-add" size={20} color="#070b14" />
+                  <Text style={styles.addResellerBtnText}>إضافة أول موزع</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <View style={styles.resellersGrid}>
+                {resellers.map((r) => {
+                  const isActive = r.status === 'active';
+                  return (
+                    <View key={r.id} style={styles.resellerCard}>
+                      <View style={styles.resellerCardHeader}>
+                        <View style={styles.resellerAvatar}>
+                          <MaterialIcons name="storefront" size={28} color="#f59e0b" />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <View style={styles.resellerNameRow}>
+                            <Text style={styles.resellerNameText}>{r.name}</Text>
+                            <View
+                              style={[
+                                styles.resellerStatusBadge,
+                                { backgroundColor: isActive ? '#064e3b' : '#450a0a' },
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.resellerStatusText,
+                                  { color: isActive ? '#34d399' : '#f87171' },
+                                ]}
+                              >
+                                {isActive ? 'نشط' : 'موقوف'}
+                              </Text>
+                            </View>
+                          </View>
+                          <Text style={styles.resellerUsernameText}>@{r.username}</Text>
+                          {r.email && <Text style={styles.resellerEmailText}>{r.email}</Text>}
+                        </View>
                       </View>
-                    </View>
 
-                    {item.note ? (
-                      <Text style={styles.codeNoteText}>{item.note}</Text>
-                    ) : null}
+                      {r.note ? (
+                        <View style={styles.resellerNoteBox}>
+                          <MaterialIcons name="info-outline" size={16} color="#94a3b8" />
+                          <Text style={styles.resellerNoteText}>{r.note}</Text>
+                        </View>
+                      ) : null}
 
-                    <View style={styles.codeMetaRow}>
-                      <Text style={styles.codeMetaText}>
-                        المدة: {item.durationDays} يوم
-                      </Text>
-                      <Text style={styles.codeMetaDivider}>•</Text>
-                      <Text style={styles.codeMetaText}>
-                        الأجهزة: {item.deviceCount} / {item.maxDevices}
-                      </Text>
-                      <Text style={styles.codeMetaDivider}>•</Text>
-                      <Text
-                        style={[
-                          styles.codeMetaText,
-                          item.remainingDays <= 5 && item.status === 'active'
-                            ? { color: '#f59e0b', fontWeight: 'bold' }
-                            : {},
-                        ]}
-                      >
-                        {item.status === 'unused'
-                          ? 'لم يُفعّل بعد'
-                          : `المتبقي: ${item.remainingDays} يوم`}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* أزرار الإجراءات السريعة */}
-                  <View style={styles.actionsRow}>
-                    {isItemLoading ? (
-                      <ActivityIndicator size="small" color="#38bdf8" />
-                    ) : (
-                      <>
-                        {/* تمديد +30 يوم */}
-                        <Pressable
-                          onPress={() => handleUpdateCode(item.code, { addDays: 30 })}
-                          style={({ focused }) => [styles.actionBtn, focused && styles.btnFocused]}
-                        >
-                          <MaterialIcons name="more-time" size={16} color="#10b981" />
-                          <Text style={[styles.actionBtnText, { color: '#10b981' }]}>
-                            +30 يوم
+                      {/* إحصائيات الموزع */}
+                      <View style={styles.resellerStatsBox}>
+                        <View style={styles.resellerStatItem}>
+                          <Text style={styles.resellerStatVal}>{r.stats?.total || 0}</Text>
+                          <Text style={styles.resellerStatLbl}>إجمالي الأكواد</Text>
+                        </View>
+                        <View style={styles.resellerStatItem}>
+                          <Text style={[styles.resellerStatVal, { color: '#10b981' }]}>
+                            {r.stats?.active || 0}
                           </Text>
+                          <Text style={styles.resellerStatLbl}>جارية</Text>
+                        </View>
+                        <View style={styles.resellerStatItem}>
+                          <Text style={[styles.resellerStatVal, { color: '#fbbf24' }]}>
+                            {r.stats?.unused || 0}
+                          </Text>
+                          <Text style={styles.resellerStatLbl}>غير مستخدمة</Text>
+                        </View>
+                        <View style={styles.resellerStatItem}>
+                          <Text style={[styles.resellerStatVal, { color: '#94a3b8' }]}>
+                            {r.stats?.expired || 0}
+                          </Text>
+                          <Text style={styles.resellerStatLbl}>منتهية</Text>
+                        </View>
+                        <View style={styles.resellerStatItem}>
+                          <Text style={[styles.resellerStatVal, { color: '#f87171' }]}>
+                            {r.stats?.suspended || 0}
+                          </Text>
+                          <Text style={styles.resellerStatLbl}>موقوفة</Text>
+                        </View>
+                      </View>
+
+                      {/* أزرار الإجراءات على الموزع */}
+                      <View style={styles.resellerActionsRow}>
+                        <Pressable
+                          style={styles.resellerActionBtnPrimary}
+                          onPress={() => viewResellerCodes(r.id)}
+                        >
+                          <MaterialIcons name="list-alt" size={16} color="#38bdf8" />
+                          <Text style={styles.resellerActionBtnPrimaryText}>عرض الأكواد</Text>
                         </Pressable>
 
-                        {/* فك الأجهزة */}
                         <Pressable
-                          onPress={() => handleUpdateCode(item.code, { resetDevices: true })}
-                          style={({ focused }) => [styles.actionBtn, focused && styles.btnFocused]}
+                          style={styles.resellerActionBtnSecondary}
+                          onPress={() => {
+                            setEditingReseller(r);
+                            setEditResellerName(r.name);
+                            setEditResellerUsername(r.username);
+                            setEditResellerEmail(r.email || '');
+                            setEditResellerPassword('');
+                            setEditResellerNote(r.note || '');
+                            setEditResellerStatus(r.status);
+                            setEditResellerModalError(null);
+                            setShowEditResellerModal(true);
+                          }}
                         >
-                          <MaterialIcons name="phonelink-erase" size={16} color="#38bdf8" />
-                          <Text style={[styles.actionBtnText, { color: '#38bdf8' }]}>
-                            فك الأجهزة
-                          </Text>
+                          <MaterialIcons name="edit" size={16} color="#e2e8f0" />
+                          <Text style={styles.resellerActionBtnSecondaryText}>تعديل البيانات</Text>
                         </Pressable>
 
-                        {/* إيقاف / تفعيل */}
                         <Pressable
-                          onPress={() =>
-                            handleUpdateCode(item.code, {
-                              status: item.status === 'suspended' ? 'active' : 'suspended',
-                            })
-                          }
-                          style={({ focused }) => [styles.actionBtn, focused && styles.btnFocused]}
+                          style={[
+                            styles.resellerActionBtnSecondary,
+                            { borderColor: isActive ? '#ef4444' : '#10b981' },
+                          ]}
+                          onPress={() => handleToggleResellerStatus(r)}
                         >
                           <MaterialIcons
-                            name={item.status === 'suspended' ? 'play-arrow' : 'pause'}
+                            name={isActive ? 'block' : 'check-circle'}
                             size={16}
-                            color="#f59e0b"
+                            color={isActive ? '#f87171' : '#34d399'}
                           />
-                          <Text style={[styles.actionBtnText, { color: '#f59e0b' }]}>
-                            {item.status === 'suspended' ? 'تفعيل' : 'إيقاف'}
+                          <Text
+                            style={[
+                              styles.resellerActionBtnSecondaryText,
+                              { color: isActive ? '#f87171' : '#34d399' },
+                            ]}
+                          >
+                            {isActive ? 'إيقاف الحساب' : 'تفعيل الحساب'}
                           </Text>
                         </Pressable>
-
-                        {/* حذف الكود */}
-                        <Pressable
-                          onPress={() => handleDeleteCode(item.code)}
-                          style={({ focused }) => [
-                            styles.actionBtn,
-                            styles.deleteBtn,
-                            focused && styles.btnFocused,
-                          ]}
-                        >
-                          <MaterialIcons name="delete-outline" size={16} color="#ef4444" />
-                          <Text style={[styles.actionBtnText, { color: '#ef4444' }]}>
-                            حذف
-                          </Text>
-                        </Pressable>
-                      </>
-                    )}
-                  </View>
-                </View>
-              );
-            })
-          )}
-        </View>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+        )}
       </ScrollView>
+
+      {/* ==========================================
+          مودال إضافة موزع جديد
+          ========================================== */}
+      <Modal visible={showAddResellerModal} transparent animationType="fade">
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHeaderTitleRow}>
+                <MaterialIcons name="person-add" size={24} color="#f59e0b" />
+                <Text style={styles.modalTitle}>إضافة موزع جديد</Text>
+              </View>
+              <Pressable onPress={() => setShowAddResellerModal(false)}>
+                <MaterialIcons name="close" size={22} color="#94a3b8" />
+              </Pressable>
+            </View>
+
+            <ScrollView style={{ maxHeight: 420 }}>
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>اسم الموزع / المحل:</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={newResellerName}
+                  onChangeText={setNewResellerName}
+                  placeholder="مثال: موزع الرياض الرقمي"
+                  placeholderTextColor="#64748b"
+                />
+              </View>
+
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>اسم المستخدم لتسجيل الدخول:</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={newResellerUsername}
+                  onChangeText={setNewResellerUsername}
+                  placeholder="مثال: riyadh_dealer"
+                  placeholderTextColor="#64748b"
+                  autoCapitalize="none"
+                />
+              </View>
+
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>البريد الإلكتروني (اختياري):</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={newResellerEmail}
+                  onChangeText={setNewResellerEmail}
+                  placeholder="dealer@domain.com"
+                  placeholderTextColor="#64748b"
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                />
+              </View>
+
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>كلمة المرور (6 أحرف فأكثر):</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={newResellerPassword}
+                  onChangeText={setNewResellerPassword}
+                  placeholder="كلمة مرور الدخول لبوابة الموزع"
+                  placeholderTextColor="#64748b"
+                  secureTextEntry
+                />
+              </View>
+
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>ملاحظات إضافية عن الموزع:</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={newResellerNote}
+                  onChangeText={setNewResellerNote}
+                  placeholder="مثال: موزع معتمد في منطقة الرياض، هاتف: 05xxxx"
+                  placeholderTextColor="#64748b"
+                />
+              </View>
+
+              {newResellerModalError && (
+                <View style={styles.modalErrorBox}>
+                  <MaterialIcons name="error" size={16} color="#ef4444" />
+                  <Text style={styles.modalErrorText}>{newResellerModalError}</Text>
+                </View>
+              )}
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <Pressable
+                style={styles.modalCancelBtn}
+                onPress={() => setShowAddResellerModal(false)}
+              >
+                <Text style={styles.modalCancelBtnText}>إلغاء</Text>
+              </Pressable>
+
+              <Pressable
+                style={styles.modalConfirmBtn}
+                onPress={handleCreateResellerSubmit}
+                disabled={actionLoading === 'create_reseller'}
+              >
+                {actionLoading === 'create_reseller' ? (
+                  <ActivityIndicator color="#070b14" size="small" />
+                ) : (
+                  <Text style={styles.modalConfirmBtnText}>إنشاء الموزع</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ==========================================
+          مودال تعديل بيانات موزع
+          ========================================== */}
+      <Modal visible={showEditResellerModal} transparent animationType="fade">
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHeaderTitleRow}>
+                <MaterialIcons name="edit" size={24} color="#38bdf8" />
+                <Text style={styles.modalTitle}>تعديل بيانات الموزع</Text>
+              </View>
+              <Pressable onPress={() => setShowEditResellerModal(false)}>
+                <MaterialIcons name="close" size={22} color="#94a3b8" />
+              </Pressable>
+            </View>
+
+            <ScrollView style={{ maxHeight: 420 }}>
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>اسم الموزع:</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={editResellerName}
+                  onChangeText={setEditResellerName}
+                />
+              </View>
+
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>اسم المستخدم:</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={editResellerUsername}
+                  onChangeText={setEditResellerUsername}
+                  autoCapitalize="none"
+                />
+              </View>
+
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>البريد الإلكتروني:</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={editResellerEmail}
+                  onChangeText={setEditResellerEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                />
+              </View>
+
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>كلمة مرور جديدة (اتركها فارغة للإبقاء على الحالية):</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={editResellerPassword}
+                  onChangeText={setEditResellerPassword}
+                  placeholder="أدخل كلمة مرور جديدة للتغيير"
+                  placeholderTextColor="#64748b"
+                  secureTextEntry
+                />
+              </View>
+
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>حالة الحساب:</Text>
+                <View style={styles.pillsRow}>
+                  <Pressable
+                    style={[
+                      styles.selectorPill,
+                      editResellerStatus === 'active' && styles.selectorPillActive,
+                    ]}
+                    onPress={() => setEditResellerStatus('active')}
+                  >
+                    <Text
+                      style={[
+                        styles.selectorPillText,
+                        editResellerStatus === 'active' && styles.selectorPillTextActive,
+                      ]}
+                    >
+                      حساب نشط
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={[
+                      styles.selectorPill,
+                      editResellerStatus === 'suspended' && [
+                        styles.selectorPillActive,
+                        { borderColor: '#ef4444', backgroundColor: '#450a0a' },
+                      ],
+                    ]}
+                    onPress={() => setEditResellerStatus('suspended')}
+                  >
+                    <Text
+                      style={[
+                        styles.selectorPillText,
+                        editResellerStatus === 'suspended' && { color: '#f87171' },
+                      ]}
+                    >
+                      حساب موقوف
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>الملاحظات:</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={editResellerNote}
+                  onChangeText={setEditResellerNote}
+                />
+              </View>
+
+              {editResellerModalError && (
+                <View style={styles.modalErrorBox}>
+                  <MaterialIcons name="error" size={16} color="#ef4444" />
+                  <Text style={styles.modalErrorText}>{editResellerModalError}</Text>
+                </View>
+              )}
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <Pressable
+                style={styles.modalCancelBtn}
+                onPress={() => setShowEditResellerModal(false)}
+              >
+                <Text style={styles.modalCancelBtnText}>إلغاء</Text>
+              </Pressable>
+
+              <Pressable
+                style={styles.modalConfirmBtn}
+                onPress={handleEditResellerSubmit}
+                disabled={actionLoading === 'edit_reseller'}
+              >
+                {actionLoading === 'edit_reseller' ? (
+                  <ActivityIndicator color="#070b14" size="small" />
+                ) : (
+                  <Text style={styles.modalConfirmBtnText}>حفظ التعديلات</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -762,29 +1649,32 @@ export default function AdminScreen(): React.JSX.Element {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#090d16',
+    backgroundColor: '#070b14',
   },
-  mainScroll: {
+  scrollArea: {
+    flex: 1,
+  },
+  scrollContent: {
     padding: 24,
-    maxWidth: 1200,
-    width: '100%',
-    alignSelf: 'center',
+    paddingBottom: 64,
   },
+
+  // تسجيل الدخول
   loginContainer: {
     flex: 1,
-    backgroundColor: '#090d16',
+    backgroundColor: '#070b14',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 24,
+    padding: 20,
   },
   loginCard: {
     width: '100%',
-    maxWidth: 420,
-    backgroundColor: '#0f172a',
-    borderRadius: 24,
+    maxWidth: 440,
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    borderRadius: 20,
     padding: 32,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: 'rgba(56, 189, 248, 0.2)',
     alignItems: 'center',
   },
   loginIconCircle: {
@@ -794,104 +1684,139 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(245, 158, 11, 0.15)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 20,
   },
   loginTitle: {
-    color: '#f8fafc',
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '800',
+    color: '#ffffff',
     marginBottom: 8,
+    textAlign: 'center',
   },
   loginSub: {
+    fontSize: 14,
     color: '#94a3b8',
-    fontSize: 13,
     textAlign: 'center',
-    lineHeight: 20,
     marginBottom: 24,
+    lineHeight: 22,
   },
   loginInputWrapper: {
+    width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#020617',
-    borderWidth: 1.5,
+    backgroundColor: '#0f172a',
+    borderRadius: 12,
+    borderWidth: 1,
     borderColor: '#334155',
-    borderRadius: 14,
     paddingHorizontal: 14,
-    width: '100%',
-    marginBottom: 14,
+    height: 50,
   },
   loginInput: {
     flex: 1,
-    height: 48,
     color: '#ffffff',
     fontSize: 15,
-    paddingHorizontal: 8,
+    paddingHorizontal: 10,
     textAlign: 'right',
   },
-  loginErrorText: {
+  loginButton: {
+    width: '100%',
+    height: 50,
+    backgroundColor: '#38bdf8',
+    borderRadius: 12,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 20,
+  },
+  loginButtonText: {
+    color: '#070b14',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  backToHomeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 20,
+  },
+  backToHomeText: {
+    color: '#94a3b8',
+    fontSize: 14,
+  },
+  errorBox: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 12,
+  },
+  errorText: {
     color: '#ef4444',
     fontSize: 13,
-    fontWeight: '700',
-    marginBottom: 12,
+    flex: 1,
+    textAlign: 'right',
   },
-  loginBtn: {
-    backgroundColor: '#f59e0b',
-    borderRadius: 14,
-    paddingVertical: 14,
-    width: '100%',
-    alignItems: 'center',
-  },
-  loginBtnText: {
-    color: '#000000',
-    fontSize: 15,
-    fontWeight: '800',
-  },
-  topBar: {
+
+  // الشريط العلوي
+  topHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#0f172a',
-    borderRadius: 20,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: '#1e293b',
-    marginBottom: 20,
+    paddingHorizontal: 24,
+    paddingVertical: 18,
+    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1e293b',
     flexWrap: 'wrap',
-    gap: 16,
-  },
-  topBarRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: 12,
   },
-  dashboardTitle: {
-    color: '#f8fafc',
-    fontSize: 18,
-    fontWeight: '800',
+  headerTitleRow: {
+    alignItems: 'flex-start',
+    gap: 4,
   },
-  dashboardSub: {
-    color: '#64748b',
+  headerBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  headerBadgeText: {
+    color: '#f59e0b',
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
   },
-  topBarActions: {
+  headerMainTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
   },
-  topActionBtn: {
+  refreshBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#1e293b',
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    borderWidth: 1,
+    borderColor: '#38bdf8',
+    paddingHorizontal: 12,
     paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 10,
+    borderRadius: 8,
   },
-  topActionText: {
-    color: '#ffffff',
+  refreshBtnText: {
+    color: '#38bdf8',
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '600',
   },
   logoutBtn: {
     flexDirection: 'row',
@@ -899,371 +1824,733 @@ const styles = StyleSheet.create({
     gap: 6,
     backgroundColor: 'rgba(239, 68, 68, 0.1)',
     borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.3)',
+    borderColor: '#ef4444',
+    paddingHorizontal: 12,
     paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 10,
+    borderRadius: 8,
   },
-  statusBanner: {
+  logoutBtnText: {
+    color: '#ef4444',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+
+  // تبويبات التنقل
+  mainNavTabs: {
+    flexDirection: 'row',
+    backgroundColor: '#0b1120',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1e293b',
+    paddingHorizontal: 24,
+    gap: 12,
+  },
+  mainNavTab: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: 'rgba(56, 189, 248, 0.15)',
-    borderWidth: 1,
-    borderColor: '#38bdf8',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderBottomWidth: 3,
+    borderBottomColor: 'transparent',
   },
-  statusBannerText: {
+  mainNavTabActive: {
+    borderBottomColor: '#38bdf8',
+  },
+  mainNavTabText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#94a3b8',
+  },
+  mainNavTabTextActive: {
+    color: '#ffffff',
+  },
+
+  // شريط الحالة
+  statusBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(56, 189, 248, 0.25)',
+  },
+  statusBarText: {
     color: '#38bdf8',
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '600',
+    flex: 1,
+    textAlign: 'right',
   },
+
+  // شبكة الإحصائيات
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
-    marginBottom: 20,
+    gap: 16,
+    marginBottom: 24,
   },
   statCard: {
     flex: 1,
-    minWidth: 140,
+    minWidth: 160,
+    backgroundColor: '#0f172a',
+    borderRadius: 14,
+    padding: 16,
+    borderTopWidth: 4,
+    borderWidth: 1,
+    borderColor: '#1e293b',
+  },
+  statLabel: {
+    fontSize: 13,
+    color: '#94a3b8',
+    marginBottom: 6,
+    textAlign: 'right',
+  },
+  statValue: {
+    fontSize: 26,
+    fontWeight: '800',
+    textAlign: 'right',
+  },
+
+  // قسم النموذج
+  cardSection: {
+    backgroundColor: '#0f172a',
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#1e293b',
+    marginBottom: 24,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 16,
+  },
+  cardTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  formGridWide: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+  },
+  formGridCol: {
+    flexDirection: 'column',
+    gap: 14,
+  },
+  formGroup: {
+    flex: 1,
+    minWidth: 260,
+    marginBottom: 12,
+  },
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#cbd5e1',
+    marginBottom: 8,
+    textAlign: 'right',
+  },
+  pillsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  selectorPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: '#1e293b',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  selectorPillSmall: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#1e293b',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  selectorPillActive: {
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    borderColor: '#38bdf8',
+  },
+  selectorPillText: {
+    color: '#94a3b8',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  selectorPillTextActive: {
+    color: '#38bdf8',
+    fontWeight: '700',
+  },
+  textInput: {
+    backgroundColor: '#1e293b',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#334155',
+    paddingHorizontal: 14,
+    height: 44,
+    color: '#ffffff',
+    fontSize: 14,
+    textAlign: 'right',
+  },
+  generateButton: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#38bdf8',
+    borderRadius: 10,
+    height: 48,
+    marginTop: 8,
+  },
+  generateButtonText: {
+    color: '#070b14',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+
+  // دفعة الأكواد
+  batchContainer: {
+    marginTop: 20,
+    padding: 16,
+    backgroundColor: '#1e293b',
+    borderRadius: 12,
+  },
+  batchTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#38bdf8',
+    marginBottom: 10,
+    textAlign: 'right',
+  },
+  batchList: {
+    gap: 8,
+  },
+  batchItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#0f172a',
+    padding: 10,
+    borderRadius: 8,
+  },
+  batchCodeText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#ffffff',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    letterSpacing: 1.5,
+  },
+  copyPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  copyPillSuccess: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+  },
+  copyPillText: {
+    color: '#38bdf8',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  copyPillTextSuccess: {
+    color: '#10b981',
+  },
+
+  // الفلاتر
+  filterSection: {
     backgroundColor: '#0f172a',
     borderRadius: 16,
     padding: 16,
     borderWidth: 1,
     borderColor: '#1e293b',
-    borderLeftWidth: 4,
-  },
-  statLabel: {
-    color: '#94a3b8',
-    fontSize: 12,
-    fontWeight: '700',
-    marginBottom: 6,
-  },
-  statValue: {
-    fontSize: 26,
-    fontWeight: '900',
-  },
-  sectionCard: {
-    backgroundColor: '#0f172a',
-    borderRadius: 20,
-    padding: 22,
-    borderWidth: 1,
-    borderColor: '#1e293b',
     marginBottom: 20,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 16,
-  },
-  sectionTitle: {
-    color: '#f8fafc',
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  generatorRow: {
-    gap: 16,
-  },
-  genCol: {
-    gap: 8,
-  },
-  fieldLabel: {
-    color: '#cbd5e1',
-    fontSize: 13,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  pillRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  pillBtn: {
-    backgroundColor: '#1e293b',
-    borderWidth: 1,
-    borderColor: '#334155',
-    paddingVertical: 7,
-    paddingHorizontal: 14,
-    borderRadius: 20,
-  },
-  pillBtnActive: {
-    backgroundColor: '#0284c7',
-    borderColor: '#38bdf8',
-  },
-  pillBtnText: {
-    color: '#94a3b8',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  pillBtnTextActive: {
-    color: '#ffffff',
-    fontWeight: '800',
-  },
-  genInputsRow: {
-    flexDirection: 'row',
-    gap: 12,
-    alignItems: 'center',
-    flexWrap: 'wrap',
-  },
-  textInput: {
-    backgroundColor: '#020617',
-    borderWidth: 1.5,
-    borderColor: '#334155',
-    borderRadius: 12,
-    height: 44,
-    color: '#ffffff',
-    paddingHorizontal: 14,
-    fontSize: 14,
-    textAlign: 'right',
-  },
-  primaryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#38bdf8',
-    height: 44,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-  },
-  primaryBtnText: {
-    color: '#000000',
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  btnFocused: {
-    transform: [{ scale: 1.04 }],
-    shadowColor: '#38bdf8',
-    shadowOpacity: 0.8,
-    shadowRadius: 10,
-  },
-  batchBox: {
-    marginTop: 18,
-    backgroundColor: 'rgba(2, 6, 23, 0.7)',
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  batchHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  batchTitle: {
-    color: '#10b981',
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  copyAllBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(56, 189, 248, 0.1)',
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-  },
-  copyAllText: {
-    color: '#38bdf8',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  batchList: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  batchChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#0f172a',
-    borderWidth: 1,
-    borderColor: '#334155',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-  },
-  batchChipCopied: {
-    borderColor: '#10b981',
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-  },
-  batchCodeText: {
-    color: '#f8fafc',
-    fontSize: 14,
-    fontWeight: 'bold',
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
-  },
-  filterSection: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-    flexWrap: 'wrap',
     gap: 12,
   },
-  filterTabs: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  filterTabBtn: {
-    backgroundColor: '#0f172a',
-    borderWidth: 1,
-    borderColor: '#1e293b',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-  },
-  filterTabBtnActive: {
-    backgroundColor: '#0284c7',
-    borderColor: '#38bdf8',
-  },
-  filterTabText: {
-    color: '#94a3b8',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  filterTabTextActive: {
-    color: '#ffffff',
-    fontWeight: '800',
-  },
-  searchBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#0f172a',
-    borderWidth: 1,
-    borderColor: '#1e293b',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    height: 38,
-    minWidth: 260,
-  },
-  searchInput: {
-    flex: 1,
-    color: '#ffffff',
-    fontSize: 13,
-    textAlign: 'right',
-  },
-  tableCard: {
-    backgroundColor: '#0f172a',
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#1e293b',
-    overflow: 'hidden',
-  },
-  codeRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1e293b',
-    flexWrap: 'wrap',
-    gap: 14,
-  },
-  codeMainInfo: {
-    flex: 1,
-    minWidth: 260,
-    gap: 6,
-  },
-  codeTitleRow: {
+  resellerFilterBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
   },
-  codeText: {
-    color: '#f8fafc',
-    fontSize: 16,
-    fontWeight: 'bold',
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
-    letterSpacing: 1,
-  },
-  miniCopyBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(56, 189, 248, 0.1)',
-    paddingVertical: 3,
-    paddingHorizontal: 8,
-    borderRadius: 6,
-  },
-  miniCopyText: {
-    color: '#38bdf8',
-    fontSize: 11,
+  filterHeaderLabel: {
+    fontSize: 13,
+    color: '#94a3b8',
     fontWeight: '700',
   },
-  statusBadge: {
-    paddingVertical: 3,
-    paddingHorizontal: 8,
-    borderRadius: 6,
+  resellerPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#1e293b',
+    borderRadius: 20,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: '#334155',
   },
-  statusBadgeActive: {
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-  },
-  statusBadgeUnused: {
-    backgroundColor: 'rgba(99, 102, 241, 0.15)',
-  },
-  statusBadgeExpired: {
-    backgroundColor: 'rgba(148, 163, 184, 0.15)',
-  },
-  statusBadgeSuspended: {
+  resellerPillActive: {
     backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    borderColor: '#f59e0b',
   },
-  statusBadgeText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#cbd5e1',
+  resellerPillText: {
+    color: '#94a3b8',
+    fontSize: 12,
+    fontWeight: '600',
   },
-  codeNoteText: {
-    color: '#cbd5e1',
+  resellerPillTextActive: {
+    color: '#f59e0b',
+    fontWeight: '700',
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1e293b',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 44,
+  },
+  searchInput: {
+    flex: 1,
+    color: '#ffffff',
+    fontSize: 14,
+    paddingHorizontal: 8,
+    textAlign: 'right',
+  },
+  statusTabs: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  statusTabPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 8,
+    backgroundColor: '#1e293b',
+  },
+  statusTabPillActive: {
+    backgroundColor: '#38bdf8',
+  },
+  statusTabPillText: {
+    color: '#94a3b8',
     fontSize: 13,
     fontWeight: '600',
   },
-  codeMetaRow: {
+  statusTabPillTextActive: {
+    color: '#070b14',
+    fontWeight: '800',
+  },
+
+  // شبكة الأكواد
+  codesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+  },
+  codeCard: {
+    flex: 1,
+    minWidth: 320,
+    backgroundColor: '#0f172a',
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#1e293b',
+  },
+  codeCardTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  ownerBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#1e293b',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  ownerBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  badge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  badgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  codeMainRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#1e293b',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 12,
+  },
+  codeValueText: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#ffffff',
+    letterSpacing: 1.5,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  copyIconBtn: {
+    padding: 6,
+    borderRadius: 6,
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+  },
+  copyIconBtnSuccess: {
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+  },
+  codeDetails: {
+    gap: 6,
+    marginBottom: 14,
+  },
+  detailRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
   },
-  codeMetaText: {
-    color: '#64748b',
+  detailLabel: {
     fontSize: 12,
+    color: '#94a3b8',
+  },
+  detailVal: {
+    fontSize: 12,
+    color: '#ffffff',
     fontWeight: '600',
   },
-  codeMetaDivider: {
-    color: '#334155',
+  remainingVal: {
+    fontSize: 12,
+    color: '#34d399',
+    fontWeight: '700',
   },
-  actionsRow: {
+  codeActions: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
     flexWrap: 'wrap',
+    gap: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#1e293b',
+    paddingTop: 12,
   },
-  actionBtn: {
+  actionBtnSmall: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#020617',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: '#334155',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+  },
+  actionBtnSmallText: {
+    fontSize: 11,
+    color: '#94a3b8',
+    fontWeight: '600',
+  },
+
+  // تبويب الموزعين
+  resellersTabContainer: {
+    gap: 20,
+  },
+  resellersHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 4,
+  },
+  sectionHeaderTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  sectionHeaderSub: {
+    fontSize: 13,
+    color: '#94a3b8',
+    marginTop: 2,
+  },
+  addResellerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#f59e0b',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  addResellerBtnText: {
+    color: '#070b14',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  resellersGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+  },
+  resellerCard: {
+    flex: 1,
+    minWidth: 340,
+    backgroundColor: '#0f172a',
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#1e293b',
+    gap: 14,
+  },
+  resellerCardHeader: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
+  },
+  resellerAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  resellerNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  resellerNameText: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  resellerStatusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  resellerStatusText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  resellerUsernameText: {
+    fontSize: 13,
+    color: '#38bdf8',
+    fontWeight: '600',
+  },
+  resellerEmailText: {
+    fontSize: 12,
+    color: '#94a3b8',
+  },
+  resellerNoteBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#1e293b',
+    padding: 8,
     borderRadius: 8,
   },
-  actionBtnText: {
+  resellerNoteText: {
+    fontSize: 12,
+    color: '#94a3b8',
+    flex: 1,
+    textAlign: 'right',
+  },
+  resellerStatsBox: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    backgroundColor: '#1e293b',
+    borderRadius: 12,
+    paddingVertical: 12,
+  },
+  resellerStatItem: {
+    alignItems: 'center',
+  },
+  resellerStatVal: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  resellerStatLbl: {
+    fontSize: 11,
+    color: '#94a3b8',
+    marginTop: 2,
+  },
+  resellerActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  resellerActionBtnPrimary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    borderWidth: 1,
+    borderColor: '#38bdf8',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  resellerActionBtnPrimaryText: {
+    color: '#38bdf8',
     fontSize: 12,
     fontWeight: '700',
   },
-  deleteBtn: {
-    borderColor: 'rgba(239, 68, 68, 0.3)',
-    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+  resellerActionBtnSecondary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#1e293b',
+    borderWidth: 1,
+    borderColor: '#334155',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  resellerActionBtnSecondaryText: {
+    color: '#e2e8f0',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+
+  // المودال
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 500,
+    backgroundColor: '#0f172a',
+    borderRadius: 20,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  modalHeaderTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  modalFieldGroup: {
+    marginBottom: 14,
+  },
+  modalLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#cbd5e1',
+    marginBottom: 6,
+    textAlign: 'right',
+  },
+  modalInput: {
+    backgroundColor: '#1e293b',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#334155',
+    paddingHorizontal: 14,
+    height: 44,
+    color: '#ffffff',
+    fontSize: 14,
+    textAlign: 'right',
+  },
+  modalErrorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 10,
+  },
+  modalErrorText: {
+    color: '#ef4444',
+    fontSize: 12,
+    flex: 1,
+    textAlign: 'right',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+    marginTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#1e293b',
+    paddingTop: 16,
+  },
+  modalCancelBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#1e293b',
+  },
+  modalCancelBtnText: {
+    color: '#94a3b8',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  modalConfirmBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#38bdf8',
+  },
+  modalConfirmBtnText: {
+    color: '#070b14',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+
+  // عام
+  loadingBox: {
+    padding: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  loadingText: {
+    color: '#94a3b8',
+    fontSize: 14,
+  },
+  emptyBox: {
+    padding: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    backgroundColor: '#0f172a',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#1e293b',
+  },
+  emptyText: {
+    color: '#94a3b8',
+    fontSize: 15,
   },
 });

@@ -33,6 +33,9 @@ export interface Env {
   DB: D1Database;
   JWT_SECRET?: string;
   ADMIN_SECRET?: string;
+  ADMIN_USERNAME?: string;
+  ADMIN_EMAIL?: string;
+  ADMIN_PASSWORD?: string;
   TMDB_API_KEY?: string;
   WYZIE_API_KEY?: string;
   OPENSUBTITLES_API_KEY?: string;
@@ -2370,28 +2373,300 @@ async function handleAuthMe(request: Request, env: Env): Promise<Response> {
   });
 }
 
-function checkAdminAuth(request: Request, env: Env): boolean {
-  const key = request.headers.get('X-Admin-Key') || '';
-  return key === (env.ADMIN_SECRET || DEFAULT_ADMIN_SECRET);
+async function hashPassword(password: string, salt?: string): Promise<string> {
+  const useSalt = salt || crypto.randomUUID().replace(/-/g, '').substring(0, 16);
+  const enc = new TextEncoder().encode(useSalt + ':' + password);
+  const buf = await crypto.subtle.digest('SHA-256', enc);
+  const hashHex = Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  return `${useSalt}:${hashHex}`;
 }
 
-async function handleAdminGetCodes(request: Request, env: Env): Promise<Response> {
-  if (!checkAdminAuth(request, env)) {
-    return jsonResponse({ error: 'مفتاح الإدارة غير مصرح به' }, 401);
+async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
+  if (!storedHash || !storedHash.includes(':')) return false;
+  const [salt, expectedHash] = storedHash.split(':');
+  const enc = new TextEncoder().encode(salt + ':' + password);
+  const buf = await crypto.subtle.digest('SHA-256', enc);
+  const actualHash = Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  return actualHash === expectedHash;
+}
+
+async function checkAdminAuth(request: Request, env: Env): Promise<{ authorized: boolean; error?: string }> {
+  // 1. مفتاح الإدارة المباشر (للتوافق العكسي)
+  const key = request.headers.get('X-Admin-Key') || '';
+  const adminSecret = env.ADMIN_SECRET || DEFAULT_ADMIN_SECRET;
+  if (key && key === adminSecret) {
+    return { authorized: true };
+  }
+
+  // 2. التحقق عبر رمز JWT للإدارة
+  const authHeader = request.headers.get('Authorization') || '';
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+  if (token) {
+    const payload = await verifyJwt(token, env.JWT_SECRET || DEFAULT_JWT_SECRET);
+    if (payload && payload.role === 'admin') {
+      return { authorized: true };
+    }
+  }
+
+  return { authorized: false, error: 'غير مصرح بالوصول للإدارة، يرجى تسجيل الدخول أولاً' };
+}
+
+async function handleAdminLogin(request: Request, env: Env): Promise<Response> {
+  try {
+    const body = (await request.json()) as any;
+    const identifier = (body.identifier || body.username || body.email || '').trim().toLowerCase();
+    const password = (body.password || '').trim();
+
+    if (!identifier || !password) {
+      return jsonResponse({ error: 'يرجى إدخال اسم المستخدم/البريد وكلمة المرور' }, 400);
+    }
+
+    const adminUser = (env.ADMIN_USERNAME || 'admin').toLowerCase();
+    const adminEmail = (env.ADMIN_EMAIL || 'admin@iptv.local').toLowerCase();
+    const adminPass = env.ADMIN_PASSWORD || env.ADMIN_SECRET || DEFAULT_ADMIN_SECRET;
+
+    const matchesUser = identifier === adminUser || identifier === adminEmail;
+    const matchesPass = password === adminPass;
+
+    if (!matchesUser || !matchesPass) {
+      return jsonResponse({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة' }, 401);
+    }
+
+    const token = await signJwt(
+      {
+        role: 'admin',
+        username: env.ADMIN_USERNAME || 'admin',
+        email: env.ADMIN_EMAIL || 'admin@iptv.local',
+        exp: Math.floor(Date.now() / 1000) + 86400 * 7, // 7 days
+      },
+      env.JWT_SECRET || DEFAULT_JWT_SECRET
+    );
+
+    return jsonResponse({
+      success: true,
+      token,
+      user: {
+        role: 'admin',
+        username: env.ADMIN_USERNAME || 'admin',
+        email: env.ADMIN_EMAIL || 'admin@iptv.local',
+      },
+    });
+  } catch (err: any) {
+    return jsonResponse({ error: 'خطأ أثناء تسجيل الدخول: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminGetResellers(request: Request, env: Env): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
   }
 
   if (!env.DB) {
     return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
   }
 
+  try {
+    const query = `
+      SELECT 
+        r.id, r.name, r.username, r.email, r.status, r.note, r.created_at,
+        COUNT(s.id) as total_codes,
+        SUM(CASE WHEN s.status = 'active' THEN 1 ELSE 0 END) as active_codes,
+        SUM(CASE WHEN s.status = 'unused' THEN 1 ELSE 0 END) as unused_codes,
+        SUM(CASE WHEN s.status = 'suspended' THEN 1 ELSE 0 END) as suspended_codes,
+        SUM(CASE WHEN s.status = 'expired' OR (s.expires_at IS NOT NULL AND datetime(s.expires_at) < datetime('now')) THEN 1 ELSE 0 END) as expired_codes,
+        SUM(CASE WHEN s.status != 'unused' THEN 1 ELSE 0 END) as activated_codes
+      FROM resellers r
+      LEFT JOIN subscriptions s ON r.id = s.reseller_id
+      GROUP BY r.id
+      ORDER BY r.id DESC
+    `;
+    const res = await env.DB.prepare(query).all<any>();
+    const resellers = (res.results || []).map((r: any) => ({
+      id: r.id,
+      name: r.name,
+      username: r.username,
+      email: r.email,
+      status: r.status,
+      note: r.note || '',
+      createdAt: r.created_at,
+      stats: {
+        total: Number(r.total_codes || 0),
+        active: Number(r.active_codes || 0),
+        unused: Number(r.unused_codes || 0),
+        suspended: Number(r.suspended_codes || 0),
+        expired: Number(r.expired_codes || 0),
+        activated: Number(r.activated_codes || 0),
+      },
+    }));
+
+    return jsonResponse({ resellers });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل جلب قائمة الموزعين: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminCreateReseller(request: Request, env: Env): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  try {
+    const body = (await request.json()) as any;
+    const name = (body.name || '').trim();
+    const username = (body.username || '').trim().toLowerCase();
+    const email = (body.email || '').trim().toLowerCase() || null;
+    const password = (body.password || '').trim();
+    const note = (body.note || '').trim();
+    const status = body.status === 'suspended' ? 'suspended' : 'active';
+
+    if (!name || !username || !password) {
+      return jsonResponse({ error: 'يرجى إدخال اسم الموزع واسم المستخدم وكلمة المرور' }, 400);
+    }
+
+    if (password.length < 6) {
+      return jsonResponse({ error: 'كلمة المرور يجب أن لا تقل عن 6 أحرف' }, 400);
+    }
+
+    // التحقق من عدم تكرار اسم المستخدم أو البريد
+    const existing = await env.DB.prepare(
+      'SELECT id FROM resellers WHERE username = ? OR (email IS NOT NULL AND email = ?)'
+    )
+      .bind(username, email || '__dummy__')
+      .first<any>();
+
+    if (existing) {
+      return jsonResponse({ error: 'اسم المستخدم أو البريد الإلكتروني مسجل بالفعل لموزع آخر' }, 400);
+    }
+
+    const passwordHash = await hashPassword(password);
+    const nowIso = new Date().toISOString();
+
+    await env.DB.prepare(
+      'INSERT INTO resellers (name, username, email, password_hash, status, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    )
+      .bind(name, username, email, passwordHash, status, note, nowIso)
+      .run();
+
+    return jsonResponse({
+      success: true,
+      message: 'تم إنشاء حساب الموزع بنجاح',
+      reseller: {
+        name,
+        username,
+        email,
+        status,
+        note,
+        createdAt: nowIso,
+      },
+    });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل إنشاء الموزع: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminUpdateReseller(request: Request, env: Env, idStr: string): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  try {
+    const resellerId = parseInt(idStr, 10);
+    if (!resellerId) {
+      return jsonResponse({ error: 'معرف الموزع غير صالح' }, 400);
+    }
+
+    const current = await env.DB.prepare('SELECT * FROM resellers WHERE id = ?').bind(resellerId).first<any>();
+    if (!current) {
+      return jsonResponse({ error: 'الموزع غير موجود' }, 404);
+    }
+
+    const body = (await request.json()) as any;
+
+    const newName = body.name !== undefined ? String(body.name).trim() : current.name;
+    const newUsername = body.username !== undefined ? String(body.username).trim().toLowerCase() : current.username;
+    const newEmail = body.email !== undefined ? (String(body.email).trim().toLowerCase() || null) : current.email;
+    const newNote = body.note !== undefined ? String(body.note).trim() : current.note;
+    const newStatus = body.status !== undefined && ['active', 'suspended'].includes(body.status) ? body.status : current.status;
+    let newPasswordHash = current.password_hash;
+
+    if (body.password && String(body.password).trim().length >= 6) {
+      newPasswordHash = await hashPassword(String(body.password).trim());
+    }
+
+    if (newUsername !== current.username || (newEmail && newEmail !== current.email)) {
+      const conflict = await env.DB.prepare(
+        'SELECT id FROM resellers WHERE id != ? AND (username = ? OR (email IS NOT NULL AND email = ?))'
+      )
+        .bind(resellerId, newUsername, newEmail || '__dummy__')
+        .first<any>();
+
+      if (conflict) {
+        return jsonResponse({ error: 'اسم المستخدم أو البريد مستخدم بالفعل من قبل موزع آخر' }, 400);
+      }
+    }
+
+    await env.DB.prepare(
+      'UPDATE resellers SET name = ?, username = ?, email = ?, password_hash = ?, status = ?, note = ? WHERE id = ?'
+    )
+      .bind(newName, newUsername, newEmail, newPasswordHash, newStatus, newNote, resellerId)
+      .run();
+
+    return jsonResponse({ success: true, message: 'تم تحديث بيانات الموزع بنجاح' });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل تحديث بيانات الموزع: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminGetCodes(request: Request, env: Env, url: URL): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'مفتاح الإدارة غير مصرح به' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  const resellerIdParam = url.searchParams.get('resellerId');
+  let whereClause = '';
+  const bindings: any[] = [];
+
+  if (resellerIdParam === 'admin') {
+    whereClause = 'WHERE s.reseller_id IS NULL';
+  } else if (resellerIdParam && resellerIdParam !== 'all') {
+    const num = parseInt(resellerIdParam, 10);
+    if (!isNaN(num)) {
+      whereClause = 'WHERE s.reseller_id = ?';
+      bindings.push(num);
+    }
+  }
+
   const query = `
-    SELECT s.*, COUNT(d.id) as device_count
+    SELECT s.*, r.name as reseller_name, COUNT(d.id) as device_count
     FROM subscriptions s
+    LEFT JOIN resellers r ON s.reseller_id = r.id
     LEFT JOIN devices d ON s.id = d.subscription_id
+    ${whereClause}
     GROUP BY s.id
     ORDER BY s.id DESC
   `;
-  const result = await env.DB.prepare(query).all<any>();
+
+  let stmt = env.DB.prepare(query);
+  if (bindings.length > 0) {
+    stmt = stmt.bind(...bindings);
+  }
+  const result = await stmt.all<any>();
   const list = result.results || [];
 
   const now = Date.now();
@@ -2424,6 +2699,8 @@ async function handleAdminGetCodes(request: Request, env: Env): Promise<Response
     return {
       id: item.id,
       code: item.code,
+      resellerId: item.reseller_id || null,
+      resellerName: item.reseller_name || null,
       durationDays: item.duration_days,
       maxDevices: item.max_devices,
       deviceCount: item.device_count || 0,
@@ -2444,8 +2721,9 @@ async function handleAdminGetCodes(request: Request, env: Env): Promise<Response
 }
 
 async function handleAdminCreateCodes(request: Request, env: Env): Promise<Response> {
-  if (!checkAdminAuth(request, env)) {
-    return jsonResponse({ error: 'مفتاح الإدارة غير مصرح به' }, 401);
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'مفتاح الإدارة غير مصرح به' }, 401);
   }
 
   if (!env.DB) {
@@ -2458,6 +2736,7 @@ async function handleAdminCreateCodes(request: Request, env: Env): Promise<Respo
     const maxDevices = parseInt(body.maxDevices || '1', 10) || 1;
     const count = Math.min(50, Math.max(1, parseInt(body.count || '1', 10) || 1));
     const note = (body.note || '').trim();
+    const resellerId = body.resellerId ? parseInt(body.resellerId, 10) : null;
 
     const createdCodes: string[] = [];
     const nowIso = new Date().toISOString();
@@ -2467,9 +2746,9 @@ async function handleAdminCreateCodes(request: Request, env: Env): Promise<Respo
       for (let attempt = 0; attempt < 5; attempt++) {
         try {
           await env.DB.prepare(
-            'INSERT INTO subscriptions (code, duration_days, max_devices, status, note, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+            'INSERT INTO subscriptions (reseller_id, code, duration_days, max_devices, status, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
           )
-            .bind(code, durationDays, maxDevices, 'unused', note, nowIso)
+            .bind(resellerId, code, durationDays, maxDevices, 'unused', note, nowIso)
             .run();
           createdCodes.push(code);
           break;
@@ -2491,8 +2770,9 @@ async function handleAdminCreateCodes(request: Request, env: Env): Promise<Respo
 }
 
 async function handleAdminUpdateCode(request: Request, env: Env, code: string): Promise<Response> {
-  if (!checkAdminAuth(request, env)) {
-    return jsonResponse({ error: 'مفتاح الإدارة غير مصرح به' }, 401);
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'مفتاح الإدارة غير مصرح به' }, 401);
   }
 
   if (!env.DB) {
@@ -2549,6 +2829,13 @@ async function handleAdminUpdateCode(request: Request, env: Env, code: string): 
         .run();
     }
 
+    if (body.resellerId !== undefined) {
+      const newResellerId = body.resellerId ? parseInt(body.resellerId, 10) : null;
+      await env.DB.prepare('UPDATE subscriptions SET reseller_id = ? WHERE id = ?')
+        .bind(newResellerId, sub.id)
+        .run();
+    }
+
     return jsonResponse({ success: true, message: 'تم تحديث الكود بنجاح' });
   } catch (err: any) {
     return jsonResponse({ error: 'فشل التحديث: ' + (err?.message || '') }, 500);
@@ -2556,8 +2843,9 @@ async function handleAdminUpdateCode(request: Request, env: Env, code: string): 
 }
 
 async function handleAdminDeleteCode(request: Request, env: Env, code: string): Promise<Response> {
-  if (!checkAdminAuth(request, env)) {
-    return jsonResponse({ error: 'مفتاح الإدارة غير مصرح به' }, 401);
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'مفتاح الإدارة غير مصرح به' }, 401);
   }
 
   if (!env.DB) {
@@ -2580,6 +2868,289 @@ async function handleAdminDeleteCode(request: Request, env: Env, code: string): 
     return jsonResponse({ success: true, message: 'تم حذف الكود بنجاح' });
   } catch (err: any) {
     return jsonResponse({ error: 'فشل حذف الكود: ' + (err?.message || '') }, 500);
+  }
+}
+
+// ==========================================
+// نقاط نهاية بوابة الموزعين (Reseller Portal)
+// ==========================================
+
+async function verifyResellerAuth(request: Request, env: Env): Promise<{ valid: boolean; error?: string; reseller?: any }> {
+  const authHeader = request.headers.get('Authorization') || '';
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+
+  if (!token) {
+    return { valid: false, error: 'يرجى تسجيل الدخول لحساب الموزع' };
+  }
+
+  const payload = await verifyJwt(token, env.JWT_SECRET || DEFAULT_JWT_SECRET);
+  if (!payload || payload.role !== 'reseller' || !payload.resellerId) {
+    return { valid: false, error: 'جلسة الموزع غير صالحة أو منتهية، يرجى إعادة تسجيل الدخول' };
+  }
+
+  if (!env.DB) {
+    return { valid: true, reseller: { id: payload.resellerId, name: payload.name, username: payload.username } };
+  }
+
+  const reseller = await env.DB.prepare('SELECT * FROM resellers WHERE id = ?')
+    .bind(payload.resellerId)
+    .first<any>();
+
+  if (!reseller) {
+    return { valid: false, error: 'حساب الموزع غير موجود' };
+  }
+
+  if (reseller.status === 'suspended') {
+    return { valid: false, error: 'حساب الموزع موقوف حالياً، يرجى التواصل مع الإدارة' };
+  }
+
+  return { valid: true, reseller };
+}
+
+async function handleResellerLogin(request: Request, env: Env): Promise<Response> {
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  try {
+    const body = (await request.json()) as any;
+    const identifier = (body.identifier || body.username || body.email || '').trim().toLowerCase();
+    const password = (body.password || '').trim();
+
+    if (!identifier || !password) {
+      return jsonResponse({ error: 'يرجى إدخال اسم المستخدم/البريد وكلمة المرور' }, 400);
+    }
+
+    const reseller = await env.DB.prepare(
+      'SELECT * FROM resellers WHERE username = ? OR (email IS NOT NULL AND email = ?)'
+    )
+      .bind(identifier, identifier)
+      .first<any>();
+
+    if (!reseller) {
+      return jsonResponse({ error: 'اسم المستخدم أو البريد غير موجود' }, 401);
+    }
+
+    const isMatch = await verifyPassword(password, reseller.password_hash);
+    if (!isMatch) {
+      return jsonResponse({ error: 'كلمة المرور غير صحيحة' }, 401);
+    }
+
+    if (reseller.status === 'suspended') {
+      return jsonResponse({ error: 'حساب الموزع موقوف حالياً، يرجى مراجعة الإدارة' }, 403);
+    }
+
+    const token = await signJwt(
+      {
+        role: 'reseller',
+        resellerId: reseller.id,
+        username: reseller.username,
+        name: reseller.name,
+        exp: Math.floor(Date.now() / 1000) + 86400 * 7,
+      },
+      env.JWT_SECRET || DEFAULT_JWT_SECRET
+    );
+
+    return jsonResponse({
+      success: true,
+      token,
+      reseller: {
+        id: reseller.id,
+        name: reseller.name,
+        username: reseller.username,
+        email: reseller.email,
+        note: reseller.note,
+      },
+    });
+  } catch (err: any) {
+    return jsonResponse({ error: 'خطأ أثناء تسجيل دخول الموزع: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleResellerGetCodes(request: Request, env: Env): Promise<Response> {
+  const auth = await verifyResellerAuth(request, env);
+  if (!auth.valid || !auth.reseller) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  try {
+    const query = `
+      SELECT s.*, COUNT(d.id) as device_count
+      FROM subscriptions s
+      LEFT JOIN devices d ON s.id = d.subscription_id
+      WHERE s.reseller_id = ?
+      GROUP BY s.id
+      ORDER BY s.id DESC
+    `;
+    const res = await env.DB.prepare(query).bind(auth.reseller.id).all<any>();
+    const list = res.results || [];
+
+    const now = Date.now();
+    let total = list.length;
+    let active = 0;
+    let unused = 0;
+    let expired = 0;
+    let suspended = 0;
+
+    const codes = list.map((item: any) => {
+      const isExpired =
+        item.status === 'expired' ||
+        (item.expires_at && new Date(item.expires_at).getTime() < now);
+
+      let effectiveStatus = item.status;
+      if (item.status === 'suspended') {
+        suspended++;
+      } else if (item.status === 'unused') {
+        unused++;
+      } else if (isExpired) {
+        expired++;
+        effectiveStatus = 'expired';
+      } else {
+        active++;
+      }
+
+      const remainingMs = item.expires_at ? new Date(item.expires_at).getTime() - now : 0;
+      const remainingDays = item.expires_at ? Math.max(0, Math.ceil(remainingMs / (86400 * 1000))) : item.duration_days;
+
+      return {
+        id: item.id,
+        code: item.code,
+        durationDays: item.duration_days,
+        maxDevices: item.max_devices,
+        deviceCount: item.device_count || 0,
+        status: effectiveStatus,
+        note: item.note || '',
+        createdAt: item.created_at,
+        activatedAt: item.activated_at,
+        expiresAt: item.expires_at,
+        remainingDays,
+        isExpired,
+      };
+    });
+
+    return jsonResponse({
+      reseller: {
+        id: auth.reseller.id,
+        name: auth.reseller.name,
+        username: auth.reseller.username,
+      },
+      stats: { total, active, unused, expired, suspended },
+      codes,
+    });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل جلب أكواد الموزع: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleResellerCreateCodes(request: Request, env: Env): Promise<Response> {
+  const auth = await verifyResellerAuth(request, env);
+  if (!auth.valid || !auth.reseller) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  try {
+    const body = (await request.json()) as any;
+    const durationDays = parseInt(body.durationDays || '30', 10) || 30;
+    const maxDevices = parseInt(body.maxDevices || '1', 10) || 1;
+    const count = Math.min(50, Math.max(1, parseInt(body.count || '1', 10) || 1));
+    const note = (body.note || '').trim();
+
+    const createdCodes: string[] = [];
+    const nowIso = new Date().toISOString();
+
+    for (let i = 0; i < count; i++) {
+      let code = generateCode();
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          await env.DB.prepare(
+            'INSERT INTO subscriptions (reseller_id, code, duration_days, max_devices, status, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+          )
+            .bind(auth.reseller.id, code, durationDays, maxDevices, 'unused', note, nowIso)
+            .run();
+          createdCodes.push(code);
+          break;
+        } catch {
+          code = generateCode();
+        }
+      }
+    }
+
+    return jsonResponse({
+      success: true,
+      count: createdCodes.length,
+      codes: createdCodes,
+      message: `تم توليد ${createdCodes.length} كود بنجاح لحسابك`,
+    });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل توليد الأكواد: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleResellerUpdateCode(request: Request, env: Env, code: string): Promise<Response> {
+  const auth = await verifyResellerAuth(request, env);
+  if (!auth.valid || !auth.reseller) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  try {
+    const cleanCode = code.trim().toUpperCase();
+    const sub = await env.DB.prepare('SELECT * FROM subscriptions WHERE code = ? AND reseller_id = ?')
+      .bind(cleanCode, auth.reseller.id)
+      .first<any>();
+
+    if (!sub) {
+      return jsonResponse({ error: 'الكود غير موجود أو لا يتبع لحسابك' }, 404);
+    }
+
+    const body = (await request.json()) as any;
+
+    if (body.resetDevices) {
+      await env.DB.prepare('DELETE FROM devices WHERE subscription_id = ?')
+        .bind(sub.id)
+        .run();
+    }
+
+    if (body.status && ['active', 'suspended', 'unused'].includes(body.status)) {
+      await env.DB.prepare('UPDATE subscriptions SET status = ? WHERE id = ?')
+        .bind(body.status, sub.id)
+        .run();
+    }
+
+    if (body.addDays && typeof body.addDays === 'number' && body.addDays > 0) {
+      if (sub.expires_at) {
+        const baseMs = Math.max(Date.now(), new Date(sub.expires_at).getTime());
+        const newExpires = new Date(baseMs + body.addDays * 86400 * 1000).toISOString();
+        await env.DB.prepare('UPDATE subscriptions SET expires_at = ?, status = ? WHERE id = ?')
+          .bind(newExpires, 'active', sub.id)
+          .run();
+      } else {
+        await env.DB.prepare('UPDATE subscriptions SET duration_days = duration_days + ? WHERE id = ?')
+          .bind(body.addDays, sub.id)
+          .run();
+      }
+    }
+
+    if (body.note !== undefined) {
+      await env.DB.prepare('UPDATE subscriptions SET note = ? WHERE id = ?')
+        .bind(String(body.note), sub.id)
+        .run();
+    }
+
+    return jsonResponse({ success: true, message: 'تم تحديث الكود بنجاح' });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل التحديث: ' + (err?.message || '') }, 500);
   }
 }
 
@@ -2608,10 +3179,30 @@ export default {
       return handleAuthMe(request, env);
     }
 
-    // 2. نقاط نهاية لوحة الإدارة
+    // 2. نقاط نهاية لوحة الإدارة (Admin)
+    if (url.pathname === '/api/admin/login' && request.method === 'POST') {
+      return handleAdminLogin(request, env);
+    }
+
+    if (url.pathname === '/api/admin/resellers') {
+      if (request.method === 'GET') {
+        return handleAdminGetResellers(request, env);
+      }
+      if (request.method === 'POST') {
+        return handleAdminCreateReseller(request, env);
+      }
+    }
+
+    if (url.pathname.startsWith('/api/admin/resellers/')) {
+      const idParam = decodeURIComponent(url.pathname.substring('/api/admin/resellers/'.length));
+      if (request.method === 'PATCH') {
+        return handleAdminUpdateReseller(request, env, idParam);
+      }
+    }
+
     if (url.pathname === '/api/admin/codes') {
       if (request.method === 'GET') {
-        return handleAdminGetCodes(request, env);
+        return handleAdminGetCodes(request, env, url);
       }
       if (request.method === 'POST') {
         return handleAdminCreateCodes(request, env);
@@ -2626,6 +3217,28 @@ export default {
       if (request.method === 'DELETE') {
         return handleAdminDeleteCode(request, env, codeParam);
       }
+    }
+
+    // 3. نقاط نهاية بوابة الموزعين (Reseller Portal)
+    if (url.pathname === '/api/reseller/login' && request.method === 'POST') {
+      return handleResellerLogin(request, env);
+    }
+
+    if (url.pathname === '/api/reseller/codes') {
+      if (request.method === 'GET') {
+        return handleResellerGetCodes(request, env);
+      }
+      if (request.method === 'POST') {
+        return handleResellerCreateCodes(request, env);
+      }
+    }
+
+    if (url.pathname.startsWith('/api/reseller/codes/')) {
+      const codeParam = decodeURIComponent(url.pathname.substring('/api/reseller/codes/'.length));
+      if (request.method === 'PATCH') {
+        return handleResellerUpdateCode(request, env, codeParam);
+      }
+      // تنويه أمني: لا يوجد أي حذف للأكواد من قبل الموزعين إطلاقاً
     }
 
     // 3. نقاط نهاية الأفلام والمسلسلات VOD

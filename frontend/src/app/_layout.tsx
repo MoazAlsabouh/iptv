@@ -16,7 +16,7 @@ function NavigationGuard(): React.JSX.Element {
   useEffect(() => {
     if (isLoading) return;
 
-    const isPublic = pathname === '/activate' || pathname.startsWith('/admin');
+    const isPublic = pathname === '/activate' || pathname.startsWith('/admin') || pathname.startsWith('/reseller');
 
     if (!token && !isPublic) {
       router.replace('/activate');
@@ -47,7 +47,8 @@ function NavigationGuard(): React.JSX.Element {
   const isFullscreen =
     pathname.startsWith('/play/') ||
     pathname === '/activate' ||
-    pathname.startsWith('/admin');
+    pathname.startsWith('/admin') ||
+    pathname.startsWith('/reseller');
 
   return isFullscreen ? (
     <Slot />
