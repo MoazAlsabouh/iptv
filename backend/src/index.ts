@@ -1060,7 +1060,56 @@ function findVideoRenderers(obj: any, results: any[] = []): any[] {
 }
 
 /**
+ * فحص قابلية تضمين وتشغيل فيديو يوتيوب داخل iframe
+ * واستبعاد الفيديوهات المقيدة بالعمر أو المعطل بها التضمين
+ */
+async function checkYouTubeEmbedPlayable(
+  videoId: string,
+  timeoutMs: number = 2500
+): Promise<boolean> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const embedUrl = `https://www.youtube.com/embed/${videoId}`;
+    const res = await fetch(embedUrl, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept-Language': 'en,ar;q=0.9',
+      },
+    });
+
+    if (!res.ok) {
+      return false;
+    }
+
+    const html = await res.text();
+    const lower = html.toLowerCase();
+
+    // مؤشرات الحظر والتقييد العمري أو منع التضمين
+    const isRestricted =
+      html.includes('LOGIN_REQUIRED') ||
+      html.includes('UNPLAYABLE') ||
+      html.includes('EMBEDDING_DISABLED') ||
+      html.includes('AGE_VERIFICATION_REQUIRED') ||
+      lower.includes('age-restricted') ||
+      lower.includes('confirm your age') ||
+      lower.includes('sign in to confirm your age');
+
+    return !isRestricted;
+  } catch {
+    // في حال انتهاء المهلة أو حدوث خطأ، يعتبر الفيديو غير متاح
+    return false;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
  * فحص نتائج البحث المباشرة من موقع يوتيوب واستخراج الفيديوهات الطويلة الكاملة
+ * مع فحص التضمين الذكي واستبعاد الفيديوهات المقيدة
  */
 async function searchYouTubeDirect(
   query: string,
@@ -1096,7 +1145,7 @@ async function searchYouTubeDirect(
     const ytData = JSON.parse(jsonStr);
     const renderers = findVideoRenderers(ytData);
 
-    const validVideos: { id: string; title: string }[] = [];
+    const candidates: { id: string; title: string }[] = [];
 
     for (const r of renderers) {
       const videoId = r.videoId;
@@ -1109,13 +1158,31 @@ async function searchYouTubeDirect(
 
       const seconds = parseDurationToSeconds(durationText);
       if (videoId && seconds >= minSeconds) {
-        validVideos.push({ id: videoId, title });
-        if (validVideos.length >= 2) break;
+        candidates.push({ id: videoId, title });
+        if (candidates.length >= 5) break; // أخذ أفضل 5 مرشحين بدلاً من 2
       }
     }
 
-    if (validVideos.length > 0) {
-      return validVideos.map((v, idx) => ({
+    if (candidates.length === 0) {
+      return [];
+    }
+
+    // فحص قابلية التضمين للمرشحين بالتوازي (Promise.allSettled مع مهلة 2.5 ثانية)
+    const checkResults = await Promise.allSettled(
+      candidates.map((c) => checkYouTubeEmbedPlayable(c.id, 2500))
+    );
+
+    const playableVideos: { id: string; title: string }[] = [];
+    for (let i = 0; i < candidates.length; i++) {
+      const check = checkResults[i];
+      if (check.status === 'fulfilled' && check.value === true) {
+        playableVideos.push(candidates[i]);
+        if (playableVideos.length >= 2) break; // أخذ أول نتيجتين سليمتين وقابلتين للتضمين
+      }
+    }
+
+    if (playableVideos.length > 0) {
+      return playableVideos.map((v, idx) => ({
         label: idx === 0 ? 'يوتيوب (HD)' : 'يوتيوب (سيرفر 2)',
         url: `https://www.youtube.com/embed/${v.id}?autoplay=1&rel=0`,
         type: 'embed' as const,
