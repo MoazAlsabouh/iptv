@@ -142,10 +142,11 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
 
     const fetchEpisodesData = async () => {
       try {
+        const tmdbParam = params.tmdbId ? `&tmdbId=${encodeURIComponent(params.tmdbId)}` : '';
         const q = encodeURIComponent(seriesTitle);
         const imdb = params.imdbId ? encodeURIComponent(params.imdbId) : '';
         const res = await fetch(
-          `${BACKEND_BASE_URL}/api/vod/episodes?q=${q}&imdb=${imdb}`
+          `${BACKEND_BASE_URL}/api/vod/episodes?q=${q}&imdb=${imdb}${tmdbParam}`
         );
 
         if (res.ok) {

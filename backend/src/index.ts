@@ -859,12 +859,104 @@ async function handleVodSearch(url: URL, env: Env): Promise<Response> {
 }
 
 /**
- * جلب مواسم وحلقات المسلسلات عبر TVmaze API المجاني
+ * جلب مواسم وحلقات المسلسلات عبر TMDB أولاً ثم TVmaze API كبديل
  */
-async function handleVodEpisodes(url: URL): Promise<Response> {
+async function handleVodEpisodes(url: URL, env: Env): Promise<Response> {
+  const tmdbId = url.searchParams.get('tmdbId') || '';
   const query = url.searchParams.get('q') || '';
   const imdb = url.searchParams.get('imdb') || '';
+  const apiKey = env.TMDB_API_KEY || '';
 
+  // 1. الأولوية الأولى: جلب المواسم والحلقات الدقيقة من TMDB إذا توفر المعرف ومفتاح API
+  if (tmdbId && apiKey) {
+    try {
+      const showRes = await fetch(
+        `https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${apiKey}&language=ar-SA`,
+        { headers: { Accept: 'application/json' } }
+      );
+
+      if (showRes.ok) {
+        const showData = (await showRes.json()) as any;
+        const allSeasons = (showData.seasons || []) as any[];
+
+        // استبعاد الموسم 0 (الحلقات الخاصة Specials) إذا كانت هناك مواسم فعلية
+        let targetSeasons = allSeasons.filter((s) => s.season_number > 0);
+        if (targetSeasons.length === 0 && allSeasons.length > 0) {
+          targetSeasons = allSeasons;
+        }
+
+        // جلب حلقات جميع المواسم بالتوازي وبأمان
+        const seasonResults = await Promise.allSettled(
+          targetSeasons.map(async (sItem) => {
+            const sNum = sItem.season_number;
+            const sRes = await fetch(
+              `https://api.themoviedb.org/3/tv/${tmdbId}/season/${sNum}?api_key=${apiKey}&language=ar-SA`,
+              { headers: { Accept: 'application/json' } }
+            );
+
+            if (sRes.ok) {
+              return { season: sNum, data: await sRes.json() };
+            }
+
+            // محاولة بديلة دون تحديد اللغة إذا لم تتوفر ترجمة عربية لأسماء الحلقات
+            const fallbackRes = await fetch(
+              `https://api.themoviedb.org/3/tv/${tmdbId}/season/${sNum}?api_key=${apiKey}`,
+              { headers: { Accept: 'application/json' } }
+            );
+            if (fallbackRes.ok) {
+              return { season: sNum, data: await fallbackRes.json() };
+            }
+
+            return { season: sNum, data: null };
+          })
+        );
+
+        const seasonsOutput: { season: number; episodes: any[] }[] = [];
+
+        for (const res of seasonResults) {
+          if (res.status === 'fulfilled' && res.value && res.value.data) {
+            const sNum = res.value.season;
+            const rawEps = (res.value.data.episodes || []) as any[];
+            const mappedEpisodes = rawEps.map((ep) => ({
+              id: ep.id,
+              season: ep.season_number || sNum,
+              number: ep.episode_number,
+              name: ep.name || `الحلقة ${ep.episode_number}`,
+              airdate: ep.air_date,
+              rating: ep.vote_average ? Number(Number(ep.vote_average).toFixed(1)) : 0,
+              summary: ep.overview || '',
+              image: ep.still_path ? `https://image.tmdb.org/t/p/w500${ep.still_path}` : '',
+            }));
+
+            if (mappedEpisodes.length > 0) {
+              seasonsOutput.push({
+                season: sNum,
+                episodes: mappedEpisodes,
+              });
+            }
+          }
+        }
+
+        if (seasonsOutput.length > 0) {
+          seasonsOutput.sort((a, b) => a.season - b.season);
+
+          return jsonResponse({
+            show: {
+              id: showData.id,
+              name: showData.name || showData.original_name,
+              image: showData.poster_path ? `https://image.tmdb.org/t/p/w500${showData.poster_path}` : '',
+              imdb: showData.external_ids?.imdb_id,
+            },
+            seasons: seasonsOutput,
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('[TMDB Episodes fetch error, falling back to TVmaze]:', err);
+    }
+  }
+
+  // 2. بديل TVmaze المجاني في حال عدم توفر معرف TMDB أو تعذر الاتصال
   let tvmazeUrl = '';
   if (imdb) {
     tvmazeUrl = `https://api.tvmaze.com/lookup/shows?imdb=${encodeURIComponent(imdb)}`;
@@ -893,7 +985,6 @@ async function handleVodEpisodes(url: URL): Promise<Response> {
       return jsonResponse({ show: { id: showData.id, name: showData.name }, seasons: [] });
     }
 
-    // تجميع الحلقات بحسب رقم الموسم
     const seasonMap = new Map<number, any[]>();
     for (const ep of episodes) {
       const s = ep.season || 1;
@@ -932,82 +1023,203 @@ async function handleVodEpisodes(url: URL): Promise<Response> {
 }
 
 /**
- * 1. مزود يوتيوب عبر واجهات Piped / Invidious العامة مع مهلة 4 ثوانٍ
+ * تحويل مدة الفيديو النصية (مثل "44:20" أو "1:15:30") إلى ثوانٍ
  */
-async function searchYouTubeProvider(
+function parseDurationToSeconds(durationStr: string): number {
+  if (!durationStr) return 0;
+  const normalized = durationStr.replace(/[٠-٩]/g, (d) => '0123456789'['٠١٢٣٤٥٦٧٨٩'.indexOf(d)]);
+  const parts = normalized.split(':').map((p) => parseInt(p.trim(), 10) || 0);
+  if (parts.length === 3) {
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  } else if (parts.length === 2) {
+    return parts[0] * 60 + parts[1];
+  } else if (parts.length === 1) {
+    return parts[0];
+  }
+  return 0;
+}
+
+/**
+ * استخراج كائنات videoRenderer من كائن ytInitialData
+ */
+function findVideoRenderers(obj: any, results: any[] = []): any[] {
+  if (!obj || typeof obj !== 'object') return results;
+  if (obj.videoRenderer) {
+    results.push(obj.videoRenderer);
+    if (results.length >= 25) return results;
+  }
+  for (const key of Object.keys(obj)) {
+    if (key !== 'videoRenderer') {
+      findVideoRenderers(obj[key], results);
+      if (results.length >= 25) return results;
+    }
+  }
+  return results;
+}
+
+/**
+ * فحص نتائج البحث المباشرة من موقع يوتيوب واستخراج الفيديوهات الطويلة الكاملة
+ */
+async function searchYouTubeDirect(
   query: string,
   isMovie: boolean
 ): Promise<{ label: string; url: string; type: 'embed' }[]> {
   const minSeconds = isMovie ? 55 * 60 : 20 * 60; // 55 دقيقة للأفلام، 20 دقيقة لحلقات المسلسلات
-  const instances = [
-    {
-      type: 'piped',
-      url: `https://pipedapi.kavin.rocks/search?q=${encodeURIComponent(query)}&filter=videos`,
-    },
-    {
-      type: 'piped',
-      url: `https://api.piped.privacy.com.de/search?q=${encodeURIComponent(query)}&filter=videos`,
-    },
-    {
-      type: 'invidious',
-      url: `https://inv.nadeko.net/api/v1/search?q=${encodeURIComponent(query)}&type=video`,
-    },
-  ];
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+    const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+    const res = await fetch(searchUrl, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept-Language': 'ar,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return [];
 
-  for (const inst of instances) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 4000);
-      const res = await fetch(inst.url, {
-        headers: { Accept: 'application/json' },
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      if (!res.ok) continue;
+    const html = await res.text();
+    const marker = 'ytInitialData = ';
+    const startIdx = html.indexOf(marker);
+    if (startIdx === -1) return [];
 
-      const data = (await res.json()) as any;
-      const items =
-        inst.type === 'piped'
-          ? data.items || []
-          : Array.isArray(data)
-          ? data
-          : [];
-      const validVideos: { id: string; title: string }[] = [];
+    const jsonStart = startIdx + marker.length;
+    const endIdx = html.indexOf(';</script>', jsonStart);
+    if (endIdx === -1) return [];
 
-      for (const item of items) {
-        let durationSec = 0;
-        let videoId = '';
+    const jsonStr = html.substring(jsonStart, endIdx);
+    const ytData = JSON.parse(jsonStr);
+    const renderers = findVideoRenderers(ytData);
 
-        if (inst.type === 'piped') {
-          durationSec = item.duration || 0;
-          videoId = (item.url || '').replace('/watch?v=', '');
-        } else {
-          durationSec = item.lengthSeconds || 0;
-          videoId = item.videoId || '';
-        }
+    const validVideos: { id: string; title: string }[] = [];
 
-        if (videoId && durationSec >= minSeconds) {
-          validVideos.push({ id: videoId, title: item.title || '' });
-          if (validVideos.length >= 2) break;
-        }
+    for (const r of renderers) {
+      const videoId = r.videoId;
+      const title = r.title?.runs?.[0]?.text || r.title?.simpleText || '';
+      const durationText =
+        r.lengthText?.simpleText ||
+        r.thumbnailOverlays?.find((o: any) => o.thumbnailOverlayTimeStatusRenderer)
+          ?.thumbnailOverlayTimeStatusRenderer?.text?.simpleText ||
+        '';
+
+      const seconds = parseDurationToSeconds(durationText);
+      if (videoId && seconds >= minSeconds) {
+        validVideos.push({ id: videoId, title });
+        if (validVideos.length >= 2) break;
       }
-
-      if (validVideos.length > 0) {
-        return validVideos.map((v, idx) => ({
-          label: idx === 0 ? 'يوتيوب (HD)' : 'يوتيوب 2 (بديل)',
-          url: `https://www.youtube.com/embed/${v.id}?autoplay=1&rel=0`,
-          type: 'embed' as const,
-        }));
-      }
-    } catch {
-      // تجربة الخادم التالي بهدوء
     }
+
+    if (validVideos.length > 0) {
+      return validVideos.map((v, idx) => ({
+        label: idx === 0 ? 'يوتيوب (HD)' : 'يوتيوب (سيرفر 2)',
+        url: `https://www.youtube.com/embed/${v.id}?autoplay=1&rel=0`,
+        type: 'embed' as const,
+      }));
+    }
+  } catch {
+    // تجاهل الأخطاء بهدوء
   }
   return [];
 }
 
 /**
- * 2. مزود الأرشيف العالمي Archive.org لاستخراج ملفات MP4 المباشرة مع مهلة 4 ثوانٍ
+ * 1. مزود يوتيوب المباشر مع استعلامات مرنة واستبعاد الإعلانات
+ */
+async function searchYouTubeProvider(
+  title: string,
+  season: number,
+  episode: number,
+  type: 'movie' | 'tv',
+  isArabic: boolean
+): Promise<{ label: string; url: string; type: 'embed' }[]> {
+  const isMovie = type === 'movie';
+  let primaryQuery = '';
+  let fallbackQuery = '';
+
+  if (isArabic) {
+    if (isMovie) {
+      primaryQuery = `${title} فيلم كامل`;
+      const shortTitle = title.replace(/^(مسلسل|فيلم|مغامرات|قصة|حكاية|كرتون)\s+/i, '').trim();
+      fallbackQuery = `${shortTitle} فيلم`;
+    } else {
+      primaryQuery =
+        season > 1
+          ? `${title} الجزء ${season} الحلقة ${episode}`
+          : `${title} الحلقة ${episode}`;
+      const shortTitle = title.replace(/^(مسلسل|فيلم|مغامرات|قصة|حكاية|كرتون)\s+/i, '').trim();
+      fallbackQuery =
+        season > 1
+          ? `${shortTitle} الجزء ${season} الحلقة ${episode}`
+          : `${shortTitle} الحلقة ${episode}`;
+    }
+  } else {
+    if (isMovie) {
+      primaryQuery = `${title} full movie`;
+      fallbackQuery = `${title} movie`;
+    } else {
+      primaryQuery = `${title} S${season}E${episode}`;
+      fallbackQuery = `${title} season ${season} episode ${episode}`;
+    }
+  }
+
+  // 1. تجربة البحث بالاستعلام الأساسي
+  let results = await searchYouTubeDirect(primaryQuery, isMovie);
+  if (results.length > 0) return results;
+
+  // 2. تجربة البحث بالاستعلام البديل المختصر
+  if (fallbackQuery && fallbackQuery !== primaryQuery) {
+    results = await searchYouTubeDirect(fallbackQuery, isMovie);
+    if (results.length > 0) return results;
+  }
+
+  return [];
+}
+
+/**
+ * 2. مزود Dailymotion الرسمي المجاني (بدون مفتاح API)
+ */
+async function searchDailymotionProvider(
+  query: string,
+  isMovie: boolean
+): Promise<{ label: string; url: string; type: 'embed' }[]> {
+  const minSeconds = isMovie ? 55 * 60 : 20 * 60;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+    const searchUrl = `https://api.dailymotion.com/videos?search=${encodeURIComponent(query)}&fields=id,title,duration,embed_url&limit=8`;
+    const res = await fetch(searchUrl, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return [];
+
+    const data = (await res.json()) as any;
+    const list = data.list || [];
+    const valid: { id: string; title: string }[] = [];
+
+    for (const item of list) {
+      if (item.id && typeof item.duration === 'number' && item.duration >= minSeconds) {
+        valid.push({ id: item.id, title: item.title });
+        if (valid.length >= 2) break;
+      }
+    }
+
+    return valid.map((v, idx) => ({
+      label: idx === 0 ? 'ديلي موشن (HD)' : 'ديلي موشن (سيرفر 2)',
+      url: `https://www.dailymotion.com/embed/video/${v.id}?autoplay=1`,
+      type: 'embed' as const,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 3. مزود الأرشيف العالمي Archive.org لاستخراج ملفات MP4 المباشرة مع مهلة 4 ثوانٍ
  */
 async function searchArchiveProvider(
   title: string
@@ -1069,7 +1281,7 @@ async function searchArchiveProvider(
 }
 
 /**
- * 3. مزود السيرفرات المدمجة المتعددة (VidSrc, Embed.su, AutoEmbed, 2Embed)
+ * 4. مزود السيرفرات المدمجة المتعددة (VidSrc, Embed.su, AutoEmbed, 2Embed)
  */
 function buildMultiEmbedSources(
   type: 'movie' | 'tv',
@@ -1199,43 +1411,48 @@ async function handleVodSources(request: Request, url: URL): Promise<Response> {
   const hasArabicChars = /[\u0600-\u06FF]/.test(title);
   const isArabic = lang === 'ar' || hasArabicChars;
 
-  // إعداد استعلام البحث المناسب ليوتيوب
-  let ytQuery = '';
+  // صياغة استعلام البحث المناسب لديلي موشن
+  let dmQuery = '';
   if (isArabic) {
     if (type === 'movie') {
-      ytQuery = `${title} فيلم كامل`;
+      dmQuery = `${title} فيلم كامل`;
     } else {
-      ytQuery = season > 1 ? `${title} الموسم ${season} الحلقة ${episode}` : `${title} الحلقة ${episode}`;
+      dmQuery =
+        season > 1
+          ? `${title} الجزء ${season} الحلقة ${episode}`
+          : `${title} الحلقة ${episode}`;
     }
   } else {
     if (type === 'movie') {
-      ytQuery = `${title} full movie`;
+      dmQuery = `${title} full movie`;
     } else {
-      ytQuery = `${title} S${season}E${episode}`;
+      dmQuery = `${title} S${season}E${episode}`;
     }
   }
 
-  // تشغيل المزودات بالتوازي مع حماية المهلة الزمنية
-  const [ytRes, archiveRes] = await Promise.allSettled([
-    title ? searchYouTubeProvider(ytQuery, type === 'movie') : Promise.resolve([]),
+  // تشغيل المزودات بالتوازي مع حماية المهلة الزمنية الصارمة (4 ثوانٍ)
+  const [ytRes, dmRes, archiveRes] = await Promise.allSettled([
+    title ? searchYouTubeProvider(title, season, episode, type, isArabic) : Promise.resolve([]),
+    title ? searchDailymotionProvider(dmQuery, type === 'movie') : Promise.resolve([]),
     title ? searchArchiveProvider(title) : Promise.resolve([]),
   ]);
 
   const ytSources = ytRes.status === 'fulfilled' ? ytRes.value : [];
+  const dmSources = dmRes.status === 'fulfilled' ? dmRes.value : [];
   const archiveSources = archiveRes.status === 'fulfilled' ? archiveRes.value : [];
   const embedSources = buildMultiEmbedSources(type, tmdbId, imdbId, season, episode);
 
   // الترتيب الذكي:
-  // المحتوى العربي: يوتيوب ثم الأرشيف أولاً ثم السيرفرات المدمجة
-  // المحتوى الأجنبي: السيرفرات المدمجة أولاً ثم يوتيوب والأرشيف
+  // المحتوى العربي: يوتيوب ثم ديلي موشن ثم الأرشيف أولاً ثم السيرفرات المدمجة كبدائل
+  // المحتوى الأجنبي: السيرفرات المدمجة أولاً ثم يوتيوب وديلي موشن والأرشيف
   let finalSources: { label: string; url: string; type: 'embed' | 'direct' }[] = [];
   if (isArabic) {
-    finalSources = [...ytSources, ...archiveSources, ...embedSources];
+    finalSources = [...ytSources, ...dmSources, ...archiveSources, ...embedSources];
   } else {
-    finalSources = [...embedSources, ...ytSources, ...archiveSources];
+    finalSources = [...embedSources, ...ytSources, ...dmSources, ...archiveSources];
   }
 
-  // إضافة سيرفر احتياطي مباشر
+  // إضافة سيرفر احتياطي مباشر دائم
   const targetId = tmdbId || imdbId || title || 'sample';
   finalSources.push({
     label: 'سيرفر احتياطي (مباشر)',
@@ -1297,7 +1514,7 @@ export default {
     }
 
     if (url.pathname === '/api/vod/episodes') {
-      return handleVodEpisodes(url);
+      return handleVodEpisodes(url, env);
     }
 
     if (url.pathname === '/' || url.pathname === '/playlist.m3u') {

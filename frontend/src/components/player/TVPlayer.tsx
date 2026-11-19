@@ -52,6 +52,7 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
     streamUrl.includes('embed.su') ||
     streamUrl.includes('autoembed') ||
     streamUrl.includes('2embed') ||
+    streamUrl.includes('dailymotion.com') ||
     streamUrl.includes('youtube.com/embed') ||
     streamUrl.includes('youtube.com') ||
     streamUrl.includes('youtu.be') ||

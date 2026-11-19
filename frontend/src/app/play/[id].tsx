@@ -104,10 +104,11 @@ export default function PlayerScreen(): React.JSX.Element {
     let isMounted = true;
     const fetchEpisodes = async () => {
       try {
+        const tmdbParam = params.tmdbId ? `&tmdbId=${encodeURIComponent(params.tmdbId)}` : '';
         const q = channelTitle ? encodeURIComponent(channelTitle) : '';
         const imdb = params.imdbId ? encodeURIComponent(params.imdbId) : '';
         const res = await fetch(
-          `https://iptv-backend.moaznsm.workers.dev/api/vod/episodes?q=${q}&imdb=${imdb}`
+          `https://iptv-backend.moaznsm.workers.dev/api/vod/episodes?q=${q}&imdb=${imdb}${tmdbParam}`
         );
         if (res.ok) {
           const data = await res.json();
@@ -526,6 +527,8 @@ export default function PlayerScreen(): React.JSX.Element {
                       const isCurrentSource = idx === activeSourceIndex;
                       const isYouTube =
                         src.label.includes('يوتيوب') || src.url.includes('youtube');
+                      const isDailymotion =
+                        src.label.includes('ديلي موشن') || src.url.includes('dailymotion');
                       const isArchive =
                         src.label.includes('أرشيف') || src.url.includes('archive.org');
                       const isDirect = src.label.includes('مباشر');
@@ -558,6 +561,12 @@ export default function PlayerScreen(): React.JSX.Element {
                                   name="ondemand-video"
                                   size={18}
                                   color={focused ? '#000000' : '#ef4444'}
+                                />
+                              ) : isDailymotion ? (
+                                <MaterialIcons
+                                  name="video-collection"
+                                  size={18}
+                                  color={focused ? '#000000' : '#0066dc'}
                                 />
                               ) : isArchive ? (
                                 <MaterialIcons
