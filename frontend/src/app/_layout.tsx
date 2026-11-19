@@ -1,9 +1,97 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ActivityIndicator } from 'react-native';
+import { View, Text, ActivityIndicator, Platform } from 'react-native';
 import { Slot, usePathname, useRouter } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import { MainLayout } from '../components/layout/MainLayout';
+import '../fonts.css';
+
+// حقن تعريفات الخطوط الصريحة في document.head على بيئة الويب لتفادي أخطاء OTS parsing error
+if (Platform.OS === 'web' && typeof document !== 'undefined') {
+  const fontStyleId = 'expo-vector-icons-fonts';
+  if (!document.getElementById(fontStyleId)) {
+    const styleEl = document.createElement('style');
+    styleEl.id = fontStyleId;
+    styleEl.textContent = `
+      @font-face {
+        font-family: 'MaterialIcons';
+        src: url('/fonts/MaterialIcons.ttf') format('truetype');
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'material';
+        src: url('/fonts/MaterialIcons.ttf') format('truetype');
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'Ionicons';
+        src: url('/fonts/Ionicons.ttf') format('truetype');
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'ionicons';
+        src: url('/fonts/Ionicons.ttf') format('truetype');
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'MaterialCommunityIcons';
+        src: url('/fonts/MaterialCommunityIcons.ttf') format('truetype');
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'material-community';
+        src: url('/fonts/MaterialCommunityIcons.ttf') format('truetype');
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'Feather';
+        src: url('/fonts/Feather.ttf') format('truetype');
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'feather';
+        src: url('/fonts/Feather.ttf') format('truetype');
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'FontAwesome';
+        src: url('/fonts/FontAwesome.ttf') format('truetype');
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'AntDesign';
+        src: url('/fonts/AntDesign.ttf') format('truetype');
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'Fontisto';
+        src: url('/fonts/Fontisto.ttf') format('truetype');
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'Octicons';
+        src: url('/fonts/Octicons.ttf') format('truetype');
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'SimpleLineIcons';
+        src: url('/fonts/SimpleLineIcons.ttf') format('truetype');
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'Foundation';
+        src: url('/fonts/Foundation.ttf') format('truetype');
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'Zocial';
+        src: url('/fonts/Zocial.ttf') format('truetype');
+        font-display: swap;
+      }
+    `;
+    document.head.appendChild(styleEl);
+  }
+}
 
 /**
  * حارس التنقل العام للتحقق من وجود اشتراك نشط وتوجيه المستخدمين
