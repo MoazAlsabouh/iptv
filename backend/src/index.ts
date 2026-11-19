@@ -1,5 +1,7 @@
 export interface Env {
   TMDB_API_KEY?: string;
+  WYZIE_API_KEY?: string;
+  OPENSUBTITLES_API_KEY?: string;
 }
 
 interface TMDBMovie {
@@ -1281,7 +1283,7 @@ async function searchArchiveProvider(
 }
 
 /**
- * 4. مزود السيرفرات المدمجة المتعددة (VidSrc, Embed.su, AutoEmbed, 2Embed)
+ * 4. مزود السيرفرات المدمجة المتعددة (VidLink, VidSrc.cc, VidSrc, Embed.su, AutoEmbed, 2Embed, VidSrc Me)
  */
 function buildMultiEmbedSources(
   type: 'movie' | 'tv',
@@ -1295,43 +1297,63 @@ function buildMultiEmbedSources(
   if (type === 'movie') {
     if (tmdbId) {
       list.push({
-        label: 'سيرفر 1 - VidSrc',
+        label: 'سيرفر 1 - VidLink',
+        url: `https://vidlink.pro/movie/${tmdbId}?primaryColor=38bdf8&autoplay=true`,
+        type: 'embed',
+      });
+      list.push({
+        label: 'سيرفر 2 - VidSrc CC',
+        url: `https://vidsrc.cc/v2/embed/movie/${tmdbId}`,
+        type: 'embed',
+      });
+      list.push({
+        label: 'سيرفر 3 - VidSrc',
         url: `https://vidsrc.to/embed/movie/${tmdbId}`,
         type: 'embed',
       });
       list.push({
-        label: 'سيرفر 2 - Embed.su',
+        label: 'سيرفر 4 - Embed.su',
         url: `https://embed.su/embed/movie/${tmdbId}`,
         type: 'embed',
       });
       list.push({
-        label: 'سيرفر 3 - AutoEmbed',
+        label: 'سيرفر 5 - AutoEmbed',
         url: `https://player.autoembed.cc/embed/movie/${tmdbId}`,
         type: 'embed',
       });
       list.push({
-        label: 'سيرفر 4 - 2Embed',
+        label: 'سيرفر 6 - 2Embed',
         url: `https://www.2embed.cc/embed/${tmdbId}`,
         type: 'embed',
       });
       list.push({
-        label: 'سيرفر 5 - VidSrc Me',
+        label: 'سيرفر 7 - VidSrc Me',
         url: `https://vidsrc.me/embed/movie?tmdb=${tmdbId}`,
         type: 'embed',
       });
     } else if (imdbId) {
       list.push({
-        label: 'سيرفر 1 - VidSrc',
+        label: 'سيرفر 1 - VidLink',
+        url: `https://vidlink.pro/movie/${imdbId}?primaryColor=38bdf8&autoplay=true`,
+        type: 'embed',
+      });
+      list.push({
+        label: 'سيرفر 2 - VidSrc CC',
+        url: `https://vidsrc.cc/v2/embed/movie/${imdbId}`,
+        type: 'embed',
+      });
+      list.push({
+        label: 'سيرفر 3 - VidSrc',
         url: `https://vidsrc.to/embed/movie/${imdbId}`,
         type: 'embed',
       });
       list.push({
-        label: 'سيرفر 2 - Embed.su',
+        label: 'سيرفر 4 - Embed.su',
         url: `https://embed.su/embed/movie/${imdbId}`,
         type: 'embed',
       });
       list.push({
-        label: 'سيرفر 3 - VidSrc Me',
+        label: 'سيرفر 5 - VidSrc Me',
         url: `https://vidsrc.me/embed/movie?imdb=${imdbId}`,
         type: 'embed',
       });
@@ -1340,43 +1362,63 @@ function buildMultiEmbedSources(
     // TV Series
     if (tmdbId) {
       list.push({
-        label: 'سيرفر 1 - VidSrc',
+        label: 'سيرفر 1 - VidLink',
+        url: `https://vidlink.pro/tv/${tmdbId}/${season}/${episode}?primaryColor=38bdf8&autoplay=true`,
+        type: 'embed',
+      });
+      list.push({
+        label: 'سيرفر 2 - VidSrc CC',
+        url: `https://vidsrc.cc/v2/embed/tv/${tmdbId}/${season}/${episode}`,
+        type: 'embed',
+      });
+      list.push({
+        label: 'سيرفر 3 - VidSrc',
         url: `https://vidsrc.to/embed/tv/${tmdbId}/${season}/${episode}`,
         type: 'embed',
       });
       list.push({
-        label: 'سيرفر 2 - Embed.su',
+        label: 'سيرفر 4 - Embed.su',
         url: `https://embed.su/embed/tv/${tmdbId}/${season}/${episode}`,
         type: 'embed',
       });
       list.push({
-        label: 'سيرفر 3 - AutoEmbed',
+        label: 'سيرفر 5 - AutoEmbed',
         url: `https://player.autoembed.cc/embed/tv/${tmdbId}/${season}/${episode}`,
         type: 'embed',
       });
       list.push({
-        label: 'سيرفر 4 - 2Embed',
+        label: 'سيرفر 6 - 2Embed',
         url: `https://www.2embed.cc/embedtv/${tmdbId}&s=${season}&e=${episode}`,
         type: 'embed',
       });
       list.push({
-        label: 'سيرفر 5 - VidSrc Me',
+        label: 'سيرفر 7 - VidSrc Me',
         url: `https://vidsrc.me/embed/tv?tmdb=${tmdbId}&season=${season}&episode=${episode}`,
         type: 'embed',
       });
     } else if (imdbId) {
       list.push({
-        label: 'سيرفر 1 - VidSrc',
+        label: 'سيرفر 1 - VidLink',
+        url: `https://vidlink.pro/tv/${imdbId}/${season}/${episode}?primaryColor=38bdf8&autoplay=true`,
+        type: 'embed',
+      });
+      list.push({
+        label: 'سيرفر 2 - VidSrc CC',
+        url: `https://vidsrc.cc/v2/embed/tv/${imdbId}/${season}/${episode}`,
+        type: 'embed',
+      });
+      list.push({
+        label: 'سيرفر 3 - VidSrc',
         url: `https://vidsrc.to/embed/tv/${imdbId}/${season}/${episode}`,
         type: 'embed',
       });
       list.push({
-        label: 'سيرفر 2 - Embed.su',
+        label: 'سيرفر 4 - Embed.su',
         url: `https://embed.su/embed/tv/${imdbId}/${season}/${episode}`,
         type: 'embed',
       });
       list.push({
-        label: 'سيرفر 3 - VidSrc Me',
+        label: 'سيرفر 5 - VidSrc Me',
         url: `https://vidsrc.me/embed/tv?imdb=${imdbId}&season=${season}&episode=${episode}`,
         type: 'embed',
       });
@@ -1480,6 +1522,259 @@ async function handleVodSources(request: Request, url: URL): Promise<Response> {
   return response;
 }
 
+interface SubtitleCue {
+  start: number;
+  end: number;
+  text: string;
+}
+
+/**
+ * فك ترميز ملفات الترجمة مع اكتشاف وحل مشكلة الترميز العربي (Windows-1256 vs UTF-8)
+ * لإصلاح ظهور أحرف الاستفهام (???) نهائياً
+ */
+function decodeSubtitleBuffer(buffer: ArrayBuffer): string {
+  try {
+    const utf8 = new TextDecoder('utf-8').decode(buffer);
+    // إذا احتوى النص على رمز الاستبدال \uFFFD الناتج عن ترميز أحادي البايت كـ Windows-1256
+    if (utf8.includes('\uFFFD')) {
+      try {
+        const win1256 = new TextDecoder('windows-1256').decode(buffer);
+        return win1256;
+      } catch {
+        return utf8;
+      }
+    }
+    return utf8;
+  } catch {
+    try {
+      return new TextDecoder('windows-1256').decode(buffer);
+    } catch {
+      return '';
+    }
+  }
+}
+
+/**
+ * تحويل ملفات الترجمة SRT / WebVTT إلى مصفوفة كتل زمنية JSON
+ */
+function parseSubtitlesToCues(content: string): SubtitleCue[] {
+  const cues: SubtitleCue[] = [];
+  const normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const blocks = normalized.split(/\n\s*\n/);
+  const timeRegex = /(?:(\d{1,2}):)?(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(?:(\d{1,2}):)?(\d{2}):(\d{2})[,.](\d{3})/;
+
+  function timeToSec(h?: string, m?: string, s?: string, ms?: string): number {
+    const hours = parseInt(h || '0', 10);
+    const minutes = parseInt(m || '0', 10);
+    const seconds = parseInt(s || '0', 10);
+    const millis = parseInt(ms || '0', 10);
+    return Math.round((hours * 3600 + minutes * 60 + seconds + millis / 1000) * 100) / 100;
+  }
+
+  for (const block of blocks) {
+    const lines = block.trim().split('\n');
+    let timeIndex = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (timeRegex.test(lines[i])) {
+        timeIndex = i;
+        break;
+      }
+    }
+    if (timeIndex === -1) continue;
+
+    const match = lines[timeIndex].match(
+      /(?:(\d{1,2}):)?(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(?:(\d{1,2}):)?(\d{2}):(\d{2})[,.](\d{3})/
+    );
+    if (!match) continue;
+
+    const start = timeToSec(match[1], match[2], match[3], match[4]);
+    const end = timeToSec(match[5], match[6], match[7], match[8]);
+    const textLines = lines
+      .slice(timeIndex + 1)
+      .join('\n')
+      .replace(/<[^>]+>/g, '') // إزالة وسوم HTML
+      .replace(/\{[^}]+\}/g, '') // إزالة وسوم SSA/ASS
+      .trim();
+
+    if (textLines && end > start) {
+      cues.push({ start, end, text: textLines });
+    }
+  }
+
+  return cues;
+}
+
+/**
+ * جلب ملف الترجمة الثنائي كـ ArrayBuffer لدعم فك الترميز التلقائي
+ */
+async function fetchSubtitleBuffer(url: string, timeoutMs: number = 4000): Promise<ArrayBuffer | null> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTVStream/1.0',
+      },
+    });
+    if (!res.ok) return null;
+    return await res.arrayBuffer();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * جلب بيانات JSON بأمان مع مهلة زمنية
+ */
+async function fetchJsonWithTimeout<T = any>(
+  url: string,
+  timeoutMs: number = 3500,
+  headers?: Record<string, string>,
+  method: string = 'GET',
+  body?: string
+): Promise<T | null> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method,
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTVStream/1.0',
+        ...headers,
+      },
+      body,
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * معالج نقطة النهاية /api/vod/subtitles لجلب وفك ترميز الترجمة العربية
+ * وتخزينها مؤقتاً لمدة 24 ساعة (max-age=86400)
+ */
+async function handleVodSubtitles(
+  request: Request,
+  url: URL,
+  env: Env
+): Promise<Response> {
+  const cache = (caches as any).default;
+  try {
+    const cached = await cache.match(request);
+    if (cached) {
+      return cached;
+    }
+  } catch {}
+
+  const tmdbId = url.searchParams.get('tmdbId') || '';
+  const season = url.searchParams.get('season') || '';
+  const episode = url.searchParams.get('episode') || '';
+
+  if (!tmdbId) {
+    return jsonResponse({ success: false, count: 0, cues: [] });
+  }
+
+  let finalCues: SubtitleCue[] = [];
+
+  try {
+    // 1. محاولة جلب الترجمة من Wyzie Subs
+    const wyzieKey = env.WYZIE_API_KEY ? `&key=${env.WYZIE_API_KEY}` : '';
+    const seasonQuery = season && episode ? `&season=${season}&episode=${episode}` : '';
+    const wyzieUrl = `https://sub.wyzie.io/search?id=${tmdbId}&language=ar${seasonQuery}${wyzieKey}`;
+
+    const data = await fetchJsonWithTimeout<any>(wyzieUrl, 3500);
+    if (data) {
+      const subList = Array.isArray(data) ? data : data.subtitles || [];
+      const arSub =
+        subList.find(
+          (s: any) =>
+            s.lang === 'ar' ||
+            s.lang === 'ara' ||
+            s.language === 'ar' ||
+            s.language === 'Arabic'
+        ) || subList[0];
+
+      if (arSub && arSub.url) {
+        const buf = await fetchSubtitleBuffer(arSub.url, 4000);
+        if (buf) {
+          const decoded = decodeSubtitleBuffer(buf);
+          finalCues = parseSubtitlesToCues(decoded);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[handleVodSubtitles] Wyzie fetch error:', err);
+  }
+
+  // 2. إذا لم نجد في Wyzie، نحاول عبر OpenSubtitles إن توفر المفتاح
+  if (finalCues.length === 0 && env.OPENSUBTITLES_API_KEY) {
+    try {
+      const osQuery = season && episode ? `&season_number=${season}&episode_number=${episode}` : '';
+      const osUrl = `https://api.opensubtitles.com/api/v1/subtitles?tmdb_id=${tmdbId}&languages=ar${osQuery}`;
+      const osData = await fetchJsonWithTimeout<any>(osUrl, 3500, {
+        'Api-Key': env.OPENSUBTITLES_API_KEY,
+      });
+      if (osData && osData.data && osData.data.length > 0) {
+        const fileId = osData.data[0].attributes?.files?.[0]?.file_id;
+        if (fileId) {
+          const dlData = await fetchJsonWithTimeout<any>(
+            'https://api.opensubtitles.com/api/v1/download',
+            3500,
+            {
+              'Api-Key': env.OPENSUBTITLES_API_KEY,
+              'Content-Type': 'application/json',
+            },
+            'POST',
+            JSON.stringify({ file_id: fileId })
+          );
+          if (dlData && dlData.link) {
+            const buf = await fetchSubtitleBuffer(dlData.link, 4000);
+            if (buf) {
+              const decoded = decodeSubtitleBuffer(buf);
+              finalCues = parseSubtitlesToCues(decoded);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[handleVodSubtitles] OpenSubtitles fetch error:', err);
+    }
+  }
+
+  // استجابة JSON مع تخزين مؤقت لمدة 24 ساعة (86400 ثانية)
+  const response = new Response(
+    JSON.stringify({
+      success: finalCues.length > 0,
+      count: finalCues.length,
+      cues: finalCues,
+    }),
+    {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Cache-Control': 'public, max-age=86400',
+      },
+    }
+  );
+
+  try {
+    await cache.put(request, response.clone());
+  } catch {}
+
+  return response;
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -1515,6 +1810,10 @@ export default {
 
     if (url.pathname === '/api/vod/episodes') {
       return handleVodEpisodes(url, env);
+    }
+
+    if (url.pathname === '/api/vod/subtitles') {
+      return handleVodSubtitles(request, url, env);
     }
 
     if (url.pathname === '/' || url.pathname === '/playlist.m3u') {
