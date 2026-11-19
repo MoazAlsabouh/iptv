@@ -1,8 +1,9 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../../store/useAppStore';
+import { useAuth } from '../../context/AuthContext';
 
 interface NavItem {
   id: string;
@@ -30,6 +31,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const router = useRouter();
   const currentPath = usePathname();
   const isChildMode = useAppStore((state) => state.isChildMode);
+  const { subscription, logout } = useAuth();
 
   return (
     <View style={styles.rootContainer}>
@@ -103,6 +105,52 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             })}
           </View>
         </View>
+
+        {/* شارة حالة الاشتراك */}
+        {subscription && (
+          <View style={styles.subCard}>
+            <View style={styles.subCardHeader}>
+              <View style={styles.subStatusDot} />
+              <Text style={styles.subCardTitle}>اشتراك نشط</Text>
+            </View>
+
+            <Text style={styles.subDaysText}>
+              متبقي {subscription.remainingDays} يوم
+            </Text>
+            <Text style={styles.subCodeText} numberOfLines={1}>
+              {subscription.code}
+            </Text>
+
+            <Pressable
+              onPress={async () => {
+                await logout();
+                router.replace('/activate');
+              }}
+              style={({ focused }) => [
+                styles.changeCodeBtn,
+                focused && styles.changeCodeBtnFocused,
+              ]}
+            >
+              {({ focused }) => (
+                <View style={styles.changeCodeRow}>
+                  <MaterialIcons
+                    name="vpn-key"
+                    size={14}
+                    color={focused ? '#000000' : '#38bdf8'}
+                  />
+                  <Text
+                    style={[
+                      styles.changeCodeText,
+                      focused && styles.changeCodeTextFocused,
+                    ]}
+                  >
+                    تغيير الكود / خروج
+                  </Text>
+                </View>
+              )}
+            </Pressable>
+          </View>
+        )}
 
         {/* إرشادات التحكم بريموت التلفاز */}
         <View style={styles.sidebarFooter}>
@@ -222,5 +270,68 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0f172a',
     padding: 32,
+  },
+  subCard: {
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.25)',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16,
+  },
+  subCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  subStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10b981',
+  },
+  subCardTitle: {
+    color: '#10b981',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  subDaysText: {
+    color: '#f8fafc',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  subCodeText: {
+    color: '#64748b',
+    fontSize: 11,
+    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
+    marginTop: 2,
+    marginBottom: 8,
+  },
+  changeCodeBtn: {
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.25)',
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  changeCodeBtnFocused: {
+    backgroundColor: '#ffffff',
+    borderColor: '#ffffff',
+  },
+  changeCodeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  changeCodeText: {
+    color: '#38bdf8',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  changeCodeTextFocused: {
+    color: '#000000',
   },
 });

@@ -1,4 +1,38 @@
+export interface D1Database {
+  prepare(query: string): D1PreparedStatement;
+  batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]>;
+  exec(query: string): Promise<D1ExecResult>;
+}
+
+export interface D1PreparedStatement {
+  bind(...values: any[]): D1PreparedStatement;
+  first<T = unknown>(colName?: string): Promise<T | null>;
+  run<T = unknown>(): Promise<D1Response>;
+  all<T = unknown>(): Promise<D1Result<T>>;
+}
+
+export interface D1Result<T = unknown> {
+  results: T[];
+  success: boolean;
+  meta: any;
+  error?: string;
+}
+
+export interface D1Response {
+  success: boolean;
+  meta: any;
+  error?: string;
+}
+
+export interface D1ExecResult {
+  count: number;
+  duration: number;
+}
+
 export interface Env {
+  DB: D1Database;
+  JWT_SECRET?: string;
+  ADMIN_SECRET?: string;
   TMDB_API_KEY?: string;
   WYZIE_API_KEY?: string;
   OPENSUBTITLES_API_KEY?: string;
@@ -550,9 +584,8 @@ function jsonResponse(data: any, status: number = 200): Response {
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Cache-Control, Pragma, *',
-      'Cache-Control': 'public, max-age=1800',
+      'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Key, Cache-Control, Pragma, *',
     },
   });
 }
@@ -1649,10 +1682,15 @@ function buildMultiEmbedSources(
 }
 
 /**
- * معالج نقطة النهاية الهجينة /api/vod/sources مع دعم التخزين المؤقت 12 ساعة
- * واستخدام مفتاح إصدار v=3 لتخطي الكاش القديم
+ * معالج نقطة النهاية الهجينة /api/vod/sources مع التحقق من اشتراك المستخدم
+ * ودعم التخزين المؤقت 12 ساعة واستخدام مفتاح إصدار v=3 لتخطي الكاش القديم
  */
-async function handleVodSources(request: Request, url: URL): Promise<Response> {
+async function handleVodSources(request: Request, url: URL, env: Env): Promise<Response> {
+  const auth = await verifySubscriptionAuth(request, env);
+  if (!auth.valid) {
+    return jsonResponse({ sources: [], error: auth.error }, 401);
+  }
+
   const cache = (caches as any).default;
   // استخدام معامل إصدار v=3 لإلغاء أي كاش قديم يحمل روابط معطلة
   const cacheUrl = new URL(url.toString());
@@ -2048,6 +2086,503 @@ async function handleVodSubtitles(
   return response;
 }
 
+// ==========================================
+// نظام إدارة الاشتراكات وأكواد التفعيل (D1 + Web Crypto)
+// ==========================================
+
+const DEFAULT_JWT_SECRET = 'iptv-super-secret-jwt-key-2026';
+const DEFAULT_ADMIN_SECRET = 'admin123456';
+
+function base64UrlEncode(str: string): string {
+  const bytes = new TextEncoder().encode(str);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function base64UrlEncodeBytes(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function base64UrlDecode(str: string): string {
+  let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (base64.length % 4) {
+    base64 += '=';
+  }
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+async function signJwt(payload: any, secret: string): Promise<string> {
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const encodedHeader = base64UrlEncode(JSON.stringify(header));
+  const encodedPayload = base64UrlEncode(JSON.stringify(payload));
+  const data = `${encodedHeader}.${encodedPayload}`;
+
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data));
+  const encodedSignature = base64UrlEncodeBytes(new Uint8Array(signature));
+
+  return `${data}.${encodedSignature}`;
+}
+
+async function verifyJwt(token: string, secret: string): Promise<any | null> {
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+
+  const [encodedHeader, encodedPayload, encodedSignature] = parts;
+  const data = `${encodedHeader}.${encodedPayload}`;
+
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['verify']
+  );
+
+  let sigBase64 = encodedSignature.replace(/-/g, '+').replace(/_/g, '/');
+  while (sigBase64.length % 4) sigBase64 += '=';
+  const binary = atob(sigBase64);
+  const sigBytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    sigBytes[i] = binary.charCodeAt(i);
+  }
+
+  const isValid = await crypto.subtle.verify('HMAC', key, sigBytes, new TextEncoder().encode(data));
+  if (!isValid) return null;
+
+  try {
+    const payload = JSON.parse(base64UrlDecode(encodedPayload));
+    if (payload.exp && Math.floor(Date.now() / 1000) > payload.exp) {
+      return null;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function generateCode(): string {
+  const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  let p1 = '';
+  let p2 = '';
+  for (let i = 0; i < 4; i++) {
+    p1 += chars.charAt(Math.floor(Math.random() * chars.length));
+    p2 += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return `TV-${p1}-${p2}`;
+}
+
+async function verifySubscriptionAuth(request: Request, env: Env): Promise<{ valid: boolean; error?: string; sub?: any }> {
+  const authHeader = request.headers.get('Authorization') || '';
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+
+  if (!token) {
+    return { valid: false, error: 'يرجى تفعيل كود الاشتراك للوصول إلى هذا المحتوى' };
+  }
+
+  const payload = await verifyJwt(token, env.JWT_SECRET || DEFAULT_JWT_SECRET);
+  if (!payload || !payload.subId) {
+    return { valid: false, error: 'جلسة الاشتراك غير صالحة أو منتهية، يرجى إعادة التفعيل' };
+  }
+
+  if (!env.DB) {
+    return { valid: true };
+  }
+
+  const sub = await env.DB.prepare('SELECT * FROM subscriptions WHERE id = ?')
+    .bind(payload.subId)
+    .first<any>();
+
+  if (!sub) {
+    return { valid: false, error: 'الاشتراك غير موجود' };
+  }
+
+  if (sub.status === 'suspended') {
+    return { valid: false, error: 'هذا الاشتراك موقوف حالياً، يرجى مراجعة الدعم' };
+  }
+
+  if (sub.expires_at) {
+    if (new Date(sub.expires_at).getTime() < Date.now()) {
+      return { valid: false, error: 'انتهت صلاحية هذا الاشتراك، يرجى تجديد الكود' };
+    }
+  }
+
+  if (payload.deviceId) {
+    const dev = await env.DB.prepare('SELECT * FROM devices WHERE subscription_id = ? AND device_id = ?')
+      .bind(payload.subId, payload.deviceId)
+      .first<any>();
+
+    if (!dev) {
+      return { valid: false, error: 'تم فك ارتباط هذا الجهاز، يرجى إعادة إدخال الكود' };
+    }
+  }
+
+  return { valid: true, sub };
+}
+
+async function handleAuthActivate(request: Request, env: Env): Promise<Response> {
+  try {
+    const body = (await request.json()) as any;
+    const rawCode = (body.code || '').trim().toUpperCase();
+    const deviceId = (body.deviceId || '').trim();
+    const deviceName = (body.deviceName || 'جهاز غير معروف').trim();
+
+    if (!rawCode || !deviceId) {
+      return jsonResponse({ error: 'يرجى إدخال كود التفعيل ومعرف الجهاز' }, 400);
+    }
+
+    if (!env.DB) {
+      return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+    }
+
+    const sub = await env.DB.prepare('SELECT * FROM subscriptions WHERE code = ?')
+      .bind(rawCode)
+      .first<any>();
+
+    if (!sub) {
+      return jsonResponse({ error: 'كود التفعيل غير صحيح أو غير موجود' }, 404);
+    }
+
+    if (sub.status === 'suspended') {
+      return jsonResponse({ error: 'هذا الاشتراك موقوف حالياً، يرجى التواصل مع الإدارة' }, 403);
+    }
+
+    let status = sub.status;
+    let activatedAt = sub.activated_at;
+    let expiresAt = sub.expires_at;
+
+    const now = new Date();
+    if (status === 'unused') {
+      status = 'active';
+      activatedAt = now.toISOString();
+      expiresAt = new Date(now.getTime() + sub.duration_days * 86400 * 1000).toISOString();
+
+      await env.DB.prepare('UPDATE subscriptions SET status = ?, activated_at = ?, expires_at = ? WHERE id = ?')
+        .bind(status, activatedAt, expiresAt, sub.id)
+        .run();
+    } else if (status === 'active') {
+      if (expiresAt && new Date(expiresAt).getTime() < now.getTime()) {
+        await env.DB.prepare("UPDATE subscriptions SET status = 'expired' WHERE id = ?")
+          .bind(sub.id)
+          .run();
+        return jsonResponse({ error: 'انتهت صلاحية هذا الاشتراك، يرجى تجديد الكود' }, 403);
+      }
+    }
+
+    // فحص الأجهزة المرتبطة
+    const devResults = await env.DB.prepare('SELECT * FROM devices WHERE subscription_id = ?')
+      .bind(sub.id)
+      .all<any>();
+
+    const devices = devResults.results || [];
+    const existing = devices.find((d: any) => d.device_id === deviceId);
+
+    if (existing) {
+      await env.DB.prepare('UPDATE devices SET last_seen = ?, device_name = ? WHERE id = ?')
+        .bind(now.toISOString(), deviceName, existing.id)
+        .run();
+    } else {
+      if (devices.length >= (sub.max_devices || 1)) {
+        return jsonResponse(
+          {
+            error: `تم الوصول للحد الأقصى للأجهزة لهذا الكود (الحد المسموح به: ${sub.max_devices || 1} جهاز)`,
+          },
+          403
+        );
+      }
+
+      await env.DB.prepare(
+        'INSERT INTO devices (subscription_id, device_id, device_name, last_seen) VALUES (?, ?, ?, ?)'
+      )
+        .bind(sub.id, deviceId, deviceName, now.toISOString())
+        .run();
+    }
+
+    const remainingMs = expiresAt ? new Date(expiresAt).getTime() - now.getTime() : sub.duration_days * 86400 * 1000;
+    const remainingDays = Math.max(0, Math.ceil(remainingMs / (86400 * 1000)));
+
+    const token = await signJwt(
+      {
+        subId: sub.id,
+        code: sub.code,
+        deviceId,
+        exp: expiresAt ? Math.floor(new Date(expiresAt).getTime() / 1000) : Math.floor(Date.now() / 1000) + 86400 * 30,
+      },
+      env.JWT_SECRET || DEFAULT_JWT_SECRET
+    );
+
+    return jsonResponse({
+      token,
+      subscription: {
+        code: sub.code,
+        expiresAt,
+        remainingDays,
+        maxDevices: sub.max_devices,
+        status,
+        note: sub.note,
+      },
+    });
+  } catch (err: any) {
+    return jsonResponse({ error: 'حدث خطأ أثناء التفعيل: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAuthMe(request: Request, env: Env): Promise<Response> {
+  const auth = await verifySubscriptionAuth(request, env);
+  if (!auth.valid || !auth.sub) {
+    return jsonResponse({ valid: false, error: auth.error }, 401);
+  }
+
+  const sub = auth.sub;
+  const now = Date.now();
+  const remainingMs = sub.expires_at ? new Date(sub.expires_at).getTime() - now : 0;
+  const remainingDays = Math.max(0, Math.ceil(remainingMs / (86400 * 1000)));
+
+  return jsonResponse({
+    valid: true,
+    subscription: {
+      code: sub.code,
+      expiresAt: sub.expires_at,
+      remainingDays,
+      maxDevices: sub.max_devices,
+      status: sub.status,
+      note: sub.note,
+    },
+  });
+}
+
+function checkAdminAuth(request: Request, env: Env): boolean {
+  const key = request.headers.get('X-Admin-Key') || '';
+  return key === (env.ADMIN_SECRET || DEFAULT_ADMIN_SECRET);
+}
+
+async function handleAdminGetCodes(request: Request, env: Env): Promise<Response> {
+  if (!checkAdminAuth(request, env)) {
+    return jsonResponse({ error: 'مفتاح الإدارة غير مصرح به' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  const query = `
+    SELECT s.*, COUNT(d.id) as device_count
+    FROM subscriptions s
+    LEFT JOIN devices d ON s.id = d.subscription_id
+    GROUP BY s.id
+    ORDER BY s.id DESC
+  `;
+  const result = await env.DB.prepare(query).all<any>();
+  const list = result.results || [];
+
+  const now = Date.now();
+  let total = list.length;
+  let active = 0;
+  let unused = 0;
+  let expired = 0;
+  let suspended = 0;
+
+  const codes = list.map((item: any) => {
+    const isExpired =
+      item.status === 'expired' ||
+      (item.expires_at && new Date(item.expires_at).getTime() < now);
+
+    let effectiveStatus = item.status;
+    if (item.status === 'suspended') {
+      suspended++;
+    } else if (item.status === 'unused') {
+      unused++;
+    } else if (isExpired) {
+      expired++;
+      effectiveStatus = 'expired';
+    } else {
+      active++;
+    }
+
+    const remainingMs = item.expires_at ? new Date(item.expires_at).getTime() - now : 0;
+    const remainingDays = item.expires_at ? Math.max(0, Math.ceil(remainingMs / (86400 * 1000))) : item.duration_days;
+
+    return {
+      id: item.id,
+      code: item.code,
+      durationDays: item.duration_days,
+      maxDevices: item.max_devices,
+      deviceCount: item.device_count || 0,
+      status: effectiveStatus,
+      note: item.note || '',
+      createdAt: item.created_at,
+      activatedAt: item.activated_at,
+      expiresAt: item.expires_at,
+      remainingDays,
+      isExpired,
+    };
+  });
+
+  return jsonResponse({
+    stats: { total, active, unused, expired, suspended },
+    codes,
+  });
+}
+
+async function handleAdminCreateCodes(request: Request, env: Env): Promise<Response> {
+  if (!checkAdminAuth(request, env)) {
+    return jsonResponse({ error: 'مفتاح الإدارة غير مصرح به' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  try {
+    const body = (await request.json()) as any;
+    const durationDays = parseInt(body.durationDays || '30', 10) || 30;
+    const maxDevices = parseInt(body.maxDevices || '1', 10) || 1;
+    const count = Math.min(50, Math.max(1, parseInt(body.count || '1', 10) || 1));
+    const note = (body.note || '').trim();
+
+    const createdCodes: string[] = [];
+    const nowIso = new Date().toISOString();
+
+    for (let i = 0; i < count; i++) {
+      let code = generateCode();
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          await env.DB.prepare(
+            'INSERT INTO subscriptions (code, duration_days, max_devices, status, note, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+          )
+            .bind(code, durationDays, maxDevices, 'unused', note, nowIso)
+            .run();
+          createdCodes.push(code);
+          break;
+        } catch {
+          code = generateCode();
+        }
+      }
+    }
+
+    return jsonResponse({
+      success: true,
+      count: createdCodes.length,
+      codes: createdCodes,
+      message: `تم توليد ${createdCodes.length} كود بنجاح`,
+    });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل توليد الأكواد: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminUpdateCode(request: Request, env: Env, code: string): Promise<Response> {
+  if (!checkAdminAuth(request, env)) {
+    return jsonResponse({ error: 'مفتاح الإدارة غير مصرح به' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  try {
+    const cleanCode = code.trim().toUpperCase();
+    const sub = await env.DB.prepare('SELECT * FROM subscriptions WHERE code = ?')
+      .bind(cleanCode)
+      .first<any>();
+
+    if (!sub) {
+      return jsonResponse({ error: 'الكود غير موجود' }, 404);
+    }
+
+    const body = (await request.json()) as any;
+
+    if (body.resetDevices) {
+      await env.DB.prepare('DELETE FROM devices WHERE subscription_id = ?')
+        .bind(sub.id)
+        .run();
+    }
+
+    if (body.status && ['active', 'suspended', 'unused'].includes(body.status)) {
+      await env.DB.prepare('UPDATE subscriptions SET status = ? WHERE id = ?')
+        .bind(body.status, sub.id)
+        .run();
+    }
+
+    if (body.addDays && typeof body.addDays === 'number' && body.addDays > 0) {
+      if (sub.expires_at) {
+        const baseMs = Math.max(Date.now(), new Date(sub.expires_at).getTime());
+        const newExpires = new Date(baseMs + body.addDays * 86400 * 1000).toISOString();
+        await env.DB.prepare('UPDATE subscriptions SET expires_at = ?, status = ? WHERE id = ?')
+          .bind(newExpires, 'active', sub.id)
+          .run();
+      } else {
+        await env.DB.prepare('UPDATE subscriptions SET duration_days = duration_days + ? WHERE id = ?')
+          .bind(body.addDays, sub.id)
+          .run();
+      }
+    }
+
+    if (body.note !== undefined) {
+      await env.DB.prepare('UPDATE subscriptions SET note = ? WHERE id = ?')
+        .bind(String(body.note), sub.id)
+        .run();
+    }
+
+    if (body.maxDevices && typeof body.maxDevices === 'number') {
+      await env.DB.prepare('UPDATE subscriptions SET max_devices = ? WHERE id = ?')
+        .bind(body.maxDevices, sub.id)
+        .run();
+    }
+
+    return jsonResponse({ success: true, message: 'تم تحديث الكود بنجاح' });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل التحديث: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminDeleteCode(request: Request, env: Env, code: string): Promise<Response> {
+  if (!checkAdminAuth(request, env)) {
+    return jsonResponse({ error: 'مفتاح الإدارة غير مصرح به' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  try {
+    const cleanCode = code.trim().toUpperCase();
+    const sub = await env.DB.prepare('SELECT id FROM subscriptions WHERE code = ?')
+      .bind(cleanCode)
+      .first<any>();
+
+    if (!sub) {
+      return jsonResponse({ error: 'الكود غير موجود' }, 404);
+    }
+
+    await env.DB.prepare('DELETE FROM devices WHERE subscription_id = ?').bind(sub.id).run();
+    await env.DB.prepare('DELETE FROM subscriptions WHERE id = ?').bind(sub.id).run();
+
+    return jsonResponse({ success: true, message: 'تم حذف الكود بنجاح' });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل حذف الكود: ' + (err?.message || '') }, 500);
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -2057,39 +2592,94 @@ export default {
       return new Response(null, {
         headers: {
           'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Cache-Control, Pragma, *',
+          'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Key, Cache-Control, Pragma, *',
           'Access-Control-Max-Age': '86400',
         },
       });
     }
 
-    if (request.method !== 'GET') {
-      return new Response('Method Not Allowed', { status: 405 });
+    // 1. نقاط نهاية التوثيق والاشتراكات
+    if (url.pathname === '/api/auth/activate' && request.method === 'POST') {
+      return handleAuthActivate(request, env);
     }
 
-    // نقاط نهاية كتالوج وبحث ومصادر وحلقات الأفلام والمسلسلات VOD
-    if (url.pathname === '/api/vod/catalog') {
+    if (url.pathname === '/api/auth/me' && request.method === 'GET') {
+      return handleAuthMe(request, env);
+    }
+
+    // 2. نقاط نهاية لوحة الإدارة
+    if (url.pathname === '/api/admin/codes') {
+      if (request.method === 'GET') {
+        return handleAdminGetCodes(request, env);
+      }
+      if (request.method === 'POST') {
+        return handleAdminCreateCodes(request, env);
+      }
+    }
+
+    if (url.pathname.startsWith('/api/admin/codes/')) {
+      const codeParam = decodeURIComponent(url.pathname.substring('/api/admin/codes/'.length));
+      if (request.method === 'PATCH') {
+        return handleAdminUpdateCode(request, env, codeParam);
+      }
+      if (request.method === 'DELETE') {
+        return handleAdminDeleteCode(request, env, codeParam);
+      }
+    }
+
+    // 3. نقاط نهاية الأفلام والمسلسلات VOD
+    if (url.pathname === '/api/vod/catalog' && request.method === 'GET') {
       return handleVodCatalog(url, env);
     }
 
-    if (url.pathname === '/api/vod/search') {
+    if (url.pathname === '/api/vod/search' && request.method === 'GET') {
       return handleVodSearch(url, env);
     }
 
-    if (url.pathname === '/api/vod/sources') {
-      return handleVodSources(request, url);
+    if (url.pathname === '/api/vod/sources' && request.method === 'GET') {
+      return handleVodSources(request, url, env);
     }
 
-    if (url.pathname === '/api/vod/episodes') {
+    if (url.pathname === '/api/vod/episodes' && request.method === 'GET') {
       return handleVodEpisodes(url, env);
     }
 
-    if (url.pathname === '/api/vod/subtitles') {
+    if (url.pathname === '/api/vod/subtitles' && request.method === 'GET') {
       return handleVodSubtitles(request, url, env);
     }
 
-    if (url.pathname === '/' || url.pathname === '/playlist.m3u') {
+    // 4. نقطة نهاية قائمة القنوات الحية (محمية بالاشتراك)
+    if ((url.pathname === '/' || url.pathname === '/playlist.m3u') && request.method === 'GET') {
+      const authHeader = request.headers.get('Authorization');
+      const tokenParam = url.searchParams.get('token');
+      let isAuthValid = false;
+
+      if (authHeader || tokenParam) {
+        const token = (authHeader ? authHeader.replace(/^Bearer\s+/i, '').trim() : tokenParam) || '';
+        const payload = await verifyJwt(token, env.JWT_SECRET || DEFAULT_JWT_SECRET);
+        if (payload?.subId && env.DB) {
+          const sub = await env.DB.prepare('SELECT * FROM subscriptions WHERE id = ?')
+            .bind(payload.subId)
+            .first<any>();
+          if (sub && sub.status !== 'suspended') {
+            if (!sub.expires_at || new Date(sub.expires_at).getTime() > Date.now()) {
+              isAuthValid = true;
+            }
+          }
+        }
+      }
+
+      if (!isAuthValid) {
+        return new Response('يرجى تفعيل كود الاشتراك لعرض قائمة القنوات', {
+          status: 401,
+          headers: {
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      }
+
       try {
         const apiKey = env.TMDB_API_KEY || 'YOUR_TMDB_API_KEY';
 

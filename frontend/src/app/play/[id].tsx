@@ -16,6 +16,7 @@ import { TVPlayer, HlsLevelOption } from '../../components/player/TVPlayer';
 import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 import { ChannelLogo } from '../../components/ChannelLogo';
 import { StreamSource } from '../../types/media';
+import { useAuth } from '../../context/AuthContext';
 
 /**
  * شاشة مشغل الفيديو بتصميم ملء الشاشة الداكن والتحكم الكامل بالريموت كنترول.
@@ -41,6 +42,7 @@ export default function PlayerScreen(): React.JSX.Element {
 
   const { favoriteIds, toggleFavorite } = useAppStore();
   const { channels } = useMediaData();
+  const { token } = useAuth();
 
   const channelId = useMemo(() => {
     if (!params.id) return '';
@@ -162,9 +164,23 @@ export default function PlayerScreen(): React.JSX.Element {
         queryParams.set('season', String(selectedSeason));
         queryParams.set('episode', String(selectedEpisode));
 
+        const headers: Record<string, string> = {};
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+
         const res = await fetch(
-          `https://iptv-backend.moaznsm.workers.dev/api/vod/sources?${queryParams.toString()}`
+          `https://iptv-backend.moaznsm.workers.dev/api/vod/sources?${queryParams.toString()}`,
+          { headers }
         );
+
+        if (res.status === 401) {
+          if (isMounted) {
+            setIsLoadingSources(false);
+            setPlaybackError('يرجى تفعيل كود اشتراك صالح للمشاهدة');
+          }
+          return;
+        }
 
         if (res.ok) {
           const data = await res.json();
@@ -205,6 +221,7 @@ export default function PlayerScreen(): React.JSX.Element {
     isTvSeries,
     params.lang,
     params.originalLanguage,
+    token,
     selectedSeason,
     selectedEpisode,
     params.type,
