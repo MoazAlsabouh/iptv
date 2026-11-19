@@ -99,7 +99,7 @@ export default function PlayerScreen(): React.JSX.Element {
   const [isLoadingSources, setIsLoadingSources] = useState<boolean>(false);
 
   // إعدادات حظر الإعلانات والترجمة العربية المستقلة
-  const [enableAdBlock, setEnableAdBlock] = useState<boolean>(true);
+  const [enableAdBlock, setEnableAdBlock] = useState<boolean>(false);
   const [subtitles, setSubtitles] = useState<SubtitleCue[]>([]);
   const [showSubtitles, setShowSubtitles] = useState<boolean>(true);
   const [subtitleOffset, setSubtitleOffset] = useState<number>(0);
@@ -567,7 +567,7 @@ export default function PlayerScreen(): React.JSX.Element {
               {({ focused }) => (
                 <View style={styles.btnRow}>
                   <MaterialIcons
-                    name={enableAdBlock ? 'shield' : 'shield-outlined'}
+                    name={enableAdBlock ? 'gpp-good' : 'gpp-maybe'}
                     size={20}
                     color={
                       focused

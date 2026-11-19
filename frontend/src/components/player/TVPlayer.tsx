@@ -45,7 +45,7 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
   onLevelsLoaded,
   selectedLevel = -1,
   style,
-  enableAdBlock = true,
+  enableAdBlock = false,
   cues = [],
   showSubtitles = false,
   subtitleOffset = 0,
@@ -263,6 +263,12 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
 
   if (Platform.OS === 'web') {
     if (isEmbedUrl) {
+      const isVidSrc =
+        streamUrl.includes('vidsrc.to') ||
+        streamUrl.includes('vidsrc.me') ||
+        streamUrl.includes('vidsrc.cc') ||
+        streamUrl.includes('vidsrc');
+
       return (
         <View style={[styles.container, style]}>
           <iframe
@@ -276,7 +282,7 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
             allowFullScreen
             referrerPolicy="no-referrer"
-            {...(enableAdBlock
+            {...(enableAdBlock && !isVidSrc
               ? { sandbox: 'allow-scripts allow-same-origin allow-forms allow-presentation' }
               : {})}
             onLoad={() => {
