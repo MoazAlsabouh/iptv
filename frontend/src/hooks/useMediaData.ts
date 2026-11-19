@@ -1,9 +1,15 @@
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAppStore } from '../store/useAppStore';
 import { useAuth } from '../context/AuthContext';
 import { fetchAndParseM3U } from '../utils/m3uParser';
 import { MediaItem } from '../types/media';
+import {
+  DEFAULT_NETWORKS,
+  ChannelNetwork,
+  getStoredCustomNetworks,
+  matchChannelToNetwork,
+} from '../config/networks';
 
 /**
  * الكلمات المحظورة في وضع الرقابة الأبوية (Child Mode)
@@ -124,6 +130,35 @@ export function isVodItem(item: MediaItem): boolean {
     return true;
   }
   return false;
+}
+
+/**
+ * دالة مساعدة لتجميع القنوات حسب سلاسل وشبكات القنوات (Networks)
+ */
+export function groupChannelsByNetwork(
+  channels: MediaItem[],
+  networkList: ChannelNetwork[]
+): CategoryGroup[] {
+  if (!channels || channels.length === 0) {
+    return [];
+  }
+
+  const groups: CategoryGroup[] = [];
+
+  for (const network of networkList) {
+    const matched = channels.filter((ch) => matchChannelToNetwork(ch, network));
+    if (matched.length > 0) {
+      const sampleItem = matched.find((c) => Boolean(c.logo && c.logo.trim().length > 0));
+      groups.push({
+        name: network.name,
+        count: matched.length,
+        channels: matched,
+        sampleLogo: sampleItem ? sampleItem.logo : undefined,
+      });
+    }
+  }
+
+  return groups;
 }
 
 /**
@@ -255,11 +290,36 @@ export function useMediaData() {
     return allCountries.filter((c) => c.name !== 'أفلام عالمية');
   }, [filteredLiveChannels]);
 
+  const [customNetworks, setCustomNetworks] = useState<ChannelNetwork[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    getStoredCustomNetworks().then((loaded) => {
+      if (isMounted && loaded && loaded.length > 0) {
+        setCustomNetworks(loaded);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // دمج الباقات الافتراضية مع الباقات المخصصة المعرفة من الإدارة
+  const allNetworkDefinitions = useMemo(() => {
+    return [...DEFAULT_NETWORKS, ...customNetworks];
+  }, [customNetworks]);
+
+  // تجميع قنوات التلفزيون حسب سلاسل وشبكات القنوات
+  const networks = useMemo(() => {
+    return groupChannelsByNetwork(filteredLiveChannels, allNetworkDefinitions);
+  }, [filteredLiveChannels, allNetworkDefinitions]);
+
   return {
     ...query,
     playlistUrl,
     categories,
     countries,
+    networks,
     channels: filteredLiveChannels,
     totalChannels: filteredLiveChannels.length,
     vodItems: filteredVodItems,

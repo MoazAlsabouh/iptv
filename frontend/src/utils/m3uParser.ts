@@ -126,11 +126,11 @@ export function mergeMultiSourceChannels(items: MediaItem[]): MediaItem[] {
       if (!existing.sources) {
         const existingQuality = extractQualityAndBaseName(existing.name).qualityLabel;
         existing.sources = [
-          { label: existingQuality || 'مصدر 1', url: existing.url },
+          { label: existingQuality || 'سيرفر 1 (أساسي)', url: existing.url },
         ];
       }
 
-      const label = qualityLabel || `مصدر ${existing.sources.length + 1}`;
+      const label = qualityLabel || `سيرفر ${existing.sources.length + 1}`;
       // التحقق من عدم تكرار نفس الرابط بالضبط
       if (!existing.sources.some((s) => s.url === item.url)) {
         existing.sources.push({ label, url: item.url });

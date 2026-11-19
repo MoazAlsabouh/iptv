@@ -9,12 +9,12 @@ export interface AppState {
   pinCode: string | null;
   playlistUrl: string;
   favoriteIds: string[];
-  activeDashboardTab: 'category' | 'country';
+  activeDashboardTab: 'category' | 'network' | 'country';
   setChildMode: (isChildMode: boolean) => void;
   setPinCode: (pinCode: string | null) => void;
   setPlaylistUrl: (playlistUrl: string) => void;
   toggleFavorite: (id: string) => void;
-  setActiveDashboardTab: (tab: 'category' | 'country') => void;
+  setActiveDashboardTab: (tab: 'category' | 'network' | 'country') => void;
   resetAppStore: () => void;
 }
 

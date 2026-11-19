@@ -2,10 +2,35 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, ActivityIndicator, Platform } from 'react-native';
 import { Slot, usePathname, useRouter } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import * as Font from 'expo-font';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import { MainLayout } from '../components/layout/MainLayout';
 
-// حقن تعريفات الخطوط الصريحة في document.head فوراً على بيئة الويب لتفادي أخطاء OTS parsing error
+// تحميل الخطوط عبر expo-font على الويب مباشرة من المسار الثابت /fonts/...
+// هذا يمنع @expo/vector-icons من طلب ملفات الخط من /assets/node_modules/... نهائياً
+if (Platform.OS === 'web') {
+  Font.loadAsync({
+    MaterialIcons: '/fonts/MaterialIcons.ttf',
+    material: '/fonts/MaterialIcons.ttf',
+    Ionicons: '/fonts/Ionicons.ttf',
+    ionicons: '/fonts/Ionicons.ttf',
+    MaterialCommunityIcons: '/fonts/MaterialCommunityIcons.ttf',
+    'material-community': '/fonts/MaterialCommunityIcons.ttf',
+    Feather: '/fonts/Feather.ttf',
+    feather: '/fonts/Feather.ttf',
+    FontAwesome: '/fonts/FontAwesome.ttf',
+    AntDesign: '/fonts/AntDesign.ttf',
+    Fontisto: '/fonts/Fontisto.ttf',
+    Octicons: '/fonts/Octicons.ttf',
+    SimpleLineIcons: '/fonts/SimpleLineIcons.ttf',
+    Foundation: '/fonts/Foundation.ttf',
+    Zocial: '/fonts/Zocial.ttf',
+  }).catch((err) => {
+    console.warn('[Font] Failed to load static fonts via expo-font:', err);
+  });
+}
+
+// حقن تعريفات الخطوط الصريحة في document.head فوراً على بيئة الويب كدعم إضافي
 if (Platform.OS === 'web' && typeof document !== 'undefined') {
   const fontStyleId = 'expo-vector-icons-fonts';
   if (!document.getElementById(fontStyleId)) {

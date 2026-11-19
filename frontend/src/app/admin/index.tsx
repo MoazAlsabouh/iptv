@@ -14,6 +14,12 @@ import {
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { BACKEND_BASE_URL } from '../../context/AuthContext';
+import {
+  DEFAULT_NETWORKS,
+  ChannelNetwork,
+  getStoredCustomNetworks,
+  saveCustomNetworks,
+} from '../../config/networks';
 
 interface SubscriptionCode {
   id: number;
@@ -78,7 +84,14 @@ export default function AdminScreen(): React.JSX.Element {
   const [authLoading, setAuthLoading] = useState<boolean>(false);
 
   // التنقل بين التبويبات الرئيسية
-  const [activeTab, setActiveTab] = useState<'codes' | 'resellers'>('codes');
+  const [activeTab, setActiveTab] = useState<'codes' | 'resellers' | 'networks'>('codes');
+
+  // إدارة سلاسل وباقات القنوات المخصصة
+  const [customNetworks, setCustomNetworks] = useState<ChannelNetwork[]>([]);
+  const [showAddNetworkModal, setShowAddNetworkModal] = useState<boolean>(false);
+  const [newNetworkName, setNewNetworkName] = useState<string>('');
+  const [newNetworkKeywords, setNewNetworkKeywords] = useState<string>('');
+  const [newNetworkDesc, setNewNetworkDesc] = useState<string>('');
 
   // بيانات الأكواد
   const [stats, setStats] = useState<Stats>({
@@ -219,6 +232,49 @@ export default function AdminScreen(): React.JSX.Element {
   }, [adminToken, adminKey, getAuthHeaders]);
 
   // تحديث البيانات عند تسجيل الدخول أو تغيير التبويب
+  useEffect(() => {
+    getStoredCustomNetworks().then((nets) => {
+      if (nets) setCustomNetworks(nets);
+    });
+  }, []);
+
+  const handleCreateCustomNetwork = async () => {
+    if (!newNetworkName.trim() || !newNetworkKeywords.trim()) {
+      setStatusMessage('يرجى إدخال اسم الباقة والكلمات المفتاحية');
+      return;
+    }
+    const keywords = newNetworkKeywords
+      .split(',')
+      .map((k) => k.trim())
+      .filter((k) => k.length > 0);
+
+    const newNet: ChannelNetwork = {
+      id: `custom-${Date.now()}`,
+      name: newNetworkName.trim(),
+      keywords,
+      description: newNetworkDesc.trim() || 'باقة مخصصة مضافة من لوحة الإدارة',
+      icon: 'hub',
+      isCustom: true,
+    };
+
+    const updated = [...customNetworks, newNet];
+    setCustomNetworks(updated);
+    await saveCustomNetworks(updated);
+
+    setNewNetworkName('');
+    setNewNetworkKeywords('');
+    setNewNetworkDesc('');
+    setShowAddNetworkModal(false);
+    setStatusMessage(`تمت إضافة "${newNet.name}" بنجاح!`);
+  };
+
+  const handleDeleteCustomNetwork = async (id: string) => {
+    const updated = customNetworks.filter((n) => n.id !== id);
+    setCustomNetworks(updated);
+    await saveCustomNetworks(updated);
+    setStatusMessage('تم حذف الباقة بنجاح');
+  };
+
   useEffect(() => {
     if (isAuthenticated) {
       if (activeTab === 'codes') {
@@ -689,6 +745,25 @@ export default function AdminScreen(): React.JSX.Element {
             ]}
           >
             شبكة الموزعين ({resellers.length})
+          </Text>
+        </Pressable>
+
+        <Pressable
+          style={[styles.mainNavTab, activeTab === 'networks' && styles.mainNavTabActive]}
+          onPress={() => setActiveTab('networks')}
+        >
+          <MaterialIcons
+            name="hub"
+            size={20}
+            color={activeTab === 'networks' ? '#a855f7' : '#94a3b8'}
+          />
+          <Text
+            style={[
+              styles.mainNavTabText,
+              activeTab === 'networks' && styles.mainNavTabTextActive,
+            ]}
+          >
+            سلاسل وباقات القنوات ({DEFAULT_NETWORKS.length + customNetworks.length})
           </Text>
         </Pressable>
       </View>
@@ -1219,7 +1294,7 @@ export default function AdminScreen(): React.JSX.Element {
               </View>
             )}
           </>
-        ) : (
+        ) : activeTab === 'resellers' ? (
           /* ==========================================
              تبويب شبكة الموزعين (Resellers)
              ========================================== */
@@ -1389,6 +1464,239 @@ export default function AdminScreen(): React.JSX.Element {
                 })}
               </View>
             )}
+          </View>
+        ) : (
+          /* ==========================================
+             تبويب سلاسل وباقات القنوات (Networks)
+             ========================================== */
+          <View style={styles.resellersTabContainer}>
+            <View style={styles.resellersHeaderRow}>
+              <View>
+                <Text style={styles.sectionHeaderTitle}>سلاسل وباقات القنوات (Networks)</Text>
+                <Text style={styles.sectionHeaderSub}>
+                  إدارة وتخصيص باقات وسلاسل القنوات التي تظهر في قسم الأقسام (مثل MBC، روتانا، beIN، SSC، إلخ).
+                </Text>
+              </View>
+
+              <Pressable
+                style={[styles.primaryActionBtn, { backgroundColor: '#a855f7' }]}
+                onPress={() => setShowAddNetworkModal(true)}
+              >
+                <MaterialIcons name="add-circle" size={20} color="#ffffff" />
+                <Text style={styles.primaryActionBtnText}>إضافة باقة / قسم مخصص</Text>
+              </Pressable>
+            </View>
+
+            {/* عرض الباقات المخصصة إن وجدت */}
+            {customNetworks.length > 0 && (
+              <View style={{ marginBottom: 24 }}>
+                <Text
+                  style={[
+                    styles.sectionHeaderTitle,
+                    { fontSize: 18, color: '#c084fc', marginBottom: 12 },
+                  ]}
+                >
+                  الباقات المخصصة المضافة حديثاً ({customNetworks.length})
+                </Text>
+                <View style={styles.resellersGrid}>
+                  {customNetworks.map((net) => (
+                    <View
+                      key={net.id}
+                      style={[styles.resellerCard, { borderColor: '#a855f7' }]}
+                    >
+                      <View style={styles.resellerCardHeader}>
+                        <View style={styles.resellerInfo}>
+                          <View
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 8,
+                            }}
+                          >
+                            <MaterialIcons name="hub" size={22} color="#c084fc" />
+                            <Text style={styles.resellerName}>{net.name}</Text>
+                          </View>
+                          <Text style={styles.resellerUsername}>
+                            {net.description}
+                          </Text>
+                        </View>
+                        <View
+                          style={[
+                            styles.statusBadge,
+                            { backgroundColor: '#a855f720' },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.statusBadgeText,
+                              { color: '#c084fc' },
+                            ]}
+                          >
+                            باقة مخصصة
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View
+                        style={{
+                          marginVertical: 8,
+                          padding: 10,
+                          backgroundColor: '#070b14',
+                          borderRadius: 8,
+                        }}
+                      >
+                        <Text
+                          style={{
+                            color: '#94a3b8',
+                            fontSize: 13,
+                            marginBottom: 4,
+                          }}
+                        >
+                          الكلمات المفتاحية للمطابقة:
+                        </Text>
+                        <View
+                          style={{
+                            flexDirection: 'row',
+                            flexWrap: 'wrap',
+                            gap: 6,
+                          }}
+                        >
+                          {net.keywords.map((kw, i) => (
+                            <View
+                              key={i}
+                              style={{
+                                backgroundColor: '#1e293b',
+                                paddingHorizontal: 8,
+                                paddingVertical: 4,
+                                borderRadius: 6,
+                              }}
+                            >
+                              <Text style={{ color: '#e2e8f0', fontSize: 12 }}>
+                                {kw}
+                              </Text>
+                            </View>
+                          ))}
+                        </View>
+                      </View>
+
+                      <View style={styles.resellerCardActions}>
+                        <Pressable
+                          style={[
+                            styles.resellerActionBtnSecondary,
+                            { borderColor: '#ef4444' },
+                          ]}
+                          onPress={() => handleDeleteCustomNetwork(net.id)}
+                        >
+                          <MaterialIcons
+                            name="delete"
+                            size={16}
+                            color="#ef4444"
+                          />
+                          <Text
+                            style={[
+                              styles.resellerActionBtnSecondaryText,
+                              { color: '#ef4444' },
+                            ]}
+                          >
+                            حذف الباقة
+                          </Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {/* عرض باقات النظام الأساسية */}
+            <Text
+              style={[
+                styles.sectionHeaderTitle,
+                { fontSize: 18, color: '#38bdf8', marginBottom: 12 },
+              ]}
+            >
+              باقات النظام الافتراضية ({DEFAULT_NETWORKS.length})
+            </Text>
+            <View style={styles.resellersGrid}>
+              {DEFAULT_NETWORKS.map((net) => (
+                <View key={net.id} style={styles.resellerCard}>
+                  <View style={styles.resellerCardHeader}>
+                    <View style={styles.resellerInfo}>
+                      <View
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 8,
+                        }}
+                      >
+                        <MaterialIcons name="tv" size={22} color="#38bdf8" />
+                        <Text style={styles.resellerName}>{net.name}</Text>
+                      </View>
+                      <Text style={styles.resellerUsername}>
+                        {net.description}
+                      </Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.statusBadge,
+                        { backgroundColor: '#38bdf820' },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.statusBadgeText,
+                          { color: '#38bdf8' },
+                        ]}
+                      >
+                        نظامية
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View
+                    style={{
+                      marginVertical: 8,
+                      padding: 10,
+                      backgroundColor: '#070b14',
+                      borderRadius: 8,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: '#94a3b8',
+                        fontSize: 13,
+                        marginBottom: 4,
+                      }}
+                    >
+                      الكلمات المفتاحية:
+                    </Text>
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        flexWrap: 'wrap',
+                        gap: 6,
+                      }}
+                    >
+                      {net.keywords.map((kw, i) => (
+                        <View
+                          key={i}
+                          style={{
+                            backgroundColor: '#1e293b',
+                            paddingHorizontal: 8,
+                            paddingVertical: 4,
+                            borderRadius: 6,
+                          }}
+                        >
+                          <Text style={{ color: '#94a3b8', fontSize: 12 }}>
+                            {kw}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                </View>
+              ))}
+            </View>
           </View>
         )}
       </ScrollView>
@@ -1637,6 +1945,78 @@ export default function AdminScreen(): React.JSX.Element {
                 ) : (
                   <Text style={styles.modalConfirmBtnText}>حفظ التعديلات</Text>
                 )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ==========================================
+          مودال إضافة باقة أو قسم مخصص
+          ========================================== */}
+      <Modal visible={showAddNetworkModal} transparent animationType="fade">
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHeaderTitleRow}>
+                <MaterialIcons name="hub" size={24} color="#a855f7" />
+                <Text style={styles.modalTitle}>إضافة باقة أو قسم مخصص</Text>
+              </View>
+              <Pressable onPress={() => setShowAddNetworkModal(false)}>
+                <MaterialIcons name="close" size={22} color="#94a3b8" />
+              </Pressable>
+            </View>
+
+            <ScrollView style={styles.modalBody}>
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>اسم الباقة (مثال: قنوات SSC الرياضية أو باقة شاهد):</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="اسم الباقة..."
+                  placeholderTextColor="#64748b"
+                  value={newNetworkName}
+                  onChangeText={setNewNetworkName}
+                />
+              </View>
+
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>
+                  الكلمات المفتاحية للمطابقة في اسم القناة (افصل بينها بفاصلة):
+                </Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="مثال: ssc, ssc 1, الرياضة السعودية"
+                  placeholderTextColor="#64748b"
+                  value={newNetworkKeywords}
+                  onChangeText={setNewNetworkKeywords}
+                />
+              </View>
+
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>الوصف (اختياري):</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="وصف مختصر للباقة..."
+                  placeholderTextColor="#64748b"
+                  value={newNetworkDesc}
+                  onChangeText={setNewNetworkDesc}
+                />
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <Pressable
+                style={styles.modalCancelBtn}
+                onPress={() => setShowAddNetworkModal(false)}
+              >
+                <Text style={styles.modalCancelBtnText}>إلغاء</Text>
+              </Pressable>
+
+              <Pressable
+                style={[styles.modalConfirmBtn, { backgroundColor: '#a855f7' }]}
+                onPress={handleCreateCustomNetwork}
+              >
+                <Text style={styles.modalConfirmBtnText}>حفظ وإضافة الباقة</Text>
               </Pressable>
             </View>
           </View>

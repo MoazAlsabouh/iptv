@@ -66,8 +66,9 @@ export default function CategoryChannelsScreen(): React.JSX.Element {
 
   const filterBy = params.filterBy || 'category';
   const isCountryFilter = filterBy === 'country';
+  const isNetworkFilter = filterBy === 'network';
 
-  const { channels, isLoading } = useMediaData();
+  const { channels, networks, isLoading } = useMediaData();
 
   const filteredChannels = useMemo(() => {
     if (!channels || channels.length === 0 || !categoryName) {
@@ -78,10 +79,14 @@ export default function CategoryChannelsScreen(): React.JSX.Element {
         (ch) => (ch.country ? ch.country.trim() : 'قنوات عامة') === categoryName
       );
     }
+    if (isNetworkFilter) {
+      const matchedGroup = networks.find((n) => n.name === categoryName);
+      return matchedGroup ? matchedGroup.channels : [];
+    }
     return channels.filter(
       (ch) => (ch.groupTitle ? ch.groupTitle.trim() : 'قنوات عامة ومنوعة') === categoryName
     );
-  }, [channels, categoryName, isCountryFilter]);
+  }, [channels, networks, categoryName, isCountryFilter, isNetworkFilter]);
 
   const handleGoBack = () => {
     if (router.canGoBack()) {
@@ -133,7 +138,11 @@ export default function CategoryChannelsScreen(): React.JSX.Element {
 
         <View style={styles.titleInfo}>
           <Text style={styles.categoryTitle}>
-            {isCountryFilter ? `قنوات دولة: ${categoryName}` : categoryName || 'التصنيف'}
+            {isCountryFilter
+              ? `قنوات دولة: ${categoryName}`
+              : isNetworkFilter
+              ? `${categoryName} (سلسلة قنوات)`
+              : categoryName || 'التصنيف'}
           </Text>
           <Text style={styles.channelCount}>
             {filteredChannels.length} {categoryName.includes('أفلام') ? 'فيلم متاح' : 'قناة متاحة'}

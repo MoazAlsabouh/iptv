@@ -470,15 +470,90 @@ function processDistroM3U(
 }
 
 /**
+ * معالجة وتوحيد قوائم iptv-org.pro و iptv-org للباقات والتصنيفات (رياضة، أطفال، أخبار، ترفيه)
+ */
+function processIptvOrgCategoryM3U(
+  content: string,
+  defaultCategory: string,
+  urlSet: Set<string>,
+  entries: ChannelEntry[]
+): void {
+  const lines = content.split('\n');
+  const total = lines.length;
+  let currentExtinf = '';
+
+  for (let i = 0; i < total; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    if (line.startsWith('#EXTINF:')) {
+      currentExtinf = line;
+    } else if (!line.startsWith('#') && currentExtinf) {
+      if (line.startsWith('http://') || line.startsWith('https://')) {
+        if (!isBlockedOrUnstableChannel(currentExtinf) && !urlSet.has(line)) {
+          const lower = currentExtinf.toLowerCase();
+          const detectedCountry = detectArabCountry(currentExtinf);
+
+          // فلترة ذكية لضم القنوات العربية والشبكات الرياضية والترفيهية الشهيرة
+          const isTarget =
+            Boolean(detectedCountry) ||
+            lower.includes('arabic') ||
+            lower.includes('arab') ||
+            lower.includes('bein') ||
+            lower.includes('mbc') ||
+            lower.includes('rotana') ||
+            lower.includes('al jazeera') ||
+            lower.includes('aljazeera') ||
+            lower.includes('alarabiya') ||
+            lower.includes('alhadath') ||
+            lower.includes('sky news') ||
+            lower.includes('france 24') ||
+            lower.includes('bbc') ||
+            lower.includes('dubai') ||
+            lower.includes('abu dhabi') ||
+            lower.includes('ssc') ||
+            lower.includes('osn') ||
+            lower.includes('spacetoon') ||
+            lower.includes('majid') ||
+            lower.includes('toyor');
+
+          if (isTarget) {
+            urlSet.add(line);
+            const country = detectedCountry || 'قنوات عربية دولية';
+            const commaIdx = currentExtinf.lastIndexOf(',');
+            const chName = commaIdx !== -1 ? currentExtinf.substring(commaIdx + 1) : '';
+            const category = translateCategory(defaultCategory, chName);
+
+            const sanitized = sanitizeExtinf(currentExtinf, country, category);
+            entries.push({ extinf: sanitized, url: line });
+          }
+        }
+      }
+      currentExtinf = '';
+    }
+  }
+}
+
+/**
  * جلب وتوحيد كافة المصادر بالتوازي باستخدام Promise.allSettled
  * مع منح الأولوية الأولى لقنوات Free-TV الموثوقة لتأخذ صدارة البث
+ * وإضافة قوائم iptv-org.pro و iptv-org لدعم باقات الرياضة والأخبار والأطفال والسيرفرات المتعددة
  */
 async function fetchAndNormalizeAllIPTV(): Promise<string> {
   const urlSet = new Set<string>();
   const entries: ChannelEntry[] = [];
 
-  // جلب كافة المصادر بالتوازي وبأمان
-  const [freeTvRes, countryResults, araRes, distroRes] = await Promise.allSettled([
+  // جلب كافة المصادر بالتوازي وبأمان مع مهلة زمنية لكل مصدر
+  const [
+    freeTvRes,
+    countryResults,
+    araRes,
+    distroRes,
+    sportsRes,
+    kidsRes,
+    newsRes,
+    moviesRes,
+  ] = await Promise.allSettled([
     fetchWithTimeout('https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8', 12000),
     Promise.allSettled(
       ARAB_COUNTRIES.map(async (c) => {
@@ -491,9 +566,13 @@ async function fetchAndNormalizeAllIPTV(): Promise<string> {
     ),
     fetchWithTimeout('https://iptv-org.github.io/iptv/languages/ara.m3u', 10000),
     fetchWithTimeout('https://www.apsattv.com/distro.m3u', 6000),
+    fetchWithTimeout('https://iptv-org.github.io/iptv/categories/sports.m3u', 8000),
+    fetchWithTimeout('https://iptv-org.github.io/iptv/categories/kids.m3u', 8000),
+    fetchWithTimeout('https://iptv-org.github.io/iptv/categories/news.m3u', 8000),
+    fetchWithTimeout('https://iptv-org.github.io/iptv/categories/movies.m3u', 8000),
   ]);
 
-  // 1. الأولوية الأولى: قائمة Free-TV (تدخل في البداية لتكون "مصدر 1")
+  // 1. الأولوية الأولى: قائمة Free-TV (تدخل في البداية لتكون "سيرفر 1")
   if (freeTvRes.status === 'fulfilled' && freeTvRes.value) {
     processFreeTVM3U(freeTvRes.value, urlSet, entries);
   }
@@ -515,6 +594,20 @@ async function fetchAndNormalizeAllIPTV(): Promise<string> {
   // 4. الأولوية الرابعة: قائمة DistroTV
   if (distroRes.status === 'fulfilled' && distroRes.value) {
     processDistroM3U(distroRes.value, urlSet, entries);
+  }
+
+  // 5. الأولوية الخامسة: باقات iptv-org.pro و iptv-org (رياضة، أطفال، أخبار، أفلام)
+  if (sportsRes.status === 'fulfilled' && sportsRes.value) {
+    processIptvOrgCategoryM3U(sportsRes.value, 'Sports', urlSet, entries);
+  }
+  if (kidsRes.status === 'fulfilled' && kidsRes.value) {
+    processIptvOrgCategoryM3U(kidsRes.value, 'Kids', urlSet, entries);
+  }
+  if (newsRes.status === 'fulfilled' && newsRes.value) {
+    processIptvOrgCategoryM3U(newsRes.value, 'News', urlSet, entries);
+  }
+  if (moviesRes.status === 'fulfilled' && moviesRes.value) {
+    processIptvOrgCategoryM3U(moviesRes.value, 'Movies', urlSet, entries);
   }
 
   const lines = ['#EXTM3U'];

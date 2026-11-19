@@ -13,11 +13,11 @@ import { useAppStore } from '../../store/useAppStore';
 import { useMediaData, CategoryGroup } from '../../hooks/useMediaData';
 import { DEFAULT_BACKEND_M3U_URL } from '../../utils/m3uParser';
 
-type TabType = 'category' | 'country';
+type TabType = 'category' | 'network' | 'country';
 
 /**
  * شاشة لوحة التحكم والتصنيفات المركزية بتصميم تلفاز داكن (#0f172a) واستجابة كاملة للريموت.
- * تدعم التبويب بين "حسب القسم" و "حسب الدولة".
+ * تدعم التبويب بين "حسب القسم"، "سلاسل القنوات"، و "حسب الدولة".
  */
 export default function DashboardScreen(): React.JSX.Element {
   const router = useRouter();
@@ -38,8 +38,16 @@ export default function DashboardScreen(): React.JSX.Element {
     }
   }, [playlistUrl, setPlaylistUrl]);
 
-  const { categories, countries, totalChannels, isLoading, isError, error, refetch } =
-    useMediaData();
+  const {
+    categories,
+    countries,
+    networks,
+    totalChannels,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useMediaData();
 
   // 1. حالة التحميل
   if (isLoading) {
@@ -108,11 +116,17 @@ export default function DashboardScreen(): React.JSX.Element {
     );
   }
 
-  const currentList = (activeTab === 'category' ? categories : countries).filter(
+  const currentList = (
+    activeTab === 'category'
+      ? categories
+      : activeTab === 'network'
+      ? networks
+      : countries
+  ).filter(
     (item) => item.name !== 'أفلام عالمية' && item.name !== 'أفلام رائجة'
   );
 
-  // 3. حالة النجاح: شبكة التصنيفات / الدول
+  // 3. حالة النجاح: شبكة التصنيفات / الدول / سلاسل القنوات
   return (
     <View style={styles.container}>
       {/* شريط العنوان وشريط التبويب العلوي */}
@@ -122,11 +136,13 @@ export default function DashboardScreen(): React.JSX.Element {
           <Text style={styles.headerSubtitle}>
             {activeTab === 'category'
               ? `إجمالي الأقسام: ${categories.length} • إجمالي القنوات: ${totalChannels} قناة`
+              : activeTab === 'network'
+              ? `إجمالي باقات السلاسل: ${networks.length} باقة • إجمالي القنوات: ${totalChannels} قناة`
               : `إجمالي الدول: ${countries.length} • إجمالي القنوات: ${totalChannels} قناة`}
           </Text>
         </View>
 
-        {/* أزرار التبويب: حسب القسم وحسب الدولة */}
+        {/* أزرار التبويب: حسب القسم، سلاسل القنوات، وحسب الدولة */}
         <View style={styles.tabContainer}>
           <Pressable
             onPress={() => setActiveTab('category')}
@@ -157,6 +173,40 @@ export default function DashboardScreen(): React.JSX.Element {
                   ]}
                 >
                   حسب القسم
+                </Text>
+              </View>
+            )}
+          </Pressable>
+
+          <Pressable
+            onPress={() => setActiveTab('network')}
+            style={({ focused }) => [
+              styles.tabBtn,
+              activeTab === 'network' && styles.tabBtnActive,
+              focused && styles.tabBtnFocused,
+            ]}
+          >
+            {({ focused }) => (
+              <View style={styles.tabContent}>
+                <MaterialIcons
+                  name="hub"
+                  size={20}
+                  color={
+                    focused
+                      ? '#000000'
+                      : activeTab === 'network'
+                      ? '#ffffff'
+                      : '#94a3b8'
+                  }
+                />
+                <Text
+                  style={[
+                    styles.tabText,
+                    activeTab === 'network' && styles.tabTextActive,
+                    focused && styles.tabTextFocused,
+                  ]}
+                >
+                  سلاسل القنوات
                 </Text>
               </View>
             )}
@@ -214,6 +264,8 @@ export default function DashboardScreen(): React.JSX.Element {
             iconName = 'movie';
           } else if (activeTab === 'country') {
             iconName = 'flag';
+          } else if (activeTab === 'network') {
+            iconName = 'hub';
           }
 
           return (
@@ -221,17 +273,10 @@ export default function DashboardScreen(): React.JSX.Element {
               <Pressable
                 hasTVPreferredFocus={index === 0}
                 onPress={() => {
-                  if (activeTab === 'country') {
-                    router.push({
-                      pathname: '/category/[name]',
-                      params: { name: item.name, filterBy: 'country' },
-                    });
-                  } else {
-                    router.push({
-                      pathname: '/category/[name]',
-                      params: { name: item.name },
-                    });
-                  }
+                  router.push({
+                    pathname: '/category/[name]',
+                    params: { name: item.name, filterBy: activeTab },
+                  });
                 }}
                 style={({ focused }) => [
                   styles.categoryCard,
