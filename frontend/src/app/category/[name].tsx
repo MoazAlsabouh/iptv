@@ -87,7 +87,7 @@ export default function CategoryChannelsScreen(): React.JSX.Element {
     if (router.canGoBack()) {
       router.back();
     } else {
-      router.replace('/');
+      router.replace('/home');
     }
   };
 

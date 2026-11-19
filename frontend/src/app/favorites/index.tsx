@@ -73,7 +73,7 @@ export default function FavoritesScreen(): React.JSX.Element {
     if (router.canGoBack()) {
       router.back();
     } else {
-      router.replace('/');
+      router.replace('/home');
     }
   };
 

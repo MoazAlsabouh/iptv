@@ -12,6 +12,6 @@ export function safeGoBack(router: AppRouter): void {
   if (router.canGoBack()) {
     router.back();
   } else {
-    router.replace('/');
+    router.replace('/home');
   }
 }

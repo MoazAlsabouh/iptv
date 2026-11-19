@@ -16,12 +16,16 @@ function NavigationGuard(): React.JSX.Element {
   useEffect(() => {
     if (isLoading) return;
 
-    const isPublic = pathname === '/activate' || pathname.startsWith('/admin') || pathname.startsWith('/reseller');
+    const isPublic =
+      pathname === '/' ||
+      pathname === '/activate' ||
+      pathname.startsWith('/admin') ||
+      pathname.startsWith('/reseller');
 
     if (!token && !isPublic) {
       router.replace('/activate');
     } else if (token && pathname === '/activate') {
-      router.replace('/');
+      router.replace('/home');
     }
   }, [token, isLoading, pathname, router]);
 
@@ -45,6 +49,7 @@ function NavigationGuard(): React.JSX.Element {
 
   // المشغل، شاشة التفعيل، ولوحة الإدارة تعمل في وضع ملء الشاشة دون الشريط الجانبي
   const isFullscreen =
+    pathname === '/' ||
     pathname.startsWith('/play/') ||
     pathname === '/activate' ||
     pathname.startsWith('/admin') ||

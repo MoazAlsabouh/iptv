@@ -51,7 +51,7 @@ export default function ActivateScreen(): React.JSX.Element {
     if (result.success) {
       setSuccessMessage('تم تفعيل الاشتراك بنجاح! جاري تحويلك للمنصة...');
       setTimeout(() => {
-        router.replace('/');
+        router.replace('/home');
       }, 1200);
     } else {
       setErrorMessage(result.error || 'فشل التفعيل، تأكد من صحة الكود');

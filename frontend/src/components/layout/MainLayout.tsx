@@ -13,7 +13,7 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: 'channels', title: 'القنوات التلفزيونية', route: '/', icon: 'live-tv' },
+  { id: 'channels', title: 'القنوات التلفزيونية', route: '/home', icon: 'live-tv' },
   { id: 'movies', title: 'الأفلام والمسلسلات', route: '/movies', icon: 'movie' },
   { id: 'favorites', title: 'المفضلة', route: '/favorites', icon: 'star' },
   { id: 'settings', title: 'الإعدادات', route: '/settings', icon: 'settings' },
@@ -61,8 +61,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           <View style={styles.navContainer}>
             {NAV_ITEMS.map((item, index) => {
               const isActive =
-                item.route === '/'
-                  ? currentPath === '/' || currentPath.startsWith('/category')
+                item.route === '/home'
+                  ? currentPath === '/home' || currentPath.startsWith('/category')
                   : currentPath === item.route || currentPath.startsWith(item.route);
 
               return (

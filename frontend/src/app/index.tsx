@@ -1,503 +1,869 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
   Pressable,
-  ActivityIndicator,
-  FlatList,
   StyleSheet,
+  ScrollView,
+  useWindowDimensions,
+  Platform,
+  Linking,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useAppStore } from '../store/useAppStore';
-import { useMediaData, CategoryGroup } from '../hooks/useMediaData';
-import { DEFAULT_BACKEND_M3U_URL } from '../utils/m3uParser';
-
-type TabType = 'category' | 'country';
+import { useAuth } from '../context/AuthContext';
 
 /**
- * شاشة لوحة التحكم والتصنيفات المركزية بتصميم تلفاز داكن (#0f172a) واستجابة كاملة للريموت.
- * تدعم التبويب بين "حسب القسم" و "حسب الدولة".
+ * روابط تحميل التطبيقات المباشرة
+ * (ضع الرابط المباشر لملف APK عند توفره، وسيفتح فوراً للمستخدم)
  */
-export default function DashboardScreen(): React.JSX.Element {
+export const SMART_TV_DOWNLOAD_URL = '';
+export const MOBILE_DOWNLOAD_URL = '';
+
+export default function LandingPage(): React.JSX.Element {
   const router = useRouter();
-  const {
-    playlistUrl,
-    setPlaylistUrl,
-    activeDashboardTab,
-    setActiveDashboardTab,
-  } = useAppStore();
+  const { width } = useWindowDimensions();
+  const isWide = width >= 960;
+  const isTablet = width >= 640 && width < 960;
+  const isMobile = width < 640;
 
-  const activeTab = activeDashboardTab;
-  const setActiveTab = setActiveDashboardTab;
+  const { token } = useAuth();
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // التأكد من توجيه التطبيق دائماً للرابط المركزي السحابي الموحد
-  useEffect(() => {
-    if (!playlistUrl || playlistUrl.trim().length === 0) {
-      setPlaylistUrl(DEFAULT_BACKEND_M3U_URL);
+  // إظهار تنبيه لطيف للمستخدم
+  const showToast = (message: string) => {
+    setToastMessage(message);
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 3500);
+  };
+
+  // الدخول للمنصة (إذا كان لديه اشتراك مفعّل يدخل للرئيسية، وإلا يتوجه لشاشة التفعيل)
+  const handleEnterPlatform = () => {
+    if (token) {
+      router.push('/home');
+    } else {
+      router.push('/activate');
     }
-  }, [playlistUrl, setPlaylistUrl]);
+  };
 
-  const { categories, countries, totalChannels, isLoading, isError, error, refetch } =
-    useMediaData();
+  // معالجة تحميل تطبيق الشاشات الذكية
+  const handleDownloadSmartTV = () => {
+    if (SMART_TV_DOWNLOAD_URL && SMART_TV_DOWNLOAD_URL.trim().length > 0) {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.open(SMART_TV_DOWNLOAD_URL, '_blank');
+      } else {
+        Linking.openURL(SMART_TV_DOWNLOAD_URL);
+      }
+    } else {
+      showToast('جاري تجهيز النسخة وسيتم رفع رابط التحميل قريباً');
+    }
+  };
 
-  // 1. حالة التحميل
-  if (isLoading) {
-    return (
-      <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color="#38bdf8" />
-        <Text style={styles.loadingTitle}>جاري تحميل وتجميع القنوات التلفزيونية...</Text>
-        <Text style={styles.loadingSub}>جاري الاتصال بالخادم لجلب القنوات...</Text>
-      </View>
-    );
-  }
+  // معالجة تحميل تطبيق الموبايل
+  const handleDownloadMobile = () => {
+    if (MOBILE_DOWNLOAD_URL && MOBILE_DOWNLOAD_URL.trim().length > 0) {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.open(MOBILE_DOWNLOAD_URL, '_blank');
+      } else {
+        Linking.openURL(MOBILE_DOWNLOAD_URL);
+      }
+    } else {
+      showToast('جاري تجهيز النسخة وسيتم رفع رابط التحميل قريباً');
+    }
+  };
 
-  // 2. حالة الخطأ
-  if (isError) {
-    const isSubError = error?.message?.includes('الاشتراك');
-    return (
-      <View style={styles.centerContainer}>
-        <View style={styles.errorCard}>
-          <MaterialIcons
-            name={isSubError ? 'lock-outline' : 'error-outline'}
-            size={60}
-            color={isSubError ? '#f59e0b' : '#ef4444'}
-          />
-          <Text style={styles.errorTitle}>
-            {isSubError ? 'حالة الاشتراك' : 'تعذر الاتصال بالخادم'}
-          </Text>
-          <Text style={styles.errorDesc}>
-            {error?.message || 'يرجى التأكد من الاتصال بالإنترنت ثم إعادة المحاولة'}
-          </Text>
-
-          <View style={styles.errorActions}>
-            {isSubError ? (
-              <Pressable
-                hasTVPreferredFocus
-                onPress={() => router.push('/activate')}
-                style={({ focused }) => [styles.actionBtn, focused && styles.actionBtnFocused]}
-              >
-                {({ focused }) => (
-                  <View style={styles.btnContent}>
-                    <MaterialIcons name="vpn-key" size={20} color={focused ? '#000000' : '#ffffff'} />
-                    <Text style={[styles.actionBtnText, focused && styles.actionBtnTextFocused]}>
-                      تفعيل كود الاشتراك
-                    </Text>
-                  </View>
-                )}
-              </Pressable>
-            ) : (
-              <Pressable
-                hasTVPreferredFocus
-                onPress={() => refetch()}
-                style={({ focused }) => [styles.actionBtn, focused && styles.actionBtnFocused]}
-              >
-                {({ focused }) => (
-                  <View style={styles.btnContent}>
-                    <MaterialIcons name="refresh" size={20} color={focused ? '#000000' : '#ffffff'} />
-                    <Text style={[styles.actionBtnText, focused && styles.actionBtnTextFocused]}>
-                      إعادة المحاولة
-                    </Text>
-                  </View>
-                )}
-              </Pressable>
-            )}
+  return (
+    <View style={styles.root}>
+      {/* تنبيه عائم عند النقر على روابط قيد التجهيز */}
+      {toastMessage && (
+        <View style={styles.toastContainer}>
+          <View style={styles.toastInner}>
+            <MaterialIcons name="info" size={20} color="#38bdf8" />
+            <Text style={styles.toastText}>{toastMessage}</Text>
           </View>
         </View>
-      </View>
-    );
-  }
+      )}
 
-  const currentList = (activeTab === 'category' ? categories : countries).filter(
-    (item) => item.name !== 'أفلام عالمية' && item.name !== 'أفلام رائجة'
-  );
-
-  // 3. حالة النجاح: شبكة التصنيفات / الدول
-  return (
-    <View style={styles.container}>
-      {/* شريط العنوان وشريط التبويب العلوي */}
-      <View style={styles.headerBar}>
-        <View>
-          <Text style={styles.headerTitle}>القنوات التلفزيونية</Text>
-          <Text style={styles.headerSubtitle}>
-            {activeTab === 'category'
-              ? `إجمالي الأقسام: ${categories.length} • إجمالي القنوات: ${totalChannels} قناة`
-              : `إجمالي الدول: ${countries.length} • إجمالي القنوات: ${totalChannels} قناة`}
-          </Text>
+      {/* شريط الملاحة العلوي */}
+      <View style={styles.navbar}>
+        <View style={styles.brandRow}>
+          <View style={styles.brandIconCircle}>
+            <MaterialIcons name="live-tv" size={26} color="#38bdf8" />
+          </View>
+          <View>
+            <Text style={styles.brandName}>IPTV STREAM</Text>
+            <Text style={styles.brandSub}>منصة الترفيه المنزلي المتكاملة</Text>
+          </View>
         </View>
 
-        {/* أزرار التبويب: حسب القسم وحسب الدولة */}
-        <View style={styles.tabContainer}>
-          <Pressable
-            onPress={() => setActiveTab('category')}
-            style={({ focused }) => [
-              styles.tabBtn,
-              activeTab === 'category' && styles.tabBtnActive,
-              focused && styles.tabBtnFocused,
-            ]}
-          >
-            {({ focused }) => (
-              <View style={styles.tabContent}>
-                <MaterialIcons
-                  name="category"
-                  size={20}
-                  color={
-                    focused
-                      ? '#000000'
-                      : activeTab === 'category'
-                      ? '#ffffff'
-                      : '#94a3b8'
-                  }
-                />
-                <Text
-                  style={[
-                    styles.tabText,
-                    activeTab === 'category' && styles.tabTextActive,
-                    focused && styles.tabTextFocused,
-                  ]}
-                >
-                  حسب القسم
-                </Text>
-              </View>
-            )}
-          </Pressable>
-
-          <Pressable
-            onPress={() => setActiveTab('country')}
-            style={({ focused }) => [
-              styles.tabBtn,
-              activeTab === 'country' && styles.tabBtnActive,
-              focused && styles.tabBtnFocused,
-            ]}
-          >
-            {({ focused }) => (
-              <View style={styles.tabContent}>
-                <MaterialIcons
-                  name="public"
-                  size={20}
-                  color={
-                    focused
-                      ? '#000000'
-                      : activeTab === 'country'
-                      ? '#ffffff'
-                      : '#94a3b8'
-                  }
-                />
-                <Text
-                  style={[
-                    styles.tabText,
-                    activeTab === 'country' && styles.tabTextActive,
-                    focused && styles.tabTextFocused,
-                  ]}
-                >
-                  حسب الدولة
-                </Text>
-              </View>
-            )}
-          </Pressable>
-        </View>
-      </View>
-
-      {/* شبكة البطاقات المتجاوبة */}
-      <FlatList<CategoryGroup>
-        data={currentList}
-        keyExtractor={(item) => `${activeTab}-${item.name}`}
-        numColumns={3}
-        contentContainerStyle={styles.gridContainer}
-        showsVerticalScrollIndicator={false}
-        renderItem={({ item, index }) => {
-          const isMovie =
-            item.name.includes('أفلام') || item.name === 'أفلام عالمية';
-
-          let iconName: keyof typeof MaterialIcons.glyphMap = 'live-tv';
-          if (isMovie) {
-            iconName = 'movie';
-          } else if (activeTab === 'country') {
-            iconName = 'flag';
-          }
-
-          return (
-            <View style={styles.gridItem}>
-              <Pressable
-                hasTVPreferredFocus={index === 0}
-                onPress={() => {
-                  if (activeTab === 'country') {
-                    router.push({
-                      pathname: '/category/[name]',
-                      params: { name: item.name, filterBy: 'country' },
-                    });
-                  } else {
-                    router.push({
-                      pathname: '/category/[name]',
-                      params: { name: item.name },
-                    });
-                  }
-                }}
-                style={({ focused }) => [
-                  styles.categoryCard,
-                  focused && styles.categoryCardFocused,
+        <Pressable
+          hasTVPreferredFocus
+          style={({ focused, pressed }) => [
+            styles.navCtaBtn,
+            focused && styles.navCtaBtnFocused,
+            pressed && { opacity: 0.85 },
+          ]}
+          onPress={handleEnterPlatform}
+        >
+          {({ focused }) => (
+            <>
+              <MaterialIcons
+                name="login"
+                size={18}
+                color={focused ? '#070b14' : '#ffffff'}
+              />
+              <Text
+                style={[
+                  styles.navCtaBtnText,
+                  focused && styles.navCtaBtnTextFocused,
                 ]}
               >
-                {({ focused }) => (
-                  <View style={styles.cardInner}>
-                    <View style={styles.cardHeader}>
-                      <View style={[styles.iconCircle, focused && styles.iconCircleFocused]}>
-                        <MaterialIcons
-                          name={iconName}
-                          size={28}
-                          color={focused ? '#0284c7' : '#38bdf8'}
-                        />
-                      </View>
-                      <View style={[styles.countBadge, focused && styles.countBadgeFocused]}>
-                        <Text style={[styles.countText, focused && styles.countTextFocused]}>
-                          {item.count} {isMovie ? 'فيلم' : 'قناة'}
-                        </Text>
-                      </View>
-                    </View>
+                الدخول للمنصة
+              </Text>
+            </>
+          )}
+        </Pressable>
+      </View>
 
-                    <View style={styles.cardBottom}>
-                      <Text
-                        numberOfLines={1}
-                        style={[styles.categoryTitle, focused && styles.categoryTitleFocused]}
-                      >
-                        {item.name}
-                      </Text>
-                      <Text style={[styles.categorySub, focused && styles.categorySubFocused]}>
-                        اضغط للاستعراض
-                      </Text>
-                    </View>
+      <ScrollView
+        style={styles.scrollArea}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* ==========================================
+            قسم البطل الترحيبي (Hero Section)
+            ========================================== */}
+        <View style={styles.heroSection}>
+          <View style={styles.heroBadge}>
+            <MaterialIcons name="auto-awesome" size={16} color="#38bdf8" />
+            <Text style={styles.heroBadgeText}>
+              الجيل الجديد من تجربة البث الرقمي 4K & FHD
+            </Text>
+          </View>
+
+          <Text style={[styles.heroTitle, isMobile && { fontSize: 28 }]}>
+            بوابتك المتكاملة لمشاهدة <Text style={styles.textHighlight}>القنوات والأفلام</Text> بأعلى جودة
+          </Text>
+
+          <Text style={[styles.heroDescription, isMobile && { fontSize: 15 }]}>
+            استمتع بآلاف القنوات التلفزيونية المباشرة العربية والعالمية، ومكتبة متجددة باستمرار
+            من أحدث الأفلام والمسلسلات بدقة فائقة وبدون إعلانات مزعجة. صُممت المنصة خصيصاً
+            لتمنحك تجربة سينمائية متكاملة متوافقة تماماً مع أجهزة التلفاز وريموت التحكم عن بعد.
+          </Text>
+
+          {/* زر الدعوة الأساسي */}
+          <View style={styles.heroCtaWrapper}>
+            <Pressable
+              style={({ focused, pressed }) => [
+                styles.primaryCtaBtn,
+                focused && styles.primaryCtaBtnFocused,
+                pressed && { opacity: 0.85 },
+              ]}
+              onPress={handleEnterPlatform}
+            >
+              {({ focused }) => (
+                <>
+                  <Text
+                    style={[
+                      styles.primaryCtaBtnText,
+                      focused && styles.primaryCtaBtnTextFocused,
+                    ]}
+                  >
+                    ابدأ المشاهدة الآن
+                  </Text>
+                  <MaterialIcons
+                    name="play-circle-filled"
+                    size={24}
+                    color={focused ? '#ffffff' : '#070b14'}
+                  />
+                </>
+              )}
+            </Pressable>
+          </View>
+
+          {/* مؤشرات سريعة */}
+          <View style={styles.statsPillRow}>
+            <View style={styles.statPill}>
+              <MaterialIcons name="live-tv" size={18} color="#38bdf8" />
+              <Text style={styles.statPillText}>+10,000 قناة حية</Text>
+            </View>
+            <View style={styles.statPill}>
+              <MaterialIcons name="movie" size={18} color="#f59e0b" />
+              <Text style={styles.statPillText}>أحدث الأفلام والمسلسلات</Text>
+            </View>
+            <View style={styles.statPill}>
+              <MaterialIcons name="flash-on" size={18} color="#10b981" />
+              <Text style={styles.statPillText}>بث مباشر فائق السرعة</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* ==========================================
+            قسم تحميل التطبيقات (Downloads Section)
+            ========================================== */}
+        <View style={styles.sectionContainer}>
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionHeaderBadge}>
+              <MaterialIcons name="download" size={16} color="#38bdf8" />
+              <Text style={styles.sectionHeaderBadgeText}>تطبيقات المنصة</Text>
+            </View>
+            <Text style={styles.sectionTitle}>حمّل التطبيق على أجهزتك المفضلة</Text>
+            <Text style={styles.sectionSubtitle}>
+              تطبيقات أصلية وخفيفة تمنحك أفضل أداء على الشاشات الكبيرة والهواتف الذكية
+            </Text>
+          </View>
+
+          <View style={isWide ? styles.downloadCardsGridWide : styles.downloadCardsGridCol}>
+            {/* بطاقة الشاشات الذكية */}
+            <View style={styles.downloadCard}>
+              <View style={styles.downloadCardHeader}>
+                <View style={styles.downloadIconWrap}>
+                  <MaterialIcons name="tv" size={36} color="#38bdf8" />
+                </View>
+                {!SMART_TV_DOWNLOAD_URL && (
+                  <View style={styles.comingSoonBadge}>
+                    <Text style={styles.comingSoonText}>قريباً</Text>
                   </View>
+                )}
+              </View>
+
+              <Text style={styles.downloadCardTitle}>شاشات أندرويد والتلفاز الذكي</Text>
+              <Text style={styles.downloadCardSub}>Android TV • Google TV • TV Box</Text>
+
+              <View style={styles.featureList}>
+                <View style={styles.featureItem}>
+                  <MaterialIcons name="check-circle" size={16} color="#38bdf8" />
+                  <Text style={styles.featureItemText}>تحكم كامل ومباشر بريموت التلفاز</Text>
+                </View>
+                <View style={styles.featureItem}>
+                  <MaterialIcons name="check-circle" size={16} color="#38bdf8" />
+                  <Text style={styles.featureItemText}>واجهة سينمائية ملائمة للشاشات الكبيرة</Text>
+                </View>
+                <View style={styles.featureItem}>
+                  <MaterialIcons name="check-circle" size={16} color="#38bdf8" />
+                  <Text style={styles.featureItemText}>دعم دقة 4K و Full HD بدون تقطيع</Text>
+                </View>
+              </View>
+
+              <Pressable
+                style={({ focused, pressed }) => [
+                  styles.downloadBtn,
+                  focused && styles.downloadBtnFocused,
+                  pressed && { opacity: 0.85 },
+                ]}
+                onPress={handleDownloadSmartTV}
+              >
+                {({ focused }) => (
+                  <>
+                    <MaterialIcons
+                      name="android"
+                      size={20}
+                      color={focused ? '#070b14' : '#38bdf8'}
+                    />
+                    <Text
+                      style={[
+                        styles.downloadBtnText,
+                        focused && styles.downloadBtnTextFocused,
+                      ]}
+                    >
+                      تحميل نسخة الشاشات (APK)
+                    </Text>
+                  </>
                 )}
               </Pressable>
             </View>
-          );
-        }}
-      />
+
+            {/* بطاقة الهواتف الذكية */}
+            <View style={styles.downloadCard}>
+              <View style={styles.downloadCardHeader}>
+                <View style={[styles.downloadIconWrap, { backgroundColor: 'rgba(129, 140, 248, 0.15)' }]}>
+                  <MaterialIcons name="smartphone" size={36} color="#818cf8" />
+                </View>
+                {!MOBILE_DOWNLOAD_URL && (
+                  <View style={[styles.comingSoonBadge, { backgroundColor: 'rgba(129, 140, 248, 0.2)', borderColor: 'rgba(129, 140, 248, 0.4)' }]}>
+                    <Text style={[styles.comingSoonText, { color: '#a5b4fc' }]}>قريباً</Text>
+                  </View>
+                )}
+              </View>
+
+              <Text style={styles.downloadCardTitle}>الهواتف والأجهزة اللوحية</Text>
+              <Text style={styles.downloadCardSub}>Android Phones & Tablets</Text>
+
+              <View style={styles.featureList}>
+                <View style={styles.featureItem}>
+                  <MaterialIcons name="check-circle" size={16} color="#818cf8" />
+                  <Text style={styles.featureItemText}>واجهة لمسية متجاوبة وسريعة</Text>
+                </View>
+                <View style={styles.featureItem}>
+                  <MaterialIcons name="check-circle" size={16} color="#818cf8" />
+                  <Text style={styles.featureItemText}>استهلاك منخفض للبيانات والبطارية</Text>
+                </View>
+                <View style={styles.featureItem}>
+                  <MaterialIcons name="check-circle" size={16} color="#818cf8" />
+                  <Text style={styles.featureItemText}>مشغل فيديو متطور يدعم التكبير والتصغير</Text>
+                </View>
+              </View>
+
+              <Pressable
+                style={({ focused, pressed }) => [
+                  styles.downloadBtn,
+                  { borderColor: '#818cf8', backgroundColor: 'rgba(129, 140, 248, 0.1)' },
+                  focused && [styles.downloadBtnFocused, { backgroundColor: '#818cf8' }],
+                  pressed && { opacity: 0.85 },
+                ]}
+                onPress={handleDownloadMobile}
+              >
+                {({ focused }) => (
+                  <>
+                    <MaterialIcons
+                      name="android"
+                      size={20}
+                      color={focused ? '#070b14' : '#818cf8'}
+                    />
+                    <Text
+                      style={[
+                        styles.downloadBtnText,
+                        { color: '#818cf8' },
+                        focused && styles.downloadBtnTextFocused,
+                      ]}
+                    >
+                      تحميل نسخة الموبايل (APK)
+                    </Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+
+        {/* ==========================================
+            قسم مميزات المنصة (Features Section)
+            ========================================== */}
+        <View style={styles.sectionContainer}>
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionHeaderBadge}>
+              <MaterialIcons name="verified" size={16} color="#10b981" />
+              <Text style={[styles.sectionHeaderBadgeText, { color: '#10b981' }]}>
+                لماذا تختار منصتنا؟
+              </Text>
+            </View>
+            <Text style={styles.sectionTitle}>مميزات صُممت لراحتك ومتعة مشاهدتك</Text>
+          </View>
+
+          <View style={isWide ? styles.featuresGridWide : styles.featuresGridCol}>
+            {/* ميزة 1 */}
+            <View style={styles.featureCard}>
+              <View style={[styles.featureIconBox, { backgroundColor: 'rgba(56, 189, 248, 0.15)' }]}>
+                <MaterialIcons name="settings-remote" size={30} color="#38bdf8" />
+              </View>
+              <Text style={styles.featureCardTitle}>دعم كامل لريموت التلفاز</Text>
+              <Text style={styles.featureCardDesc}>
+                تجربة تحكم مصممة بدقة للشاشات الكبيرة؛ تنقل بين القنوات والأفلام بأزرار الأسهم
+                ومفتاح OK بسلاسة تامة دون الحاجة لفأرة أو لمس.
+              </Text>
+            </View>
+
+            {/* ميزة 2 */}
+            <View style={styles.featureCard}>
+              <View style={[styles.featureIconBox, { backgroundColor: 'rgba(245, 158, 11, 0.15)' }]}>
+                <MaterialIcons name="video-library" size={30} color="#f59e0b" />
+              </View>
+              <Text style={styles.featureCardTitle}>مكتبة ترفيهية متجددة</Text>
+              <Text style={styles.featureCardDesc}>
+                آلاف القنوات الرياضية والوثائقية والإخبارية، وأضخم مكتبة للأفلام والمسلسلات
+                العربية والأجنبية مع تحديث الحلقات والمواسم فور صدورها.
+              </Text>
+            </View>
+
+            {/* ميزة 3 */}
+            <View style={styles.featureCard}>
+              <View style={[styles.featureIconBox, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
+                <MaterialIcons name="vpn-key" size={30} color="#10b981" />
+              </View>
+              <Text style={styles.featureCardTitle}>تفعيل فوري وآمن</Text>
+              <Text style={styles.featureCardDesc}>
+                تفعيل مباشر بكود الاشتراك الرقمي دون الحاجة لكتابة بريد أو كلمات مرور معقدة على
+                شاشة التلفاز، مع حفظ اشتراكك تلقائياً على جهازك.
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {/* ==========================================
+            دعوة للعمل الختامية (CTA Banner)
+            ========================================== */}
+        <View style={styles.bottomBanner}>
+          <Text style={styles.bottomBannerTitle}>جاهز لتجربة ترفيهية غير مسبوقة؟</Text>
+          <Text style={styles.bottomBannerSub}>
+            أدخل كود الاشتراك الخاص بك وابدأ البث المباشر على الفور
+          </Text>
+          <Pressable
+            style={({ focused, pressed }) => [
+              styles.primaryCtaBtn,
+              focused && styles.primaryCtaBtnFocused,
+              pressed && { opacity: 0.85 },
+            ]}
+            onPress={handleEnterPlatform}
+          >
+            {({ focused }) => (
+              <>
+                <Text
+                  style={[
+                    styles.primaryCtaBtnText,
+                    focused && styles.primaryCtaBtnTextFocused,
+                  ]}
+                >
+                  الدخول للمنصة الآن
+                </Text>
+                <MaterialIcons
+                  name="arrow-back"
+                  size={20}
+                  color={focused ? '#ffffff' : '#070b14'}
+                />
+              </>
+            )}
+          </Pressable>
+        </View>
+
+        {/* ==========================================
+            التذييل (Footer)
+            ========================================== */}
+        <View style={styles.footer}>
+          <Text style={styles.footerBrand}>IPTV STREAM</Text>
+          <Text style={styles.footerCopyright}>
+            جميع الحقوق محفوظة © {new Date().getFullYear()} • أفضل تجربة بث رقمي للشاشات الذكية
+          </Text>
+        </View>
+      </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#070b14',
   },
-  centerContainer: {
+  scrollArea: {
     flex: 1,
-    backgroundColor: '#0f172a',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
   },
-  headerBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 24,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1e293b',
-    flexWrap: 'wrap',
-    gap: 16,
-  },
-  headerTitle: {
-    fontSize: 26,
-    fontWeight: '900',
-    color: '#ffffff',
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    color: '#94a3b8',
-    marginTop: 4,
-  },
-  tabContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#0b1120',
-    borderRadius: 14,
-    padding: 5,
-    borderWidth: 1.5,
-    borderColor: '#1e293b',
-    gap: 8,
-  },
-  tabBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 22,
-    borderRadius: 10,
-  },
-  tabBtnActive: {
-    backgroundColor: '#0284c7',
-  },
-  tabBtnFocused: {
-    backgroundColor: '#ffffff',
-    transform: [{ scale: 1.05 }],
-    shadowColor: '#38bdf8',
-    shadowOpacity: 0.9,
-    shadowRadius: 10,
-    elevation: 8,
-  },
-  tabContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  tabText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#94a3b8',
-  },
-  tabTextActive: {
-    color: '#ffffff',
-    fontWeight: '800',
-  },
-  tabTextFocused: {
-    color: '#000000',
-    fontWeight: '900',
-  },
-  gridContainer: {
+  scrollContent: {
     paddingBottom: 40,
   },
-  gridItem: {
-    flex: 1,
-    padding: 10,
+
+  // التنبيه العائم (Toast)
+  toastContainer: {
+    position: 'absolute',
+    top: 80,
+    left: 20,
+    right: 20,
+    zIndex: 9999,
+    alignItems: 'center',
   },
-  categoryCard: {
-    backgroundColor: '#1e293b',
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderColor: '#334155',
-    padding: 20,
-    minHeight: 140,
-    justifyContent: 'space-between',
-  },
-  categoryCardFocused: {
-    backgroundColor: '#ffffff',
-    borderColor: '#ffffff',
-    transform: [{ scale: 1.06 }],
+  toastInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+    borderWidth: 1,
+    borderColor: '#38bdf8',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 30,
     shadowColor: '#38bdf8',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.9,
-    shadowRadius: 16,
-    elevation: 10,
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 8,
   },
-  cardInner: {
-    flex: 1,
-    justifyContent: 'space-between',
+  toastText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'center',
   },
-  cardHeader: {
+
+  // شريط الملاحة العلوي
+  navbar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    paddingHorizontal: 28,
+    paddingVertical: 18,
+    backgroundColor: 'rgba(11, 17, 32, 0.85)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(56, 189, 248, 0.15)',
+    zIndex: 100,
   },
-  iconCircle: {
-    width: 48,
-    height: 48,
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  brandIconCircle: {
+    width: 44,
+    height: 44,
     borderRadius: 12,
-    backgroundColor: '#0f172a',
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.3)',
   },
-  iconCircleFocused: {
-    backgroundColor: '#f1f5f9',
+  brandName: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#ffffff',
+    letterSpacing: 1,
   },
-  countBadge: {
-    backgroundColor: '#0f172a',
-    paddingHorizontal: 12,
+  brandSub: {
+    fontSize: 11,
+    color: '#94a3b8',
+    marginTop: 2,
+  },
+  navCtaBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    borderWidth: 1,
+    borderColor: '#38bdf8',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  navCtaBtnFocused: {
+    backgroundColor: '#38bdf8',
+    borderColor: '#ffffff',
+    transform: [{ scale: 1.05 }],
+  },
+  navCtaBtnText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  navCtaBtnTextFocused: {
+    color: '#070b14',
+  },
+
+  // قسم البطل (Hero)
+  heroSection: {
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingTop: 56,
+    paddingBottom: 48,
+    maxWidth: 960,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  heroBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.25)',
+    paddingHorizontal: 16,
     paddingVertical: 6,
     borderRadius: 20,
+    marginBottom: 20,
   },
-  countBadgeFocused: {
-    backgroundColor: '#e2e8f0',
-  },
-  countText: {
-    fontSize: 12,
+  heroBadgeText: {
+    color: '#38bdf8',
+    fontSize: 13,
     fontWeight: '700',
+  },
+  heroTitle: {
+    fontSize: 40,
+    fontWeight: '900',
+    color: '#ffffff',
+    textAlign: 'center',
+    lineHeight: 52,
+    marginBottom: 18,
+  },
+  textHighlight: {
     color: '#38bdf8',
   },
-  countTextFocused: {
-    color: '#0f172a',
-  },
-  cardBottom: {
-    marginTop: 16,
-  },
-  categoryTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#f8fafc',
-  },
-  categoryTitleFocused: {
-    color: '#000000',
-    fontWeight: '900',
-  },
-  categorySub: {
-    fontSize: 12,
-    color: '#64748b',
-    marginTop: 4,
-  },
-  categorySubFocused: {
-    color: '#475569',
-  },
-  actionBtn: {
-    backgroundColor: '#0284c7',
-    paddingVertical: 14,
-    paddingHorizontal: 28,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  actionBtnFocused: {
-    backgroundColor: '#ffffff',
-    transform: [{ scale: 1.05 }],
-    shadowColor: '#ffffff',
-    shadowOpacity: 0.8,
-    shadowRadius: 12,
-  },
-  actionBtnText: {
-    color: '#ffffff',
+  heroDescription: {
     fontSize: 16,
-    fontWeight: 'bold',
-    marginLeft: 8,
-  },
-  actionBtnTextFocused: {
-    color: '#000000',
-  },
-  btnContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  loadingTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#ffffff',
-    marginTop: 20,
-  },
-  loadingSub: {
-    fontSize: 13,
-    color: '#64748b',
-    marginTop: 6,
-  },
-  errorCard: {
-    backgroundColor: '#1e293b',
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.4)',
-    borderRadius: 20,
-    padding: 32,
-    alignItems: 'center',
-    maxWidth: 480,
-  },
-  errorTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#ef4444',
-    marginTop: 16,
-  },
-  errorDesc: {
-    fontSize: 14,
     color: '#94a3b8',
     textAlign: 'center',
-    marginTop: 8,
+    lineHeight: 28,
+    maxWidth: 780,
+    marginBottom: 32,
+  },
+  heroCtaWrapper: {
+    marginBottom: 36,
+  },
+  primaryCtaBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#38bdf8',
+    paddingHorizontal: 32,
+    paddingVertical: 16,
+    borderRadius: 14,
+    shadowColor: '#38bdf8',
+    shadowOpacity: 0.4,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  primaryCtaBtnFocused: {
+    backgroundColor: '#0284c7',
+    borderColor: '#ffffff',
+    borderWidth: 2,
+    transform: [{ scale: 1.06 }],
+  },
+  primaryCtaBtnText: {
+    color: '#070b14',
+    fontSize: 17,
+    fontWeight: '900',
+  },
+  primaryCtaBtnTextFocused: {
+    color: '#ffffff',
+  },
+  statsPillRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  statPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(15, 23, 42, 0.8)',
+    borderWidth: 1,
+    borderColor: '#1e293b',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  statPillText: {
+    color: '#cbd5e1',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+
+  // الأقسام العامة
+  sectionContainer: {
+    paddingHorizontal: 24,
+    paddingVertical: 40,
+    maxWidth: 1100,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  sectionHeader: {
+    alignItems: 'center',
+    marginBottom: 32,
+  },
+  sectionHeaderBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 16,
+    marginBottom: 10,
+  },
+  sectionHeaderBadgeText: {
+    color: '#38bdf8',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  sectionTitle: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: '#ffffff',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  sectionSubtitle: {
+    fontSize: 15,
+    color: '#94a3b8',
+    textAlign: 'center',
+    maxWidth: 620,
+    lineHeight: 24,
+  },
+
+  // قسم التحميل
+  downloadCardsGridWide: {
+    flexDirection: 'row',
+    gap: 24,
+  },
+  downloadCardsGridCol: {
+    flexDirection: 'column',
+    gap: 20,
+  },
+  downloadCard: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    borderRadius: 20,
+    padding: 28,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.2)',
+    justifyContent: 'space-between',
+  },
+  downloadCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  downloadIconWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: 16,
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  comingSoonBadge: {
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.35)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  comingSoonText: {
+    color: '#f59e0b',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  downloadCardTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#ffffff',
+    marginBottom: 4,
+  },
+  downloadCardSub: {
+    fontSize: 13,
+    color: '#94a3b8',
+    marginBottom: 20,
+  },
+  featureList: {
+    gap: 10,
     marginBottom: 24,
   },
-  errorActions: {
+  featureItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  featureItemText: {
+    color: '#cbd5e1',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  downloadBtn: {
     flexDirection: 'row',
     justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    borderWidth: 1,
+    borderColor: '#38bdf8',
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  downloadBtnFocused: {
+    backgroundColor: '#38bdf8',
+    borderColor: '#ffffff',
+    transform: [{ scale: 1.04 }],
+  },
+  downloadBtnText: {
+    color: '#38bdf8',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  downloadBtnTextFocused: {
+    color: '#070b14',
+  },
+
+  // قسم المميزات
+  featuresGridWide: {
+    flexDirection: 'row',
+    gap: 20,
+  },
+  featuresGridCol: {
+    flexDirection: 'column',
+    gap: 16,
+  },
+  featureCard: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    borderRadius: 18,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: '#1e293b',
+  },
+  featureIconBox: {
+    width: 56,
+    height: 56,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  featureCardTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#ffffff',
+    marginBottom: 8,
+  },
+  featureCardDesc: {
+    fontSize: 14,
+    color: '#94a3b8',
+    lineHeight: 22,
+  },
+
+  // البانر السفلي
+  bottomBanner: {
+    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+    borderRadius: 24,
+    padding: 36,
+    alignItems: 'center',
+    maxWidth: 960,
+    alignSelf: 'center',
+    width: '90%',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.25)',
+    marginVertical: 24,
+  },
+  bottomBannerTitle: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: '#ffffff',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  bottomBannerSub: {
+    fontSize: 15,
+    color: '#94a3b8',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+
+  // التذييل (Footer)
+  footer: {
+    alignItems: 'center',
+    paddingVertical: 32,
+    borderTopWidth: 1,
+    borderTopColor: '#1e293b',
+    marginTop: 20,
+    gap: 6,
+  },
+  footerBrand: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#38bdf8',
+    letterSpacing: 1,
+  },
+  footerCopyright: {
+    fontSize: 13,
+    color: '#64748b',
+    textAlign: 'center',
   },
 });
