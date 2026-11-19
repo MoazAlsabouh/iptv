@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAppStore } from '../store/useAppStore';
+import { useAuth } from '../context/AuthContext';
 import { fetchAndParseM3U } from '../utils/m3uParser';
 import { MediaItem } from '../types/media';
 
@@ -180,13 +181,28 @@ export function groupChannelsByCountry(channels: MediaItem[]): CategoryGroup[] {
 export function useMediaData() {
   const playlistUrl = useAppStore((state) => state.playlistUrl);
   const isChildMode = useAppStore((state) => state.isChildMode);
+  const { token, isLoading: isAuthLoading } = useAuth();
+
+  const isBackendUrl = !playlistUrl || playlistUrl.includes('workers.dev') || playlistUrl.includes('iptv-backend');
+  const isQueryEnabled = Boolean(
+    playlistUrl &&
+    playlistUrl.trim().length > 0 &&
+    !isAuthLoading &&
+    (!isBackendUrl || Boolean(token))
+  );
 
   const query = useQuery<MediaItem[], Error>({
-    queryKey: ['playlistMedia', playlistUrl],
-    queryFn: () => fetchAndParseM3U(playlistUrl, false),
-    enabled: Boolean(playlistUrl && playlistUrl.trim().length > 0),
+    queryKey: ['playlistMedia', playlistUrl, token],
+    queryFn: () => fetchAndParseM3U(playlistUrl, false, undefined, token),
+    enabled: isQueryEnabled,
     staleTime: 1000 * 60 * 5, // 5 دقائق
-    retry: 2,
+    retry: (failureCount, error) => {
+      // لا تعيد المحاولة في حال انتهاء الاشتراك أو عدم التفعيل
+      if (error?.message?.includes('الاشتراك')) {
+        return false;
+      }
+      return failureCount < 2;
+    },
   });
 
   // فصل عناصر البث التلفزيوني المباشر عن محتوى الأفلام والمسلسلات (VOD)

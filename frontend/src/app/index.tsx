@@ -54,28 +54,54 @@ export default function DashboardScreen(): React.JSX.Element {
 
   // 2. حالة الخطأ
   if (isError) {
+    const isSubError = error?.message?.includes('الاشتراك');
     return (
       <View style={styles.centerContainer}>
         <View style={styles.errorCard}>
-          <MaterialIcons name="error-outline" size={60} color="#ef4444" />
-          <Text style={styles.errorTitle}>تعذر الاتصال بالخادم</Text>
-          <Text style={styles.errorDesc}>يرجى التأكد من الاتصال بالإنترنت ثم إعادة المحاولة</Text>
+          <MaterialIcons
+            name={isSubError ? 'lock-outline' : 'error-outline'}
+            size={60}
+            color={isSubError ? '#f59e0b' : '#ef4444'}
+          />
+          <Text style={styles.errorTitle}>
+            {isSubError ? 'حالة الاشتراك' : 'تعذر الاتصال بالخادم'}
+          </Text>
+          <Text style={styles.errorDesc}>
+            {error?.message || 'يرجى التأكد من الاتصال بالإنترنت ثم إعادة المحاولة'}
+          </Text>
 
           <View style={styles.errorActions}>
-            <Pressable
-              hasTVPreferredFocus
-              onPress={() => refetch()}
-              style={({ focused }) => [styles.actionBtn, focused && styles.actionBtnFocused]}
-            >
-              {({ focused }) => (
-                <View style={styles.btnContent}>
-                  <MaterialIcons name="refresh" size={20} color={focused ? '#000000' : '#ffffff'} />
-                  <Text style={[styles.actionBtnText, focused && styles.actionBtnTextFocused]}>
-                    إعادة المحاولة
-                  </Text>
-                </View>
-              )}
-            </Pressable>
+            {isSubError ? (
+              <Pressable
+                hasTVPreferredFocus
+                onPress={() => router.push('/activate')}
+                style={({ focused }) => [styles.actionBtn, focused && styles.actionBtnFocused]}
+              >
+                {({ focused }) => (
+                  <View style={styles.btnContent}>
+                    <MaterialIcons name="vpn-key" size={20} color={focused ? '#000000' : '#ffffff'} />
+                    <Text style={[styles.actionBtnText, focused && styles.actionBtnTextFocused]}>
+                      تفعيل كود الاشتراك
+                    </Text>
+                  </View>
+                )}
+              </Pressable>
+            ) : (
+              <Pressable
+                hasTVPreferredFocus
+                onPress={() => refetch()}
+                style={({ focused }) => [styles.actionBtn, focused && styles.actionBtnFocused]}
+              >
+                {({ focused }) => (
+                  <View style={styles.btnContent}>
+                    <MaterialIcons name="refresh" size={20} color={focused ? '#000000' : '#ffffff'} />
+                    <Text style={[styles.actionBtnText, focused && styles.actionBtnTextFocused]}>
+                      إعادة المحاولة
+                    </Text>
+                  </View>
+                )}
+              </Pressable>
+            )}
           </View>
         </View>
       </View>

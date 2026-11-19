@@ -1,4 +1,10 @@
+import { Platform } from 'react-native';
 import { MediaItem, StreamSource } from '../types/media';
+
+/**
+ * مفتاح تخزين رمز المصادقة المتطابق مع AuthContext
+ */
+export const AUTH_TOKEN_KEY = 'iptv_auth_token';
 
 /**
  * الرابط الافتراضي للواجهة الخلفية (Cloudflare Worker) التي تدمج قنوات IPTV مع أفلام TMDB
@@ -230,17 +236,19 @@ export function parseM3U(content: string): MediaItem[] {
 
 /**
  * دالة غير متزامنة لجلب قائمة تشغيل M3U من رابط خارجي وتحليلها مباشرة.
- * تدعم الاتصال المباشر (Direct Fetch) افتراضياً لأن خادمنا يدعم CORS مباشرة.
+ * تدعم الاتصال المباشر (Direct Fetch) افتراضياً مع تزويد ترويسة التوثيق للاشتراكات المحمية.
  *
  * @param playlistUrl رابط قائمة التشغيل M3U
  * @param useProxy خيار تفعيل خادم الوسيط (CORS Proxy) - افتراضياً false
  * @param proxyPrefix رابط خدمة البروكسي عند الرغبة في استخدامه
+ * @param token رمز الجلسة الاختياري (إذا لم يُمرر، يُقرأ تلقائياً من التخزين المحلي)
  * @returns وعد (Promise) بمصفوفة MediaItem المحللة
  */
 export async function fetchAndParseM3U(
   playlistUrl: string,
   useProxy: boolean = false,
-  proxyPrefix: string = 'https://api.allorigins.win/raw?url='
+  proxyPrefix: string = 'https://api.allorigins.win/raw?url=',
+  token?: string | null
 ): Promise<MediaItem[]> {
   try {
     if (!playlistUrl || playlistUrl.trim().length === 0) {
@@ -250,13 +258,27 @@ export async function fetchAndParseM3U(
     const cleanUrl = playlistUrl.trim();
     // روابط خادمنا السحابي (workers.dev) تدعم CORS مباشرة ولا يجوز تغليفها بالبروكسي
     const isDirectServer = cleanUrl.includes('workers.dev') || cleanUrl.includes('iptv-backend');
-    const finalUrl = (useProxy && !isDirectServer)
-      ? `${proxyPrefix}${encodeURIComponent(cleanUrl)}`
-      : cleanUrl;
+    const finalUrl = useProxy && !isDirectServer ? `${proxyPrefix}${encodeURIComponent(cleanUrl)}` : cleanUrl;
+
+    // استخراج رمز الجلسة (من المعامل أو من التخزين المحلي)
+    let authToken = token;
+    if (!authToken && Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+      authToken = window.localStorage.getItem(AUTH_TOKEN_KEY);
+    }
+
+    const headers: Record<string, string> = {};
+    if (authToken) {
+      headers['Authorization'] = `Bearer ${authToken}`;
+    }
 
     const response = await fetch(finalUrl, {
       cache: 'no-store',
+      headers: Object.keys(headers).length > 0 ? headers : undefined,
     });
+
+    if (response.status === 401 || response.status === 403) {
+      throw new Error('انتهت صلاحية الاشتراك أو لم يتم تفعيله');
+    }
 
     if (!response.ok) {
       throw new Error('فشل الاتصال بالخادم، يرجى إعادة المحاولة');
@@ -265,11 +287,15 @@ export async function fetchAndParseM3U(
     const content = await response.text();
     return parseM3U(content);
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : 'خطأ غير متوقع أثناء معالجة القنوات';
+    const errorMessage = error instanceof Error ? error.message : 'خطأ غير متوقع أثناء معالجة القنوات';
 
     console.error('[m3uParser] Error fetching or parsing playlist:', errorMessage);
-    throw new Error(errorMessage.startsWith('فشل') ? errorMessage : 'تعذر تحميل القنوات، يرجى التحقق من اتصال الإنترنت');
+    if (errorMessage === 'انتهت صلاحية الاشتراك أو لم يتم تفعيله') {
+      throw new Error(errorMessage);
+    }
+    throw new Error(
+      errorMessage.startsWith('فشل') ? errorMessage : 'تعذر تحميل القنوات، يرجى التحقق من اتصال الإنترنت'
+    );
   }
 }
 
@@ -278,8 +304,9 @@ export async function fetchAndParseM3U(
  * (الرابط: https://iptv-backend.moaznsm.workers.dev)
  *
  * @param useProxy خيار تفعيل البروكسي (افتراضياً: false)
+ * @param token رمز الجلسة الاختياري
  * @returns مصفوفة القنوات والأفلام المحللة
  */
-export async function fetchBackendPlaylist(useProxy: boolean = false): Promise<MediaItem[]> {
-  return fetchAndParseM3U(DEFAULT_BACKEND_M3U_URL, useProxy);
+export async function fetchBackendPlaylist(useProxy: boolean = false, token?: string | null): Promise<MediaItem[]> {
+  return fetchAndParseM3U(DEFAULT_BACKEND_M3U_URL, useProxy, undefined, token);
 }
