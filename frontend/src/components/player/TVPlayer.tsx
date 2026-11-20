@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, Platform, StyleSheet, StyleProp, ViewStyle } from 'react-native';
-import { Video, ResizeMode, AVPlaybackStatus } from 'expo-av';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { MaterialIcons } from '@expo/vector-icons';
 import Hls from 'hls.js';
 import { shouldAutoProxy, getProxyStreamUrl } from '../../utils/proxy';
@@ -36,7 +36,6 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
   style,
 }) => {
   const videoHtmlRef = useRef<HTMLVideoElement | null>(null);
-  const nativeVideoRef = useRef<Video>(null);
   const hlsRef = useRef<Hls | null>(null);
   const [needsUserPlay, setNeedsUserPlay] = useState<boolean>(false);
 
@@ -421,27 +420,55 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
     );
   }
 
-  // البيئات الأصلية (Native - Android TV / Fire TV)
+  // البيئات الأصلية (Native - Android TV / Fire TV / Mobile) عبر expo-video
   return (
-    <Video
-      ref={nativeVideoRef}
-      source={{ uri: streamUrl }}
+    <NativeVideoPlayer
+      streamUrl={streamUrl}
+      style={style}
+      onBuffering={onBuffering}
+      onError={onError}
+    />
+  );
+};
+
+/**
+ * مشغل الفيديو للأجهزة الأصلية (Android / Android TV / iOS) باستخدام expo-video الحديثة
+ */
+const NativeVideoPlayer: React.FC<{
+  streamUrl: string;
+  style?: StyleProp<ViewStyle>;
+  onBuffering?: (isBuffering: boolean) => void;
+  onError?: (errorMessage: string) => void;
+}> = ({ streamUrl, style, onBuffering, onError }) => {
+  const player = useVideoPlayer(streamUrl, (p) => {
+    p.loop = false;
+    p.muted = false;
+    p.volume = 1.0;
+    p.play();
+  });
+
+  useEffect(() => {
+    const statusSub = player.addListener('statusChange', ({ status, error }: any) => {
+      if (status === 'error') {
+        onError?.(error?.message || 'تعذر تشغيل البث على المشغل');
+      } else if (status === 'loading') {
+        onBuffering?.(true);
+      } else if (status === 'readyToPlay') {
+        onBuffering?.(false);
+      }
+    });
+
+    return () => {
+      statusSub.remove();
+    };
+  }, [player, onError, onBuffering]);
+
+  return (
+    <VideoView
       style={[styles.container, style]}
-      resizeMode={ResizeMode.CONTAIN}
-      shouldPlay
-      isMuted={false}
-      volume={1.0}
-      isLooping={false}
-      useNativeControls={false}
-      onPlaybackStatusUpdate={(status: AVPlaybackStatus) => {
-        if (!status.isLoaded) {
-          if (status.error) {
-            onErrorRef.current?.(status.error);
-          }
-        } else {
-          onBufferingRef.current?.(status.isBuffering);
-        }
-      }}
+      player={player}
+      contentFit="contain"
+      nativeControls={false}
     />
   );
 };

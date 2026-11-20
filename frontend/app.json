@@ -30,12 +30,23 @@
           }
         }
       ],
-      "./plugins/withAndroidTV"
+      "./plugins/withAndroidTV",
+      "expo-video"
     ],
     "web": {
       "favicon": "./assets/favicon.png",
       "bundler": "metro",
       "output": "static"
+    },
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "f7aaee11-b119-46f8-9c96-ad2c23a77e03"
+      }
     }
   }
 }
