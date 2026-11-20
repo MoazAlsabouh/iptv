@@ -1,14 +1,36 @@
 {
   "expo": {
-    "name": "تلفازي | Telfazi",
+    "name": "تلفازي",
     "slug": "telfazi",
     "version": "1.0.0",
     "orientation": "landscape",
     "scheme": "telfazi",
     "userInterfaceStyle": "dark",
     "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0B1120"
+    },
+    "android": {
+      "package": "sy.moazns.telfazi",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#0B1120"
+      }
+    },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
+      "./plugins/withAndroidTV"
     ],
     "web": {
       "favicon": "./assets/favicon.png",
