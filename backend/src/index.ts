@@ -1821,12 +1821,12 @@ function buildMultiEmbedSources(
 }
 
 /**
- * فحص مباشر لحظي (Live Probe) للسيرفر مع مهلة 2.8 ثانية
+ * فحص مباشر لحظي (Live Probe) للسيرفر مع كشف الأخطاء الصامتة (Soft-404 Detection)
  */
 async function probeSingleVodServer(url: string): Promise<boolean> {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2800);
+    const timer = setTimeout(() => controller.abort(), 3500);
     const res = await fetch(url, {
       method: 'GET',
       headers: {
@@ -1837,7 +1837,44 @@ async function probeSingleVodServer(url: string): Promise<boolean> {
       signal: controller.signal,
     });
     clearTimeout(timer);
-    return res.status >= 200 && res.status < 400;
+
+    if (res.status < 200 || res.status >= 400) {
+      return false;
+    }
+
+    const text = await res.text();
+    // إذا كانت الاستجابة فارغة أو صغيرة جداً بشكل غير طبيعي
+    if (!text || text.trim().length < 60) {
+      return false;
+    }
+
+    const lowerText = text.toLowerCase();
+    const soft404Phrases = [
+      "couldn't find this content",
+      "could not find this content",
+      "episode is not available",
+      "movie is not available",
+      "content is not available",
+      "media not found",
+      "video not found",
+      "file not found",
+      "no sources",
+      "no stream",
+      "404 not found",
+      "unavailable",
+      "does not exist",
+      "we couldn't find",
+      "is not available",
+      "not available",
+    ];
+
+    for (const phrase of soft404Phrases) {
+      if (lowerText.includes(phrase)) {
+        return false;
+      }
+    }
+
+    return true;
   } catch {
     return false;
   }
@@ -1854,12 +1891,17 @@ async function handleVodSources(request: Request, url: URL, env: Env): Promise<R
   }
 
   const forceProbe = url.searchParams.get('force_probe') === '1';
+  const forceYouTube =
+    url.searchParams.get('force_youtube') === '1' ||
+    url.searchParams.get('youtube') === '1' ||
+    url.searchParams.get('fallback') === '1';
+
   const cache = (caches as any).default;
   const cacheUrl = new URL(url.toString());
-  cacheUrl.searchParams.set('v', '5');
+  cacheUrl.searchParams.set('v', '7');
   const cacheKey = new Request(cacheUrl.toString(), request);
 
-  if (!forceProbe) {
+  if (!forceProbe && !forceYouTube) {
     try {
       const cached = await cache.match(cacheKey);
       if (cached) {
@@ -1904,53 +1946,55 @@ async function handleVodSources(request: Request, url: URL, env: Env): Promise<R
     }
   }
 
-  // 1. الفحص التلقائي اللحظي (Live Probe) للسيرفرات الأساسية بالتوازي
+  // 1. الفحص التلقائي اللحظي (Live Probe) للسيرفرات الأساسية بالتوازي (إلا إذا طلب المستخدم يوتيوب صراحة)
   let workingEmbedSources: EmbedSourceDef[] = [];
-  if (vodSettings.live_probe_enabled && candidateEmbedSources.length > 0) {
-    const probeResults = await Promise.allSettled(
-      candidateEmbedSources.map(async (src) => {
-        const ok = await probeSingleVodServer(src.url);
-        return { src, ok };
-      })
-    );
+  if (!forceYouTube) {
+    if (vodSettings.live_probe_enabled && candidateEmbedSources.length > 0) {
+      const probeResults = await Promise.allSettled(
+        candidateEmbedSources.map(async (src) => {
+          const ok = await probeSingleVodServer(src.url);
+          return { src, ok };
+        })
+      );
 
-    for (const res of probeResults) {
-      if (res.status === 'fulfilled' && res.value.ok) {
-        workingEmbedSources.push(res.value.src);
+      for (const res of probeResults) {
+        if (res.status === 'fulfilled' && res.value.ok) {
+          workingEmbedSources.push(res.value.src);
+        }
       }
+    } else {
+      workingEmbedSources = candidateEmbedSources;
     }
-  } else {
-    workingEmbedSources = candidateEmbedSources;
+
+    // 2. قاعدة يوتيوب الصارمة: إذا وُجد سيرفر واحد على الأقل يعمل من السيرفرات الأساسية، لا نُدرج يوتيوب إطلاقاً
+    if (workingEmbedSources.length > 0) {
+      const finalSources = workingEmbedSources.map((s, idx) => ({
+        label: `سيرفر ${idx + 1} - ${s.name}`,
+        url: s.url,
+        type: s.type,
+      }));
+
+      const response = new Response(JSON.stringify({ sources: finalSources }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Cache-Control, Pragma, *',
+          'Cache-Control': 'public, max-age=7200',
+        },
+      });
+
+      try {
+        await cache.put(cacheKey, response.clone());
+      } catch {}
+
+      return response;
+    }
   }
 
-  // 2. قاعدة يوتيوب الصارمة: إذا وُجد سيرفر واحد على الأقل يعمل من السيرفرات الأساسية، لا نُدرج يوتيوب إطلاقاً
-  if (workingEmbedSources.length > 0) {
-    const finalSources = workingEmbedSources.map((s, idx) => ({
-      label: `سيرفر ${idx + 1} - ${s.name}`,
-      url: s.url,
-      type: s.type,
-    }));
-
-    const response = new Response(JSON.stringify({ sources: finalSources }), {
-      status: 200,
-      headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Cache-Control, Pragma, *',
-        'Cache-Control': 'public, max-age=7200',
-      },
-    });
-
-    try {
-      await cache.put(cacheKey, response.clone());
-    } catch {}
-
-    return response;
-  }
-
-  // 3. في حال فشل كافة السيرفرات الأساسية، نلجأ لمصادر يوتيوب والبدائل إذا كانت السياسة تسمح بذلك
-  if (vodSettings.youtube_policy !== 'disabled' && title) {
+  // 3. في حال فشل كافة السيرفرات الأساسية، أو طلب المستخدم يوتيوب صراحة، نلجأ لمصادر يوتيوب والبدائل
+  if ((forceYouTube || vodSettings.youtube_policy !== 'disabled') && title) {
     let dmQuery = '';
     if (type === 'movie') {
       dmQuery = `${title} فيلم كامل`;
