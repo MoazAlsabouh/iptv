@@ -67,10 +67,15 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
 
   const finalEmbedUrl = React.useMemo(() => {
     if (!isEmbedUrl) return streamUrl;
-    if (isYouTube && !streamUrl.includes('enablejsapi=1')) {
-      return streamUrl + (streamUrl.includes('?') ? '&' : '?') + 'enablejsapi=1';
+    let url = streamUrl;
+    // إزالة أي معاملات لكتم الصوت مثل mute=1 أو muted=1
+    url = url
+      .replace(/([?&])(?:mute|muted)=(?:1|true|yes)(&|$)/gi, '$1')
+      .replace(/[?&]$/, '');
+    if (isYouTube && !url.includes('enablejsapi=1')) {
+      url = url + (url.includes('?') ? '&' : '?') + 'enablejsapi=1';
     }
-    return streamUrl;
+    return url;
   }, [streamUrl, isEmbedUrl, isYouTube]);
 
   // استماع لرسائل أخطاء يوتيوب (postMessage) من الـ iframe للتنقل التلقائي عند الحظر أو تقييد العمر
@@ -202,13 +207,28 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
     videoEl.addEventListener('error', onVideoError);
 
     const safePlay = () => {
+      // تشغيل غير مكتوم بالصوت الكامل افتراضياً
+      try {
+        videoEl.muted = false;
+        videoEl.volume = 1;
+      } catch {}
+
       videoEl.play().catch((err: any) => {
         if (err.name === 'AbortError') {
           return;
         }
         if (err.name === 'NotAllowedError') {
-          clearPlaybackTimeout();
-          setNeedsUserPlay(true);
+          // في حال رفض المتصفح التشغيل التلقائي مع الصوت بسبب Autoplay Policy، نجرب الكتم كحل بديل
+          try {
+            videoEl.muted = true;
+            videoEl.play().catch(() => {
+              clearPlaybackTimeout();
+              setNeedsUserPlay(true);
+            });
+          } catch {
+            clearPlaybackTimeout();
+            setNeedsUserPlay(true);
+          }
         } else {
           console.warn('[TVPlayer] Play warning:', err);
         }
@@ -321,6 +341,10 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
   const handleManualPlay = () => {
     const videoEl = videoHtmlRef.current;
     if (videoEl) {
+      try {
+        videoEl.muted = false;
+        videoEl.volume = 1;
+      } catch {}
       videoEl.play().then(() => {
         setNeedsUserPlay(false);
       }).catch((err) => {
@@ -341,7 +365,7 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
               border: 'none',
               backgroundColor: '#000000',
             }}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+            allow="autoplay; fullscreen; encrypted-media; picture-in-picture; accelerometer; clipboard-write; gyroscope"
             allowFullScreen
             referrerPolicy="strict-origin-when-cross-origin"
             onLoad={() => {
@@ -405,6 +429,8 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
       style={[styles.container, style]}
       resizeMode={ResizeMode.CONTAIN}
       shouldPlay
+      isMuted={false}
+      volume={1.0}
       isLooping={false}
       useNativeControls={false}
       onPlaybackStatusUpdate={(status: AVPlaybackStatus) => {

@@ -763,6 +763,7 @@ async function handleVodCatalog(url: URL, env: Env): Promise<Response> {
   const type = url.searchParams.get('type') || 'all'; // all | movie | tv
   const category = url.searchParams.get('category') || 'trending';
   const page = parseInt(url.searchParams.get('page') || '1', 10) || 1;
+  const lang = (url.searchParams.get('lang') || '').toLowerCase();
   const apiKey = env.TMDB_API_KEY || '';
 
   // 1. جدول الحلقات اليوم عبر TVmaze API المجاني
@@ -864,10 +865,12 @@ async function handleVodCatalog(url: URL, env: Env): Promise<Response> {
     const targetGenre = genreMap[category] || { movie: 28, tv: 10759, label: 'منوع' };
     categoryLabel = targetGenre.label;
 
+    const langParam = lang === 'ar' || category.startsWith('arabic_') ? '&with_original_language=ar' : '';
+
     if (type === 'tv') {
-      tmdbUrl = `https://api.themoviedb.org/3/discover/tv?api_key=${apiKey}&with_genres=${targetGenre.tv}&sort_by=popularity.desc&page=${page}&language=ar-SA`;
+      tmdbUrl = `https://api.themoviedb.org/3/discover/tv?api_key=${apiKey}&with_genres=${targetGenre.tv}&sort_by=popularity.desc&page=${page}&language=ar-SA${langParam}`;
     } else {
-      tmdbUrl = `https://api.themoviedb.org/3/discover/movie?api_key=${apiKey}&with_genres=${targetGenre.movie}&sort_by=popularity.desc&page=${page}&language=ar-SA`;
+      tmdbUrl = `https://api.themoviedb.org/3/discover/movie?api_key=${apiKey}&with_genres=${targetGenre.movie}&sort_by=popularity.desc&page=${page}&language=ar-SA${langParam}`;
     }
   }
 
