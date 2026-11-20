@@ -40,6 +40,7 @@ export function PlayerScreen(): React.JSX.Element {
     season?: string;
     episode?: string;
     lang?: string;
+    originalLanguage?: string;
   }>();
 
   const { favoriteIds, toggleFavorite } = useAppStore();
@@ -173,6 +174,7 @@ export function PlayerScreen(): React.JSX.Element {
         const headers: Record<string, string> = {};
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
+          queryParams.set('token', token);
         }
 
         const res = await fetch(
@@ -180,7 +182,7 @@ export function PlayerScreen(): React.JSX.Element {
           { headers }
         );
 
-        if (res.status === 401) {
+        if (res.status === 401 || res.status === 403) {
           if (isMounted) {
             setIsLoadingSources(false);
             setPlaybackError('يرجى تفعيل كود اشتراك صالح للمشاهدة');

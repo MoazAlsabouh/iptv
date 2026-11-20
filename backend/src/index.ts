@@ -1238,10 +1238,10 @@ async function checkYouTubeEmbedPlayable(
 
     // استخراج قيمة playableInEmbed
     const embedMatch = statusChunk.match(/"playableInEmbed"\s*:\s*(true|false)/);
-    const playableInEmbed = embedMatch ? embedMatch[1] === 'true' : false;
+    const cannotEmbed = embedMatch && embedMatch[1] === 'false';
 
-    // اشتراط status === 'OK' و playableInEmbed === true معاً حرفياً
-    if (status !== 'OK' || !playableInEmbed) {
+    // إذا كانت الحالة OK وليست محظورة صراحة في التضمين
+    if (status !== 'OK' || cannotEmbed) {
       return false;
     }
 
@@ -1466,8 +1466,11 @@ async function searchYouTubeDirect(
       }
     }
 
-    if (playableVideos.length > 0) {
-      return playableVideos.map((v, idx) => ({
+    // إذا تعذر فحص التضمين بسبب مهلة اتصال أو حماية، نعتمد أول مرشحين متطابقين
+    const finalVideos = playableVideos.length > 0 ? playableVideos : candidates.slice(0, 2);
+
+    if (finalVideos.length > 0) {
+      return finalVideos.map((v, idx) => ({
         label: idx === 0 ? 'يوتيوب (HD)' : 'يوتيوب (سيرفر 2)',
         url: `https://www.youtube.com/embed/${v.id}?autoplay=1&rel=0`,
         type: 'embed' as const,
@@ -1900,7 +1903,8 @@ async function probeSingleVodServer(url: string): Promise<ProbeStatus> {
  * والمعالجة الذكية للمحتوى العربي واستعادة كافة المصادر
  */
 async function handleVodSources(request: Request, url: URL, env: Env): Promise<Response> {
-  const auth = await verifySubscriptionAuth(request, env);
+  const tokenParam = url.searchParams.get('token') || url.searchParams.get('auth') || '';
+  const auth = await verifySubscriptionAuth(request, env, tokenParam);
   if (!auth.valid) {
     return jsonResponse({ sources: [], error: auth.error }, 401);
   }
@@ -1909,7 +1913,8 @@ async function handleVodSources(request: Request, url: URL, env: Env): Promise<R
 
   const cache = (caches as any).default;
   const cacheUrl = new URL(url.toString());
-  cacheUrl.searchParams.set('v', '9');
+  // تحديث نسخة الكاش إلى v10-arabfix لتفريغ أي نتائج تالفة أو محجوبة كانت مخزنة مؤقتاً
+  cacheUrl.searchParams.set('v', 'v10-arabfix');
   const cacheKey = new Request(cacheUrl.toString(), request);
 
   if (!forceProbe) {
@@ -1934,8 +1939,8 @@ async function handleVodSources(request: Request, url: URL, env: Env): Promise<R
   // إزالة أي لواحق مواسم أو حلقات من العنوان لضمان دقة البحث
   title = title.replace(/\s*-\s*الموسم\s*\d+\s*الحلقة\s*\d+/g, '').replace(/\s*-\s*الحلقة\s*\d+/g, '').trim();
 
-  // الكشف الذكي عما إذا كان العمل عربياً (لغة عربية أو أحرف عربية في العنوان)
-  const isArabic = rawLang === 'ar' || /[\u0600-\u06FF]/.test(title);
+  // الكشف الصريح والذكي عن المحتوى العربي (لغة عربية أو أحرف عربية في العنوان)
+  const isArabic = rawLang === 'ar' || rawLang === 'arabic' || /[\u0600-\u06FF]/.test(title);
 
   // جلب إعدادات سيرفرات الـ VOD المحدثة من الإدارة أو الإعدادات الافتراضية
   const vodSettings = await getVodSettings(env);
@@ -1961,72 +1966,7 @@ async function handleVodSources(request: Request, url: URL, env: Env): Promise<R
     }
   }
 
-  // 1. الفحص التلقائي اللحظي (Live Probe) للسيرفرات الأساسية بالتوازي:
-  // - نستبعد السيرفرات الميتة قطيعاً (CONFIRMED_DEAD مثل 404 أو Soft-404)
-  // - نحتفظ بالسيرفرات المؤكدة (CONFIRMED_OK) أولاً
-  // - نحتفظ بالسيرفرات غير المؤكدة (UNVERIFIED مثل 403 أو Timeout من الـ Worker) بعدها مباشرة
-  const confirmedEmbedSources: EmbedSourceDef[] = [];
-  const unverifiedEmbedSources: EmbedSourceDef[] = [];
-
-  if (vodSettings.live_probe_enabled && candidateEmbedSources.length > 0) {
-    const probeResults = await Promise.allSettled(
-      candidateEmbedSources.map(async (src) => {
-        const status = await probeSingleVodServer(src.url);
-        return { src, status };
-      })
-    );
-
-    for (const res of probeResults) {
-      if (res.status === 'fulfilled') {
-        const { src, status } = res.value;
-        if (status === 'CONFIRMED_OK') {
-          confirmedEmbedSources.push(src);
-        } else if (status === 'UNVERIFIED') {
-          unverifiedEmbedSources.push(src);
-        }
-      } else {
-        // خطأ غير متوقع، نحتفظ بالسيرفر
-        unverifiedEmbedSources.push(candidateEmbedSources[0]);
-      }
-    }
-  } else {
-    unverifiedEmbedSources.push(...candidateEmbedSources);
-  }
-
-  // 2. معالجة ذكية للمحتوى العربي في الخلفية:
-  // لأن سيرفرات الـ Embed العالمية نادراً ما تملك المسلسلات العربية وتعيد 200 وهمياً،
-  // نقوم تلقائياً بجلب البدائل العربية (يوتيوب وديلي موشن) في الخلفية
-  let arabicFallbackSources: { label: string; url: string; type: 'embed' | 'direct' }[] = [];
-  if (isArabic && title && vodSettings.youtube_policy !== 'disabled') {
-    let dmQuery = '';
-    if (type === 'movie') {
-      dmQuery = `${title} فيلم كامل`;
-    } else {
-      dmQuery =
-        season > 1
-          ? `${title} الجزء ${season} الحلقة ${episode}`
-          : `${title} الحلقة ${episode}`;
-    }
-
-    try {
-      const [ytRes, dmRes] = await Promise.allSettled([
-        searchYouTubeProvider(title, season, episode, type),
-        searchDailymotionProvider(dmQuery, type === 'movie', title, episode),
-      ]);
-
-      const yt = ytRes.status === 'fulfilled' ? ytRes.value : [];
-      const dm = dmRes.status === 'fulfilled' ? dmRes.value : [];
-
-      arabicFallbackSources = [
-        ...yt.map((s, i) => ({ ...s, label: `يوتيوب (بديل ${i + 1})` })),
-        ...dm.map((s, i) => ({ ...s, label: `ديلي موشن (بديل ${i + 1})` })),
-      ];
-    } catch {}
-  }
-
-  // دمج وترتيب سيرفرات الـ Embed: المؤكدة أولاً ثم غير المؤكدة
-  const orderedEmbedDefs = [...confirmedEmbedSources, ...unverifiedEmbedSources];
-  const allEmbedSources = orderedEmbedDefs.map((s, idx) => ({
+  const allEmbedSources = candidateEmbedSources.map((s, idx) => ({
     label: `سيرفر ${idx + 1} - ${s.name}`,
     url: s.url,
     type: s.type,
@@ -2034,16 +1974,10 @@ async function handleVodSources(request: Request, url: URL, env: Env): Promise<R
 
   let finalSources: { label: string; url: string; type: 'embed' | 'direct' }[] = [];
 
-  if (isArabic && arabicFallbackSources.length > 0) {
-    // للمحتوى العربي: وضع البدائل العربية أولاً مع إبقاء سيرفرات الـ Embed كخيارات لاحقة
-    finalSources = [...arabicFallbackSources, ...allEmbedSources];
-  } else {
-    // للمحتوى غير العربي: وضع سيرفرات الـ Embed أولاً
-    finalSources = allEmbedSources;
-  }
-
-  // 3. في حال عدم توفر أي مصدر حتى الآن، نلجأ للبحث العام في يوتيوب والبدائل
-  if (finalSources.length === 0 && vodSettings.youtube_policy !== 'disabled' && title) {
+  // ==========================================
+  // 1. معالجة المحتوى العربي: استعادة منطق الأمس وتخطي الفحص اللحظي تماماً
+  // ==========================================
+  if (isArabic) {
     let dmQuery = '';
     if (type === 'movie') {
       dmQuery = `${title} فيلم كامل`;
@@ -2054,25 +1988,94 @@ async function handleVodSources(request: Request, url: URL, env: Env): Promise<R
           : `${title} الحلقة ${episode}`;
     }
 
-    try {
-      const [ytRes, dmRes, archiveRes] = await Promise.allSettled([
-        searchYouTubeProvider(title, season, episode, type),
-        searchDailymotionProvider(dmQuery, type === 'movie', title, episode),
-        type === 'movie' ? searchArchiveProvider(title) : Promise.resolve([]),
-      ]);
+    const [ytRes, dmRes, archiveRes] = await Promise.allSettled([
+      title && vodSettings.youtube_policy !== 'disabled'
+        ? searchYouTubeProvider(title, season, episode, type)
+        : Promise.resolve([]),
+      title ? searchDailymotionProvider(dmQuery, type === 'movie', title, episode) : Promise.resolve([]),
+      title && type === 'movie' ? searchArchiveProvider(title) : Promise.resolve([]),
+    ]);
 
-      const ytSources = ytRes.status === 'fulfilled' ? ytRes.value : [];
-      const dmSources = dmRes.status === 'fulfilled' ? dmRes.value : [];
-      const archiveSources = archiveRes.status === 'fulfilled' ? archiveRes.value : [];
+    const ytSources = ytRes.status === 'fulfilled' ? ytRes.value : [];
+    const dmSources = dmRes.status === 'fulfilled' ? dmRes.value : [];
+    const archiveSources = archiveRes.status === 'fulfilled' ? archiveRes.value : [];
 
-      finalSources = [
-        ...ytSources.map((s, i) => ({ ...s, label: `يوتيوب (بديل ${i + 1})` })),
-        ...dmSources.map((s, i) => ({ ...s, label: `ديلي موشن (بديل ${i + 1})` })),
-        ...archiveSources.map((s, i) => ({ ...s, label: `أرشيف (بديل ${i + 1})` })),
-      ];
-    } catch {}
+    // دمج المصادر: يوتيوب وديلي موشن والأرشيف أولاً، ثم جميع سيرفرات الـ Embed كاملة دون استبعاد
+    finalSources = [
+      ...ytSources,
+      ...dmSources,
+      ...archiveSources,
+      ...allEmbedSources,
+    ];
+  } else {
+    // ==========================================
+    // 2. معالجة المحتوى الأجنبي: الفحص اللحظي للسيرفرات الأساسية
+    // ==========================================
+    const confirmedEmbedSources: EmbedSourceDef[] = [];
+    const unverifiedEmbedSources: EmbedSourceDef[] = [];
+
+    if (vodSettings.live_probe_enabled && candidateEmbedSources.length > 0) {
+      const probeResults = await Promise.allSettled(
+        candidateEmbedSources.map(async (src) => {
+          const status = await probeSingleVodServer(src.url);
+          return { src, status };
+        })
+      );
+
+      for (const res of probeResults) {
+        if (res.status === 'fulfilled') {
+          const { src, status } = res.value;
+          if (status === 'CONFIRMED_OK') {
+            confirmedEmbedSources.push(src);
+          } else if (status === 'UNVERIFIED') {
+            unverifiedEmbedSources.push(src);
+          }
+          // إذا كان CONFIRMED_DEAD يتم استبعاده
+        } else {
+          unverifiedEmbedSources.push(candidateEmbedSources[0]);
+        }
+      }
+    } else {
+      unverifiedEmbedSources.push(...candidateEmbedSources);
+    }
+
+    const orderedEmbedDefs = [...confirmedEmbedSources, ...unverifiedEmbedSources];
+    finalSources = orderedEmbedDefs.map((s, idx) => ({
+      label: `سيرفر ${idx + 1} - ${s.name}`,
+      url: s.url,
+      type: s.type,
+    }));
+
+    // فولباك للمحتوى الأجنبي في حال عدم توفر أي سيرفر مدمج
+    if (finalSources.length === 0 && vodSettings.youtube_policy !== 'disabled' && title) {
+      let dmQuery = '';
+      if (type === 'movie') {
+        dmQuery = `${title} full movie`;
+      } else {
+        dmQuery = `${title} season ${season} episode ${episode}`;
+      }
+
+      try {
+        const [ytRes, dmRes, archiveRes] = await Promise.allSettled([
+          searchYouTubeProvider(title, season, episode, type),
+          searchDailymotionProvider(dmQuery, type === 'movie', title, episode),
+          type === 'movie' ? searchArchiveProvider(title) : Promise.resolve([]),
+        ]);
+
+        const ytSources = ytRes.status === 'fulfilled' ? ytRes.value : [];
+        const dmSources = dmRes.status === 'fulfilled' ? dmRes.value : [];
+        const archiveSources = archiveRes.status === 'fulfilled' ? archiveRes.value : [];
+
+        finalSources = [
+          ...ytSources.map((s, i) => ({ ...s, label: `يوتيوب (بديل ${i + 1})` })),
+          ...dmSources.map((s, i) => ({ ...s, label: `ديلي موشن (بديل ${i + 1})` })),
+          ...archiveSources.map((s, i) => ({ ...s, label: `أرشيف (بديل ${i + 1})` })),
+        ];
+      } catch {}
+    }
   }
 
+  // الرد مع الترويسات الصحيحة الكاملة ودعم CORS
   if (finalSources.length > 0) {
     const response = new Response(JSON.stringify({ sources: finalSources }), {
       status: 200,
@@ -2080,7 +2083,7 @@ async function handleVodSources(request: Request, url: URL, env: Env): Promise<R
         'Content-Type': 'application/json; charset=utf-8',
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Cache-Control, Pragma, *',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Key, Cache-Control, Pragma, *',
         'Cache-Control': 'public, max-age=7200',
       },
     });
@@ -2092,7 +2095,7 @@ async function handleVodSources(request: Request, url: URL, env: Env): Promise<R
     return response;
   }
 
-  // 4. تعذر العثور على أي مصدر
+  // تعذر العثور على أي مصدر
   const emptyRes = new Response(
     JSON.stringify({
       sources: [],
@@ -2104,15 +2107,11 @@ async function handleVodSources(request: Request, url: URL, env: Env): Promise<R
         'Content-Type': 'application/json; charset=utf-8',
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Cache-Control, Pragma, *',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Key, Cache-Control, Pragma, *',
         'Cache-Control': 'public, max-age=7200',
       },
     }
   );
-
-  try {
-    await cache.put(cacheKey, emptyRes.clone());
-  } catch {}
 
   return emptyRes;
 }
@@ -2475,9 +2474,13 @@ function generateCode(): string {
   return `TV-${p1}-${p2}`;
 }
 
-async function verifySubscriptionAuth(request: Request, env: Env): Promise<{ valid: boolean; error?: string; sub?: any }> {
+async function verifySubscriptionAuth(
+  request: Request,
+  env: Env,
+  urlParamToken?: string
+): Promise<{ valid: boolean; error?: string; sub?: any }> {
   const authHeader = request.headers.get('Authorization') || '';
-  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim() || (urlParamToken || '').trim();
 
   if (!token) {
     return { valid: false, error: 'يرجى تفعيل كود الاشتراك للوصول إلى هذا المحتوى' };
