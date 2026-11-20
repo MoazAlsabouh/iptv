@@ -1632,154 +1632,220 @@ async function searchArchiveProvider(
 }
 
 /**
- * 4. مزود السيرفرات المدمجة المتعددة (VidLink, VidSrc.cc, VidSrc, Embed.su, AutoEmbed, 2Embed, VidSrc Me)
+ * 4. إدارة إعدادات وسيرفرات الأفلام والمسلسلات (VOD) والفحص التلقائي اللحظي
  */
+interface VodServerConfig {
+  id: string;
+  name: string;
+  enabled: boolean;
+}
+
+interface VodSettings {
+  live_probe_enabled: boolean;
+  youtube_policy: 'fallback_only' | 'disabled';
+  servers_priority: VodServerConfig[];
+}
+
+const DEFAULT_VOD_SETTINGS: VodSettings = {
+  live_probe_enabled: true,
+  youtube_policy: 'fallback_only',
+  servers_priority: [
+    { id: 'vidlink', name: 'VidLink', enabled: true },
+    { id: 'vidsrc_cc', name: 'VidSrc CC', enabled: true },
+    { id: 'vidsrc_to', name: 'VidSrc', enabled: true },
+    { id: 'embed_su', name: 'Embed.su', enabled: true },
+    { id: 'autoembed', name: 'AutoEmbed', enabled: true },
+    { id: '2embed', name: '2Embed', enabled: true },
+    { id: 'vidsrc_me', name: 'VidSrc Me', enabled: true },
+  ],
+};
+
+async function getVodSettings(env: Env): Promise<VodSettings> {
+  if (!env.DB) return DEFAULT_VOD_SETTINGS;
+  try {
+    const row = await env.DB.prepare('SELECT value FROM app_settings WHERE key = ?')
+      .bind('vod_settings')
+      .first<any>();
+    if (row && row.value) {
+      const parsed = JSON.parse(row.value);
+      return {
+        live_probe_enabled: parsed.live_probe_enabled !== false,
+        youtube_policy: parsed.youtube_policy === 'disabled' ? 'disabled' : 'fallback_only',
+        servers_priority: Array.isArray(parsed.servers_priority)
+          ? parsed.servers_priority
+          : DEFAULT_VOD_SETTINGS.servers_priority,
+      };
+    }
+  } catch {}
+  return DEFAULT_VOD_SETTINGS;
+}
+
+async function saveVodSettings(env: Env, settings: VodSettings): Promise<void> {
+  if (!env.DB) return;
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    'INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'
+  )
+    .bind('vod_settings', JSON.stringify(settings), now)
+    .run();
+}
+
+interface EmbedSourceDef {
+  id: string;
+  name: string;
+  url: string;
+  type: 'embed';
+}
+
 function buildMultiEmbedSources(
   type: 'movie' | 'tv',
   tmdbId?: string,
   imdbId?: string,
   season: number = 1,
   episode: number = 1
-): { label: string; url: string; type: 'embed' }[] {
-  const list: { label: string; url: string; type: 'embed' }[] = [];
+): EmbedSourceDef[] {
+  const map: Record<string, { name: string; url: string }> = {};
 
   if (type === 'movie') {
     if (tmdbId) {
-      list.push({
-        label: 'سيرفر 1 - VidLink',
+      map['vidlink'] = {
+        name: 'VidLink',
         url: `https://vidlink.pro/movie/${tmdbId}?primaryColor=38bdf8&autoplay=true`,
-        type: 'embed',
-      });
-      list.push({
-        label: 'سيرفر 2 - VidSrc CC',
+      };
+      map['vidsrc_cc'] = {
+        name: 'VidSrc CC',
         url: `https://vidsrc.cc/v2/embed/movie/${tmdbId}`,
-        type: 'embed',
-      });
-      list.push({
-        label: 'سيرفر 3 - VidSrc',
+      };
+      map['vidsrc_to'] = {
+        name: 'VidSrc',
         url: `https://vidsrc.to/embed/movie/${tmdbId}`,
-        type: 'embed',
-      });
-      list.push({
-        label: 'سيرفر 4 - Embed.su',
+      };
+      map['embed_su'] = {
+        name: 'Embed.su',
         url: `https://embed.su/embed/movie/${tmdbId}`,
-        type: 'embed',
-      });
-      list.push({
-        label: 'سيرفر 5 - AutoEmbed',
+      };
+      map['autoembed'] = {
+        name: 'AutoEmbed',
         url: `https://player.autoembed.cc/embed/movie/${tmdbId}`,
-        type: 'embed',
-      });
-      list.push({
-        label: 'سيرفر 6 - 2Embed',
+      };
+      map['2embed'] = {
+        name: '2Embed',
         url: `https://www.2embed.cc/embed/${tmdbId}`,
-        type: 'embed',
-      });
-      list.push({
-        label: 'سيرفر 7 - VidSrc Me',
+      };
+      map['vidsrc_me'] = {
+        name: 'VidSrc Me',
         url: `https://vidsrc.me/embed/movie?tmdb=${tmdbId}`,
-        type: 'embed',
-      });
+      };
     } else if (imdbId) {
-      list.push({
-        label: 'سيرفر 1 - VidLink',
+      map['vidlink'] = {
+        name: 'VidLink',
         url: `https://vidlink.pro/movie/${imdbId}?primaryColor=38bdf8&autoplay=true`,
-        type: 'embed',
-      });
-      list.push({
-        label: 'سيرفر 2 - VidSrc CC',
+      };
+      map['vidsrc_cc'] = {
+        name: 'VidSrc CC',
         url: `https://vidsrc.cc/v2/embed/movie/${imdbId}`,
-        type: 'embed',
-      });
-      list.push({
-        label: 'سيرفر 3 - VidSrc',
+      };
+      map['vidsrc_to'] = {
+        name: 'VidSrc',
         url: `https://vidsrc.to/embed/movie/${imdbId}`,
-        type: 'embed',
-      });
-      list.push({
-        label: 'سيرفر 4 - Embed.su',
+      };
+      map['embed_su'] = {
+        name: 'Embed.su',
         url: `https://embed.su/embed/movie/${imdbId}`,
-        type: 'embed',
-      });
-      list.push({
-        label: 'سيرفر 5 - VidSrc Me',
+      };
+      map['vidsrc_me'] = {
+        name: 'VidSrc Me',
         url: `https://vidsrc.me/embed/movie?imdb=${imdbId}`,
-        type: 'embed',
-      });
+      };
     }
   } else {
     // TV Series
     if (tmdbId) {
-      list.push({
-        label: 'سيرفر 1 - VidLink',
+      map['vidlink'] = {
+        name: 'VidLink',
         url: `https://vidlink.pro/tv/${tmdbId}/${season}/${episode}?primaryColor=38bdf8&autoplay=true`,
-        type: 'embed',
-      });
-      list.push({
-        label: 'سيرفر 2 - VidSrc CC',
+      };
+      map['vidsrc_cc'] = {
+        name: 'VidSrc CC',
         url: `https://vidsrc.cc/v2/embed/tv/${tmdbId}/${season}/${episode}`,
-        type: 'embed',
-      });
-      list.push({
-        label: 'سيرفر 3 - VidSrc',
+      };
+      map['vidsrc_to'] = {
+        name: 'VidSrc',
         url: `https://vidsrc.to/embed/tv/${tmdbId}/${season}/${episode}`,
-        type: 'embed',
-      });
-      list.push({
-        label: 'سيرفر 4 - Embed.su',
+      };
+      map['embed_su'] = {
+        name: 'Embed.su',
         url: `https://embed.su/embed/tv/${tmdbId}/${season}/${episode}`,
-        type: 'embed',
-      });
-      list.push({
-        label: 'سيرفر 5 - AutoEmbed',
+      };
+      map['autoembed'] = {
+        name: 'AutoEmbed',
         url: `https://player.autoembed.cc/embed/tv/${tmdbId}/${season}/${episode}`,
-        type: 'embed',
-      });
-      list.push({
-        label: 'سيرفر 6 - 2Embed',
+      };
+      map['2embed'] = {
+        name: '2Embed',
         url: `https://www.2embed.cc/embedtv/${tmdbId}&s=${season}&e=${episode}`,
-        type: 'embed',
-      });
-      list.push({
-        label: 'سيرفر 7 - VidSrc Me',
+      };
+      map['vidsrc_me'] = {
+        name: 'VidSrc Me',
         url: `https://vidsrc.me/embed/tv?tmdb=${tmdbId}&season=${season}&episode=${episode}`,
-        type: 'embed',
-      });
+      };
     } else if (imdbId) {
-      list.push({
-        label: 'سيرفر 1 - VidLink',
+      map['vidlink'] = {
+        name: 'VidLink',
         url: `https://vidlink.pro/tv/${imdbId}/${season}/${episode}?primaryColor=38bdf8&autoplay=true`,
-        type: 'embed',
-      });
-      list.push({
-        label: 'سيرفر 2 - VidSrc CC',
+      };
+      map['vidsrc_cc'] = {
+        name: 'VidSrc CC',
         url: `https://vidsrc.cc/v2/embed/tv/${imdbId}/${season}/${episode}`,
-        type: 'embed',
-      });
-      list.push({
-        label: 'سيرفر 3 - VidSrc',
+      };
+      map['vidsrc_to'] = {
+        name: 'VidSrc',
         url: `https://vidsrc.to/embed/tv/${imdbId}/${season}/${episode}`,
-        type: 'embed',
-      });
-      list.push({
-        label: 'سيرفر 4 - Embed.su',
+      };
+      map['embed_su'] = {
+        name: 'Embed.su',
         url: `https://embed.su/embed/tv/${imdbId}/${season}/${episode}`,
-        type: 'embed',
-      });
-      list.push({
-        label: 'سيرفر 5 - VidSrc Me',
+      };
+      map['vidsrc_me'] = {
+        name: 'VidSrc Me',
         url: `https://vidsrc.me/embed/tv?imdb=${imdbId}&season=${season}&episode=${episode}`,
-        type: 'embed',
-      });
+      };
     }
   }
 
+  const list: EmbedSourceDef[] = [];
+  for (const [id, def] of Object.entries(map)) {
+    list.push({ id, name: def.name, url: def.url, type: 'embed' });
+  }
   return list;
 }
 
 /**
- * معالج نقطة النهاية الهجينة /api/vod/sources مع التحقق من اشتراك المستخدم
- * ودعم التخزين المؤقت 12 ساعة واستخدام مفتاح إصدار v=3 لتخطي الكاش القديم
+ * فحص مباشر لحظي (Live Probe) للسيرفر مع مهلة 2.8 ثانية
+ */
+async function probeSingleVodServer(url: string): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2800);
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    return res.status >= 200 && res.status < 400;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * معالج نقطة النهاية الهجينة /api/vod/sources مع الفحص التلقائي اللحظي
+ * وقاعدة يوتيوب الصارمة (Fallback Only) ودعم التخزين المؤقت الذكي
  */
 async function handleVodSources(request: Request, url: URL, env: Env): Promise<Response> {
   const auth = await verifySubscriptionAuth(request, env);
@@ -1787,146 +1853,173 @@ async function handleVodSources(request: Request, url: URL, env: Env): Promise<R
     return jsonResponse({ sources: [], error: auth.error }, 401);
   }
 
+  const forceProbe = url.searchParams.get('force_probe') === '1';
   const cache = (caches as any).default;
-  // استخدام معامل إصدار v=3 لإلغاء أي كاش قديم يحمل روابط معطلة
   const cacheUrl = new URL(url.toString());
-  cacheUrl.searchParams.set('v', '3');
+  cacheUrl.searchParams.set('v', '5');
   const cacheKey = new Request(cacheUrl.toString(), request);
 
-  try {
-    const cached = await cache.match(cacheKey);
-    if (cached) {
-      return cached;
+  if (!forceProbe) {
+    try {
+      const cached = await cache.match(cacheKey);
+      if (cached) {
+        return cached;
+      }
+    } catch {
+      // تجاهل أخطاء مطابقة الكاش
     }
-  } catch {
-    // تجاهل أخطاء مطابقة الكاش
   }
 
   const tmdbId = url.searchParams.get('tmdbId') || '';
   const imdbId = url.searchParams.get('imdbId') || '';
   let title = (url.searchParams.get('title') || '').trim();
   const type = (url.searchParams.get('type') === 'tv' ? 'tv' : 'movie') as 'movie' | 'tv';
-  const rawLang = (url.searchParams.get('lang') || 'en').toLowerCase();
   const season = parseInt(url.searchParams.get('season') || '1', 10) || 1;
   const episode = parseInt(url.searchParams.get('episode') || '1', 10) || 1;
 
   // إزالة أي لواحق مواسم أو حلقات من العنوان لضمان دقة البحث
   title = title.replace(/\s*-\s*الموسم\s*\d+\s*الحلقة\s*\d+/g, '').replace(/\s*-\s*الحلقة\s*\d+/g, '').trim();
 
-  // التحقق الصارم من اللغة الأصلية: لا يُعتبر العمل عربياً إلا إذا كانت لغته الأصلية صراحة 'ar'
-  const isArabic = rawLang === 'ar';
+  // جلب إعدادات سيرفرات الـ VOD المحدثة من الإدارة أو الإعدادات الافتراضية
+  const vodSettings = await getVodSettings(env);
 
-  const embedSources = buildMultiEmbedSources(type, tmdbId, imdbId, season, episode);
+  // توليد قائمة السيرفرات المتاحة لهذا العمل
+  const allEmbedDefs = buildMultiEmbedSources(type, tmdbId, imdbId, season, episode);
 
-  // للأعمال غير العربية: إيقاف يوتيوب وديلي موشن تماماً وإرجاع السيرفرات المدمجة الدقيقة فوراً
-  if (!isArabic) {
-    if (embedSources.length === 0) {
-      const emptyRes = new Response(
-        JSON.stringify({ sources: [], error: 'هذا العمل غير متوفر حالياً على أي مصدر' }),
-        {
-          status: 200,
-          headers: {
-            'Content-Type': 'application/json; charset=utf-8',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type, Cache-Control, Pragma, *',
-            'Cache-Control': 'public, max-age=43200',
-          },
-        }
-      );
-      try {
-        await cache.put(cacheKey, emptyRes.clone());
-      } catch {}
-      return emptyRes;
+  // ترتيب وتصفية السيرفرات حسب أولويات الإدارة والسيرفرات المفعلة
+  const candidateEmbedSources: EmbedSourceDef[] = [];
+  for (const srv of vodSettings.servers_priority) {
+    if (srv.enabled) {
+      const match = allEmbedDefs.find((item) => item.id === srv.id);
+      if (match) {
+        candidateEmbedSources.push(match);
+      }
     }
+  }
 
-    const response = new Response(JSON.stringify({ sources: embedSources }), {
+  // إضافة أي سيرفرات إضافية لم تُحدد في الإعدادات
+  for (const item of allEmbedDefs) {
+    if (!candidateEmbedSources.some((s) => s.id === item.id)) {
+      candidateEmbedSources.push(item);
+    }
+  }
+
+  // 1. الفحص التلقائي اللحظي (Live Probe) للسيرفرات الأساسية بالتوازي
+  let workingEmbedSources: EmbedSourceDef[] = [];
+  if (vodSettings.live_probe_enabled && candidateEmbedSources.length > 0) {
+    const probeResults = await Promise.allSettled(
+      candidateEmbedSources.map(async (src) => {
+        const ok = await probeSingleVodServer(src.url);
+        return { src, ok };
+      })
+    );
+
+    for (const res of probeResults) {
+      if (res.status === 'fulfilled' && res.value.ok) {
+        workingEmbedSources.push(res.value.src);
+      }
+    }
+  } else {
+    workingEmbedSources = candidateEmbedSources;
+  }
+
+  // 2. قاعدة يوتيوب الصارمة: إذا وُجد سيرفر واحد على الأقل يعمل من السيرفرات الأساسية، لا نُدرج يوتيوب إطلاقاً
+  if (workingEmbedSources.length > 0) {
+    const finalSources = workingEmbedSources.map((s, idx) => ({
+      label: `سيرفر ${idx + 1} - ${s.name}`,
+      url: s.url,
+      type: s.type,
+    }));
+
+    const response = new Response(JSON.stringify({ sources: finalSources }), {
       status: 200,
       headers: {
         'Content-Type': 'application/json; charset=utf-8',
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Cache-Control, Pragma, *',
-        'Cache-Control': 'public, max-age=43200',
+        'Cache-Control': 'public, max-age=7200',
       },
     });
 
     try {
       await cache.put(cacheKey, response.clone());
-    } catch {
-      // تجاهل أخطاء وضع الكاش
-    }
+    } catch {}
 
     return response;
   }
 
-  // للأعمال العربية فقط: تشغيل يوتيوب وديلي موشن مع الفحص الصارم لتطابق العنوان والحلقة
-  let dmQuery = '';
-  if (type === 'movie') {
-    dmQuery = `${title} فيلم كامل`;
-  } else {
-    dmQuery =
-      season > 1
-        ? `${title} الجزء ${season} الحلقة ${episode}`
-        : `${title} الحلقة ${episode}`;
-  }
+  // 3. في حال فشل كافة السيرفرات الأساسية، نلجأ لمصادر يوتيوب والبدائل إذا كانت السياسة تسمح بذلك
+  if (vodSettings.youtube_policy !== 'disabled' && title) {
+    let dmQuery = '';
+    if (type === 'movie') {
+      dmQuery = `${title} فيلم كامل`;
+    } else {
+      dmQuery =
+        season > 1
+          ? `${title} الجزء ${season} الحلقة ${episode}`
+          : `${title} الحلقة ${episode}`;
+    }
 
-  const [ytRes, dmRes, archiveRes] = await Promise.allSettled([
-    title ? searchYouTubeProvider(title, season, episode, type) : Promise.resolve([]),
-    title ? searchDailymotionProvider(dmQuery, type === 'movie', title, episode) : Promise.resolve([]),
-    title && type === 'movie' ? searchArchiveProvider(title) : Promise.resolve([]),
-  ]);
+    const [ytRes, dmRes, archiveRes] = await Promise.allSettled([
+      searchYouTubeProvider(title, season, episode, type),
+      searchDailymotionProvider(dmQuery, type === 'movie', title, episode),
+      type === 'movie' ? searchArchiveProvider(title) : Promise.resolve([]),
+    ]);
 
-  const ytSources = ytRes.status === 'fulfilled' ? ytRes.value : [];
-  const dmSources = dmRes.status === 'fulfilled' ? dmRes.value : [];
-  const archiveSources = archiveRes.status === 'fulfilled' ? archiveRes.value : [];
+    const ytSources = ytRes.status === 'fulfilled' ? ytRes.value : [];
+    const dmSources = dmRes.status === 'fulfilled' ? dmRes.value : [];
+    const archiveSources = archiveRes.status === 'fulfilled' ? archiveRes.value : [];
 
-  // إذا لم يُعثر على فيديو يوتيوب صالح، الانتقال التلقائي لمصادر ديلي موشن ثم الأرشيف ثم السيرفرات المدمجة
-  const finalSources: { label: string; url: string; type: 'embed' | 'direct' }[] = [
-    ...ytSources,
-    ...dmSources,
-    ...archiveSources,
-    ...embedSources,
-  ];
+    const fallbackSources: { label: string; url: string; type: 'embed' | 'direct' }[] = [
+      ...ytSources.map((s, i) => ({ ...s, label: `يوتيوب (بديل ${i + 1})` })),
+      ...dmSources.map((s, i) => ({ ...s, label: `ديلي موشن (بديل ${i + 1})` })),
+      ...archiveSources.map((s, i) => ({ ...s, label: `أرشيف (بديل ${i + 1})` })),
+    ];
 
-  if (finalSources.length === 0) {
-    const emptyRes = new Response(
-      JSON.stringify({ sources: [], error: 'هذا العمل غير متوفر حالياً على أي مصدر' }),
-      {
+    if (fallbackSources.length > 0) {
+      const response = new Response(JSON.stringify({ sources: fallbackSources }), {
         status: 200,
         headers: {
           'Content-Type': 'application/json; charset=utf-8',
           'Access-Control-Allow-Origin': '*',
           'Access-Control-Allow-Methods': 'GET, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type, Cache-Control, Pragma, *',
-          'Cache-Control': 'public, max-age=43200',
+          'Cache-Control': 'public, max-age=7200',
         },
-      }
-    );
-    try {
-      await cache.put(cacheKey, emptyRes.clone());
-    } catch {}
-    return emptyRes;
+      });
+
+      try {
+        await cache.put(cacheKey, response.clone());
+      } catch {}
+
+      return response;
+    }
   }
 
-  const response = new Response(JSON.stringify({ sources: finalSources }), {
-    status: 200,
-    headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Cache-Control, Pragma, *',
-      'Cache-Control': 'public, max-age=43200',
-    },
-  });
+  // 4. تعذر العثور على أي مصدر
+  const emptyRes = new Response(
+    JSON.stringify({
+      sources: [],
+      error: 'عذراً، لم يتم العثور على أي سيرفر بث صالح أو متوفر لهذا العمل حالياً.',
+    }),
+    {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Cache-Control, Pragma, *',
+        'Cache-Control': 'public, max-age=7200',
+      },
+    }
+  );
 
   try {
-    await cache.put(cacheKey, response.clone());
-  } catch {
-    // تجاهل أخطاء وضع الكاش
-  }
+    await cache.put(cacheKey, emptyRes.clone());
+  } catch {}
 
-  return response;
+  return emptyRes;
 }
 
 interface SubtitleCue {
@@ -3251,6 +3344,140 @@ async function handleResellerUpdateCode(request: Request, env: Env, code: string
   }
 }
 
+async function handleGetFavorites(request: Request, env: Env): Promise<Response> {
+  const auth = await verifySubscriptionAuth(request, env);
+  if (!auth.valid || !auth.sub) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ favorites: [] });
+  }
+
+  try {
+    const res = await env.DB.prepare(
+      'SELECT item_id, item_type, item_data, created_at FROM user_favorites WHERE subscription_id = ? ORDER BY id DESC'
+    )
+      .bind(auth.sub.id)
+      .all<any>();
+
+    const favorites = (res.results || []).map((row: any) => {
+      let data = {};
+      try {
+        data = JSON.parse(row.item_data || '{}');
+      } catch {}
+      return {
+        id: row.item_id,
+        type: row.item_type,
+        data,
+        createdAt: row.created_at,
+      };
+    });
+
+    return jsonResponse({ favorites });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل جلب المفضلة: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAddFavorite(request: Request, env: Env): Promise<Response> {
+  const auth = await verifySubscriptionAuth(request, env);
+  if (!auth.valid || !auth.sub) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  try {
+    const body = (await request.json()) as any;
+    const itemId = String(body.id || '').trim();
+    const itemType = body.type === 'vod' ? 'vod' : 'channel';
+    const itemData = JSON.stringify(body.data || {});
+
+    if (!itemId) {
+      return jsonResponse({ error: 'معرف العنصر مطلوب' }, 400);
+    }
+
+    const nowIso = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT INTO user_favorites (subscription_id, item_id, item_type, item_data, created_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(subscription_id, item_id, item_type)
+       DO UPDATE SET item_data = excluded.item_data, created_at = excluded.created_at`
+    )
+      .bind(auth.sub.id, itemId, itemType, itemData, nowIso)
+      .run();
+
+    return jsonResponse({ success: true, message: 'تم حفظ العنصر في المفضلة' });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل حفظ المفضلة: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleDeleteFavorite(request: Request, url: URL, env: Env): Promise<Response> {
+  const auth = await verifySubscriptionAuth(request, env);
+  if (!auth.valid || !auth.sub) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  try {
+    const parts = url.pathname.replace(/^\/api\/favorites\/?/, '').split('/');
+    const itemType = parts[0] === 'vod' ? 'vod' : parts[0] === 'channel' ? 'channel' : '';
+    const itemId = decodeURIComponent(parts.slice(1).join('/') || '');
+
+    if (!itemId || !itemType) {
+      return jsonResponse({ error: 'النوع ومعرف العنصر مطلوبان للحذف' }, 400);
+    }
+
+    await env.DB.prepare(
+      'DELETE FROM user_favorites WHERE subscription_id = ? AND item_type = ? AND item_id = ?'
+    )
+      .bind(auth.sub.id, itemType, itemId)
+      .run();
+
+    return jsonResponse({ success: true, message: 'تم إزالة العنصر من المفضلة' });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل حذف المفضلة: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminGetVodSettings(request: Request, env: Env): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  const settings = await getVodSettings(env);
+  return jsonResponse({ settings });
+}
+
+async function handleAdminUpdateVodSettings(request: Request, env: Env): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  try {
+    const body = (await request.json()) as any;
+    const settings: VodSettings = {
+      live_probe_enabled: body.live_probe_enabled !== false,
+      youtube_policy: body.youtube_policy === 'disabled' ? 'disabled' : 'fallback_only',
+      servers_priority: Array.isArray(body.servers_priority) ? body.servers_priority : DEFAULT_VOD_SETTINGS.servers_priority,
+    };
+
+    await saveVodSettings(env, settings);
+    return jsonResponse({ success: true, settings, message: 'تم حفظ إعدادات سيرفرات الأفلام بنجاح' });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل تحديث الإعدادات: ' + (err?.message || '') }, 500);
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -3316,6 +3543,16 @@ export default {
       }
     }
 
+    // إعدادات سيرفرات الأفلام والمسلسلات في الإدارة
+    if (url.pathname === '/api/admin/vod-settings') {
+      if (request.method === 'GET') {
+        return handleAdminGetVodSettings(request, env);
+      }
+      if (request.method === 'PUT' || request.method === 'POST') {
+        return handleAdminUpdateVodSettings(request, env);
+      }
+    }
+
     // 3. نقاط نهاية بوابة الموزعين (Reseller Portal)
     if (url.pathname === '/api/reseller/login' && request.method === 'POST') {
       return handleResellerLogin(request, env);
@@ -3359,7 +3596,21 @@ export default {
       return handleVodSubtitles(request, url, env);
     }
 
-    // 4. نقطة نهاية قائمة القنوات الحية (محمية بالاشتراك)
+    // 4. نقاط نهاية المفضلة (قنوات وأفلام ومسلسلات محمية بالاشتراك)
+    if (url.pathname === '/api/favorites') {
+      if (request.method === 'GET') {
+        return handleGetFavorites(request, env);
+      }
+      if (request.method === 'POST') {
+        return handleAddFavorite(request, env);
+      }
+    }
+
+    if (url.pathname.startsWith('/api/favorites/') && request.method === 'DELETE') {
+      return handleDeleteFavorite(request, url, env);
+    }
+
+    // 5. نقطة نهاية قائمة القنوات الحية (محمية بالاشتراك)
     if ((url.pathname === '/' || url.pathname === '/playlist.m3u') && request.method === 'GET') {
       const authHeader = request.headers.get('Authorization');
       const tokenParam = url.searchParams.get('token');

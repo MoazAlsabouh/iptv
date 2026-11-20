@@ -15,6 +15,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 import { ChannelLogo } from '../../components/ChannelLogo';
 import { StreamSource } from '../../types/media';
+import { useAppStore } from '../../store/useAppStore';
 
 const BACKEND_BASE_URL = 'https://iptv-backend.moaznsm.workers.dev';
 
@@ -107,6 +108,9 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
       ? decodeURIComponent(params.title[0])
       : 'تفاصيل المسلسل';
   }, [params.title]);
+
+  const { favoriteIds, toggleFavorite } = useAppStore();
+  const isFavorite = Boolean(params.id && favoriteIds.includes(params.id));
 
   const seriesPoster = useMemo(() => {
     if (!params.poster) return '';
@@ -303,6 +307,39 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
                   {seasons.length > 0 ? `${seasons.length} مواسم` : 'مسلسل'}
                 </Text>
               </View>
+
+              <Pressable
+                onPress={() => {
+                  toggleFavorite({
+                    id: params.id,
+                    title: seriesTitle,
+                    poster: seriesPoster,
+                    backdrop: seriesBackdrop,
+                    type: 'tv',
+                    rating: ratingNum,
+                    year: seriesYear,
+                    overview: seriesOverview,
+                    category: seriesCategory,
+                    tmdbId: params.tmdbId ? Number(params.tmdbId) : undefined,
+                    imdbId: params.imdbId,
+                    originalLanguage: params.originalLanguage,
+                  });
+                }}
+                style={({ focused }) => [
+                  styles.favBtn,
+                  isFavorite && styles.favBtnActive,
+                  focused && styles.favBtnFocused,
+                ]}
+              >
+                <MaterialIcons
+                  name={isFavorite ? 'favorite' : 'favorite-border'}
+                  size={15}
+                  color={isFavorite ? '#ef4444' : '#ffffff'}
+                />
+                <Text style={[styles.favBtnText, isFavorite && styles.favBtnTextActive]}>
+                  {isFavorite ? 'في المفضلة' : 'إضافة للمفضلة'}
+                </Text>
+              </Pressable>
             </View>
 
             {seriesOverview ? (
@@ -556,6 +593,33 @@ const styles = StyleSheet.create({
   },
   categoryPillText: {
     color: '#c084fc',
+  },
+  favBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 999,
+  },
+  favBtnActive: {
+    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+    borderColor: 'rgba(239, 68, 68, 0.6)',
+  },
+  favBtnFocused: {
+    borderColor: '#ffffff',
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  favBtnText: {
+    color: '#e2e8f0',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  favBtnTextActive: {
+    color: '#fca5a5',
   },
   overviewText: {
     color: '#94a3b8',

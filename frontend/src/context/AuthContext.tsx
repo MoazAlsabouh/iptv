@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { Platform } from 'react-native';
+import { useAppStore } from '../store/useAppStore';
 
 export const BACKEND_BASE_URL = 'https://iptv-backend.moaznsm.workers.dev';
 
@@ -104,6 +105,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               if (isMounted && data.valid && data.subscription) {
                 setSubscription(data.subscription);
                 window.localStorage.setItem(SUB_KEY, JSON.stringify(data.subscription));
+                useAppStore.getState().syncFavorites(savedToken);
               }
             } else {
               // الرمز منتهٍ أو ملغى
@@ -164,6 +166,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           window.localStorage.setItem(TOKEN_KEY, data.token);
           window.localStorage.setItem(SUB_KEY, JSON.stringify(data.subscription));
         }
+
+        useAppStore.getState().syncFavorites(data.token);
 
         return { success: true };
       } catch (err: any) {

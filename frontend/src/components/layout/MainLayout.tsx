@@ -31,7 +31,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const router = useRouter();
   const currentPath = usePathname();
   const isChildMode = useAppStore((state) => state.isChildMode);
-  const { subscription, logout } = useAuth();
 
   return (
     <View style={styles.rootContainer}>
@@ -105,52 +104,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             })}
           </View>
         </View>
-
-        {/* شارة حالة الاشتراك */}
-        {subscription && (
-          <View style={styles.subCard}>
-            <View style={styles.subCardHeader}>
-              <View style={styles.subStatusDot} />
-              <Text style={styles.subCardTitle}>اشتراك نشط</Text>
-            </View>
-
-            <Text style={styles.subDaysText}>
-              متبقي {subscription.remainingDays} يوم
-            </Text>
-            <Text style={styles.subCodeText} numberOfLines={1}>
-              {subscription.code}
-            </Text>
-
-            <Pressable
-              onPress={async () => {
-                await logout();
-                router.replace('/activate');
-              }}
-              style={({ focused }) => [
-                styles.changeCodeBtn,
-                focused && styles.changeCodeBtnFocused,
-              ]}
-            >
-              {({ focused }) => (
-                <View style={styles.changeCodeRow}>
-                  <MaterialIcons
-                    name="vpn-key"
-                    size={14}
-                    color={focused ? '#000000' : '#38bdf8'}
-                  />
-                  <Text
-                    style={[
-                      styles.changeCodeText,
-                      focused && styles.changeCodeTextFocused,
-                    ]}
-                  >
-                    تغيير الكود / خروج
-                  </Text>
-                </View>
-              )}
-            </Pressable>
-          </View>
-        )}
 
         {/* إرشادات التحكم بريموت التلفاز */}
         <View style={styles.sidebarFooter}>

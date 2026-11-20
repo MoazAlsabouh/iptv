@@ -509,7 +509,19 @@ export function PlayerScreen(): React.JSX.Element {
             {channelId ? (
               <Pressable
                 onPress={() => {
-                  toggleFavorite(channelId);
+                  toggleFavorite({
+                    id: channelId,
+                    title: channelTitle,
+                    name: channelTitle,
+                    logo: channelLogo,
+                    poster: channelLogo,
+                    url: rawStreamUrl,
+                    type: isVod ? (isTvSeries ? 'tv' : 'movie') : 'channel',
+                    tmdbId: params.tmdbId ? Number(params.tmdbId) : undefined,
+                    imdbId: params.imdbId,
+                    season: selectedSeason,
+                    episode: selectedEpisode,
+                  });
                   resetOverlayTimer();
                 }}
                 style={({ focused }) => [

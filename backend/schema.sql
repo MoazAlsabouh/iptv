@@ -43,3 +43,25 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_reseller_id ON subscriptions(resell
 CREATE INDEX IF NOT EXISTS idx_devices_sub_device ON devices(subscription_id, device_id);
 CREATE INDEX IF NOT EXISTS idx_resellers_username ON resellers(username);
 CREATE INDEX IF NOT EXISTS idx_resellers_email ON resellers(email);
+
+-- جدول المفضلات للمستخدمين (قنوات وأفلام ومسلسلات)
+CREATE TABLE IF NOT EXISTS user_favorites (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subscription_id INTEGER NOT NULL,
+  item_id TEXT NOT NULL,
+  item_type TEXT NOT NULL, -- 'channel' | 'vod'
+  item_data TEXT NOT NULL, -- بيانات العنصر بصيغة JSON
+  created_at TEXT NOT NULL,
+  UNIQUE(subscription_id, item_id, item_type),
+  FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_favorites_sub ON user_favorites(subscription_id);
+CREATE INDEX IF NOT EXISTS idx_favorites_sub_type ON user_favorites(subscription_id, item_type);
+
+-- جدول الإعدادات العامة وإعدادات سيرفرات الأفلام والمسلسلات
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);

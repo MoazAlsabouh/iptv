@@ -16,6 +16,7 @@ import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 import { ChannelLogo } from '../../components/ChannelLogo';
+import { useAppStore } from '../../store/useAppStore';
 
 const BACKEND_BASE_URL = 'https://iptv-backend.moaznsm.workers.dev';
 
@@ -52,6 +53,7 @@ interface SubCategory {
 }
 
 const SUB_CATEGORIES: SubCategory[] = [
+  { id: 'favorites', title: 'المفضلة ★', icon: 'star' },
   { id: 'trending', title: 'الرائج', icon: 'whatshot' },
   { id: 'tv_schedule', title: 'جدول الحلقات اليوم', icon: 'schedule' },
   { id: 'arabic_movies', title: 'أفلام عربية', icon: 'local-movies' },
@@ -68,9 +70,11 @@ interface VodCardProps {
   item: VodItem;
   onSelect: (item: VodItem) => void;
   index: number;
+  isFav?: boolean;
+  onToggleFav?: (item: VodItem) => void;
 }
 
-const VodCard: React.FC<VodCardProps> = ({ item, onSelect, index }) => {
+const VodCard: React.FC<VodCardProps> = ({ item, onSelect, index, isFav, onToggleFav }) => {
   const [imageError, setImageError] = useState<boolean>(false);
 
   return (
@@ -99,19 +103,41 @@ const VodCard: React.FC<VodCardProps> = ({ item, onSelect, index }) => {
             {/* تدرج لوني داكن خفيف من الأسفل لإبراز التفاصيل */}
             <View style={styles.posterGradientOverlay} />
 
-            {/* شارات الرأس (التقييم ونوع العمل) */}
+            {/* شارات الرأس (التقييم ونوع العمل) وزر المفضلة */}
             <View style={styles.topBadgesRow}>
-              <View style={[styles.typeBadge, item.type === 'tv' && styles.typeBadgeTv]}>
-                <Text style={styles.typeBadgeText}>
-                  {item.type === 'tv' ? 'مسلسل' : 'فيلم'}
-                </Text>
+              <View style={styles.topBadgesLeft}>
+                <View style={[styles.typeBadge, item.type === 'tv' && styles.typeBadgeTv]}>
+                  <Text style={styles.typeBadgeText}>
+                    {item.type === 'tv' ? 'مسلسل' : 'فيلم'}
+                  </Text>
+                </View>
+
+                {item.rating > 0 ? (
+                  <View style={styles.ratingBadge}>
+                    <MaterialIcons name="star" size={13} color="#eab308" />
+                    <Text style={styles.ratingBadgeText}>{item.rating}</Text>
+                  </View>
+                ) : null}
               </View>
 
-              {item.rating > 0 ? (
-                <View style={styles.ratingBadge}>
-                  <MaterialIcons name="star" size={13} color="#eab308" />
-                  <Text style={styles.ratingBadgeText}>{item.rating}</Text>
-                </View>
+              {onToggleFav ? (
+                <Pressable
+                  onPress={(e: any) => {
+                    e?.stopPropagation?.();
+                    onToggleFav(item);
+                  }}
+                  style={({ focused: favFocused }) => [
+                    styles.cardFavBtn,
+                    isFav && styles.cardFavBtnActive,
+                    favFocused && styles.cardFavBtnFocused,
+                  ]}
+                >
+                  <MaterialIcons
+                    name={isFav ? 'favorite' : 'favorite-border'}
+                    size={16}
+                    color={isFav ? '#ef4444' : '#ffffff'}
+                  />
+                </Pressable>
               ) : null}
             </View>
 
@@ -185,6 +211,8 @@ export default function MoviesScreen(): React.JSX.Element {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [debouncedQuery, setDebouncedQuery] = useState<string>('');
 
+  const { favoriteIds, vodFavorites, toggleFavorite } = useAppStore();
+
   const [items, setItems] = useState<VodItem[]>([]);
   const [page, setPage] = useState<number>(1);
   const [totalPages, setTotalPages] = useState<number>(1);
@@ -216,6 +244,12 @@ export default function MoviesScreen(): React.JSX.Element {
 
   // جلب البيانات من الخادم السحابي
   const fetchCatalogData = useCallback(async () => {
+    if (selectedCategory === 'favorites') {
+      setIsLoading(false);
+      setIsLoadingMore(false);
+      return;
+    }
+
     const isFirstPage = page === 1;
     if (isFirstPage) {
       setIsLoading(true);
@@ -256,6 +290,23 @@ export default function MoviesScreen(): React.JSX.Element {
   useEffect(() => {
     fetchCatalogData();
   }, [fetchCatalogData]);
+
+  const displayedItems: VodItem[] = useMemo(() => {
+    if (selectedCategory === 'favorites') {
+      let list = (vodFavorites || []) as VodItem[];
+      if (mainTab === 'movie') {
+        list = list.filter((i) => i.type === 'movie' || (!i.type && !i.category?.includes('مسلسل')));
+      } else if (mainTab === 'tv') {
+        list = list.filter((i) => i.type === 'tv' || i.category?.includes('مسلسل'));
+      }
+      if (debouncedQuery.trim().length > 0) {
+        const q = debouncedQuery.trim().toLowerCase();
+        list = list.filter((i) => (i.title || '').toLowerCase().includes(q));
+      }
+      return list;
+    }
+    return items;
+  }, [selectedCategory, vodFavorites, mainTab, debouncedQuery, items]);
 
   const handleGoBack = () => {
     if (unreleasedNotice?.visible) {
@@ -501,35 +552,53 @@ export default function MoviesScreen(): React.JSX.Element {
             <Text style={styles.retryBtnText}>إعادة المحاولة</Text>
           </Pressable>
         </View>
-      ) : items.length === 0 ? (
+      ) : displayedItems.length === 0 ? (
         <View style={styles.centerBox}>
-          <MaterialIcons name="local-movies" size={64} color="#475569" />
-          <Text style={styles.emptyTitle}>
-            {debouncedQuery.length > 0
-              ? `لم يتم العثور على نتائج للبحث عن "${debouncedQuery}"`
-              : 'لا يتوفر محتوى حالياً في هذا القسم'}
-          </Text>
-          <Text style={styles.emptySub}>
-            {debouncedQuery.length > 0
-              ? 'تأكد من كتابة الاسم بشكل صحيح أو جرب كلمات أخرى'
-              : 'سيتم إضافة المزيد من الأعمال الترفيهية قريباً'}
-          </Text>
+          {selectedCategory === 'favorites' ? (
+            <>
+              <MaterialIcons name="star-border" size={64} color="#eab308" />
+              <Text style={styles.emptyTitle}>لا توجد أعمال في المفضلة حالياً</Text>
+              <Text style={styles.emptySub}>
+                اضغط على أيقونة القلب في أي فيلم أو مسلسل لحفظه هنا والوصول إليه بسرعة في أي وقت.
+              </Text>
+            </>
+          ) : (
+            <>
+              <MaterialIcons name="local-movies" size={64} color="#475569" />
+              <Text style={styles.emptyTitle}>
+                {debouncedQuery.length > 0
+                  ? `لم يتم العثور على نتائج للبحث عن "${debouncedQuery}"`
+                  : 'لا يتوفر محتوى حالياً في هذا القسم'}
+              </Text>
+              <Text style={styles.emptySub}>
+                {debouncedQuery.length > 0
+                  ? 'تأكد من كتابة الاسم بشكل صحيح أو جرب كلمات أخرى'
+                  : 'سيتم إضافة المزيد من الأعمال الترفيهية قريباً'}
+              </Text>
+            </>
+          )}
         </View>
       ) : (
         <FlatList<VodItem>
           key={`vod-grid-${numColumns}`}
-          data={items}
+          data={displayedItems}
           keyExtractor={(item) => `${item.id}-${item.episodeInfo || ''}`}
           numColumns={numColumns}
           contentContainerStyle={styles.gridContent}
           showsVerticalScrollIndicator={false}
           renderItem={({ item, index }) => (
             <View style={styles.gridCol}>
-              <VodCard item={item} onSelect={handleSelect} index={index} />
+              <VodCard
+                item={item}
+                onSelect={handleSelect}
+                index={index}
+                isFav={favoriteIds.includes(item.id)}
+                onToggleFav={toggleFavorite}
+              />
             </View>
           )}
           ListFooterComponent={
-            page < totalPages ? (
+            selectedCategory !== 'favorites' && page < totalPages ? (
               <View style={styles.footerLoader}>
                 <Pressable
                   onPress={handleLoadMore}
@@ -811,6 +880,29 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     zIndex: 2,
+  },
+  topBadgesLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  cardFavBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cardFavBtnActive: {
+    backgroundColor: 'rgba(239, 68, 68, 0.25)',
+    borderColor: '#ef4444',
+  },
+  cardFavBtnFocused: {
+    borderColor: '#ffffff',
+    backgroundColor: 'rgba(255, 255, 255, 0.35)',
   },
   typeBadge: {
     backgroundColor: 'rgba(2, 132, 199, 0.85)',

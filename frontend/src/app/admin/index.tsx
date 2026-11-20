@@ -66,6 +66,32 @@ interface Stats {
   suspended: number;
 }
 
+export interface VodServerConfig {
+  id: string;
+  name: string;
+  enabled: boolean;
+}
+
+export interface VodSettings {
+  live_probe_enabled: boolean;
+  youtube_policy: 'fallback_only' | 'disabled';
+  servers_priority: VodServerConfig[];
+}
+
+const DEFAULT_VOD_SETTINGS: VodSettings = {
+  live_probe_enabled: true,
+  youtube_policy: 'fallback_only',
+  servers_priority: [
+    { id: 'vidlink', name: 'VidLink', enabled: true },
+    { id: 'vidsrc_cc', name: 'VidSrc CC', enabled: true },
+    { id: 'vidsrc_to', name: 'VidSrc', enabled: true },
+    { id: 'embed_su', name: 'Embed.su', enabled: true },
+    { id: 'autoembed', name: 'AutoEmbed', enabled: true },
+    { id: '2embed', name: '2Embed', enabled: true },
+    { id: 'vidsrc_me', name: 'VidSrc Me', enabled: true },
+  ],
+};
+
 const ADMIN_TOKEN_KEY = 'iptv_admin_token';
 const ADMIN_STORAGE_KEY = 'iptv_admin_key';
 
@@ -84,7 +110,12 @@ export default function AdminScreen(): React.JSX.Element {
   const [authLoading, setAuthLoading] = useState<boolean>(false);
 
   // التنقل بين التبويبات الرئيسية
-  const [activeTab, setActiveTab] = useState<'codes' | 'resellers' | 'networks'>('codes');
+  const [activeTab, setActiveTab] = useState<'codes' | 'resellers' | 'vod' | 'networks'>('codes');
+
+  // إعدادات وسيرفرات الأفلام والمسلسلات
+  const [vodSettings, setVodSettings] = useState<VodSettings>(DEFAULT_VOD_SETTINGS);
+  const [vodLoading, setVodLoading] = useState<boolean>(false);
+  const [vodSaving, setVodSaving] = useState<boolean>(false);
 
   // إدارة سلاسل وباقات القنوات المخصصة
   const [customNetworks, setCustomNetworks] = useState<ChannelNetwork[]>([]);
@@ -231,6 +262,77 @@ export default function AdminScreen(): React.JSX.Element {
     }
   }, [adminToken, adminKey, getAuthHeaders]);
 
+  // جلب إعدادات وسيرفرات الأفلام والمسلسلات
+  const fetchVodSettings = useCallback(async () => {
+    if (!adminToken && !adminKey) return;
+    setVodLoading(true);
+
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/vod-settings`, {
+        headers: getAuthHeaders(),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.settings) {
+          setVodSettings(data.settings);
+        }
+      }
+    } catch {
+      setStatusMessage('تعذر جلب إعدادات سيرفرات الأفلام');
+    } finally {
+      setVodLoading(false);
+    }
+  }, [adminToken, adminKey, getAuthHeaders]);
+
+  // حفظ إعدادات وسيرفرات الأفلام والمسلسلات
+  const handleSaveVodSettings = async () => {
+    setVodSaving(true);
+    setStatusMessage(null);
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/vod-settings`, {
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(vodSettings),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.settings) {
+          setVodSettings(data.settings);
+        }
+        setStatusMessage('تم حفظ وتطبيق إعدادات سيرفرات الأفلام والمسلسلات بنجاح');
+      } else {
+        setStatusMessage('فشل حفظ إعدادات السيرفرات');
+      }
+    } catch {
+      setStatusMessage('خطأ في الاتصال أثناء حفظ الإعدادات');
+    } finally {
+      setVodSaving(false);
+    }
+  };
+
+  const toggleServerEnabled = (serverId: string) => {
+    setVodSettings((prev) => ({
+      ...prev,
+      servers_priority: prev.servers_priority.map((srv) =>
+        srv.id === serverId ? { ...srv, enabled: !srv.enabled } : srv
+      ),
+    }));
+  };
+
+  const moveServerPriority = (index: number, direction: 'up' | 'down') => {
+    setVodSettings((prev) => {
+      const list = [...prev.servers_priority];
+      const targetIndex = direction === 'up' ? index - 1 : index + 1;
+      if (targetIndex < 0 || targetIndex >= list.length) return prev;
+      const temp = list[index];
+      list[index] = list[targetIndex];
+      list[targetIndex] = temp;
+      return { ...prev, servers_priority: list };
+    });
+  };
+
   // تحديث البيانات عند تسجيل الدخول أو تغيير التبويب
   useEffect(() => {
     getStoredCustomNetworks().then((nets) => {
@@ -282,9 +384,11 @@ export default function AdminScreen(): React.JSX.Element {
         fetchResellers(); // لجلب أسماء الموزعين في قائمة الاختيار
       } else if (activeTab === 'resellers') {
         fetchResellers();
+      } else if (activeTab === 'vod') {
+        fetchVodSettings();
       }
     }
-  }, [isAuthenticated, activeTab, fetchCodes, fetchResellers]);
+  }, [isAuthenticated, activeTab, fetchCodes, fetchResellers, fetchVodSettings]);
 
   // تسجيل الدخول للإدارة
   const handleLoginSubmit = async () => {
@@ -697,7 +801,8 @@ export default function AdminScreen(): React.JSX.Element {
             style={styles.refreshBtn}
             onPress={() => {
               if (activeTab === 'codes') fetchCodes();
-              else fetchResellers();
+              else if (activeTab === 'resellers') fetchResellers();
+              else if (activeTab === 'vod') fetchVodSettings();
             }}
           >
             <MaterialIcons name="refresh" size={18} color="#38bdf8" />
@@ -745,6 +850,25 @@ export default function AdminScreen(): React.JSX.Element {
             ]}
           >
             شبكة الموزعين ({resellers.length})
+          </Text>
+        </Pressable>
+
+        <Pressable
+          style={[styles.mainNavTab, activeTab === 'vod' && styles.mainNavTabActive]}
+          onPress={() => setActiveTab('vod')}
+        >
+          <MaterialIcons
+            name="movie"
+            size={20}
+            color={activeTab === 'vod' ? '#ec4899' : '#94a3b8'}
+          />
+          <Text
+            style={[
+              styles.mainNavTabText,
+              activeTab === 'vod' && styles.mainNavTabTextActive,
+            ]}
+          >
+            سيرفرات الأفلام والمسلسلات
           </Text>
         </Pressable>
 
@@ -1462,6 +1586,262 @@ export default function AdminScreen(): React.JSX.Element {
                     </View>
                   );
                 })}
+              </View>
+            )}
+          </View>
+        ) : activeTab === 'vod' ? (
+          /* ==========================================
+             تبويب سيرفرات وإعدادات الأفلام والمسلسلات (VOD)
+             ========================================== */
+          <View style={styles.vodTabContainer}>
+            <View style={styles.resellersHeaderRow}>
+              <View>
+                <Text style={styles.sectionHeaderTitle}>إعدادات سيرفرات الأفلام والمسلسلات</Text>
+                <Text style={styles.sectionHeaderSub}>
+                  التحكم في فحص السيرفرات اللحظي (Live Probe)، ترتيب أولوية السيرفرات، وتطبيق سياسة اليوتيوب الصارمة.
+                </Text>
+              </View>
+
+              <Pressable
+                style={[styles.saveVodBtn, vodSaving && { opacity: 0.7 }]}
+                onPress={handleSaveVodSettings}
+                disabled={vodSaving}
+              >
+                {vodSaving ? (
+                  <ActivityIndicator color="#070b14" size="small" />
+                ) : (
+                  <>
+                    <MaterialIcons name="save" size={20} color="#070b14" />
+                    <Text style={styles.saveVodBtnText}>حفظ وتطبيق الإعدادات</Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+
+            {vodLoading ? (
+              <View style={styles.loadingBox}>
+                <ActivityIndicator size="large" color="#ec4899" />
+                <Text style={styles.loadingText}>جاري تحميل إعدادات سيرفرات الأفلام والمسلسلات...</Text>
+              </View>
+            ) : (
+              <View style={styles.vodCardsStack}>
+                {/* 1. بطاقة الفحص التلقائي اللحظي */}
+                <View style={styles.vodCard}>
+                  <View style={styles.vodCardHeader}>
+                    <View style={styles.vodCardIconBox}>
+                      <MaterialIcons name="speed" size={24} color="#38bdf8" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.vodCardTitle}>الفحص التلقائي اللحظي (Live Probe)</Text>
+                      <Text style={styles.vodCardDesc}>
+                        يقوم الخادم بفحص سيرفرات البث بالتوازي خلال ~2.8 ثانية والتأكد من إرجاع استجابة صالحة (HTTP 200) قبل تسليمها للمستخدم، لتفادي الروابط المعطلة أو صفحات 404.
+                      </Text>
+                    </View>
+                    <Pressable
+                      style={[
+                        styles.toggleSwitchBtn,
+                        vodSettings.live_probe_enabled
+                          ? styles.toggleSwitchBtnActive
+                          : styles.toggleSwitchBtnInactive,
+                      ]}
+                      onPress={() =>
+                        setVodSettings((prev) => ({
+                          ...prev,
+                          live_probe_enabled: !prev.live_probe_enabled,
+                        }))
+                      }
+                    >
+                      <MaterialIcons
+                        name={vodSettings.live_probe_enabled ? 'check-circle' : 'cancel'}
+                        size={20}
+                        color={vodSettings.live_probe_enabled ? '#10b981' : '#64748b'}
+                      />
+                      <Text
+                        style={[
+                          styles.toggleSwitchText,
+                          vodSettings.live_probe_enabled && { color: '#10b981' },
+                        ]}
+                      >
+                        {vodSettings.live_probe_enabled ? 'الفحص مفعّل' : 'الفحص معطّل'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+
+                {/* 2. بطاقة سياسة اليوتيوب */}
+                <View style={styles.vodCard}>
+                  <View style={styles.vodCardHeader}>
+                    <View style={[styles.vodCardIconBox, { backgroundColor: 'rgba(239, 68, 68, 0.15)' }]}>
+                      <MaterialIcons name="ondemand-video" size={24} color="#ef4444" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.vodCardTitle}>سياسة مصادر يوتيوب والبدائل (Strict YouTube Policy)</Text>
+                      <Text style={styles.vodCardDesc}>
+                        تحديد متى يُسمح باستخدام يوتيوب كمصدر للبث، مع تطبيق سياسة الملاذ الأخير فقط.
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.policyOptionsRow}>
+                    <Pressable
+                      style={[
+                        styles.policyOptionCard,
+                        vodSettings.youtube_policy === 'fallback_only' &&
+                          styles.policyOptionCardActive,
+                      ]}
+                      onPress={() =>
+                        setVodSettings((prev) => ({
+                          ...prev,
+                          youtube_policy: 'fallback_only',
+                        }))
+                      }
+                    >
+                      <View style={styles.policyOptionRadio}>
+                        {vodSettings.youtube_policy === 'fallback_only' && (
+                          <View style={styles.policyOptionRadioDot} />
+                        )}
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.policyOptionTitle}>ملاذ أخير فقط (Strict Fallback Only)</Text>
+                        <Text style={styles.policyOptionSub}>
+                          لا يظهر يوتيوب نهائياً طالما هناك سيرفر واحد على الأقل يعمل بنجاح. يُستعان به فقط وحصرياً إذا فشلت جميع السيرفرات الأساسية.
+                        </Text>
+                      </View>
+                    </Pressable>
+
+                    <Pressable
+                      style={[
+                        styles.policyOptionCard,
+                        vodSettings.youtube_policy === 'disabled' && styles.policyOptionCardActive,
+                      ]}
+                      onPress={() =>
+                        setVodSettings((prev) => ({
+                          ...prev,
+                          youtube_policy: 'disabled',
+                        }))
+                      }
+                    >
+                      <View style={styles.policyOptionRadio}>
+                        {vodSettings.youtube_policy === 'disabled' && (
+                          <View style={styles.policyOptionRadioDot} />
+                        )}
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.policyOptionTitle}>تعطيل يوتيوب تماماً (Disabled)</Text>
+                        <Text style={styles.policyOptionSub}>
+                          حظر مصادر يوتيوب نهائياً والاعتماد حصرياً على سيرفرات البث المدمجة.
+                        </Text>
+                      </View>
+                    </Pressable>
+                  </View>
+                </View>
+
+                {/* 3. بطاقة ترتيب وأولوية السيرفرات */}
+                <View style={styles.vodCard}>
+                  <View style={styles.vodCardHeader}>
+                    <View style={[styles.vodCardIconBox, { backgroundColor: 'rgba(236, 72, 153, 0.15)' }]}>
+                      <MaterialIcons name="dns" size={24} color="#ec4899" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.vodCardTitle}>ترتيب وأولوية سيرفرات البث المدمجة</Text>
+                      <Text style={styles.vodCardDesc}>
+                        يمكنك تغيير أولوية السيرفرات (السيرفر الأعلى يتم فحصه وتشغيله أولاً) وتفعيل أو تعطيل أي سيرفر حسب الحاجة.
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.serverList}>
+                    {vodSettings.servers_priority.map((srv, index) => (
+                      <View key={srv.id} style={styles.serverRow}>
+                        <View style={styles.serverRankBadge}>
+                          <Text style={styles.serverRankText}>#{index + 1}</Text>
+                        </View>
+
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.serverName}>{srv.name}</Text>
+                          <Text style={styles.serverIdText}>المعرف: {srv.id}</Text>
+                        </View>
+
+                        {/* زر التفعيل/التعطيل */}
+                        <Pressable
+                          style={[
+                            styles.serverStatusBtn,
+                            srv.enabled ? styles.serverStatusBtnActive : styles.serverStatusBtnInactive,
+                          ]}
+                          onPress={() => toggleServerEnabled(srv.id)}
+                        >
+                          <MaterialIcons
+                            name={srv.enabled ? 'visibility' : 'visibility-off'}
+                            size={16}
+                            color={srv.enabled ? '#10b981' : '#64748b'}
+                          />
+                          <Text
+                            style={[
+                              styles.serverStatusBtnText,
+                              srv.enabled && { color: '#10b981' },
+                            ]}
+                          >
+                            {srv.enabled ? 'مفعّل' : 'معطّل'}
+                          </Text>
+                        </Pressable>
+
+                        {/* أزرار التقديم والتأخير */}
+                        <View style={styles.reorderBtns}>
+                          <Pressable
+                            style={[
+                              styles.reorderBtn,
+                              index === 0 && styles.reorderBtnDisabled,
+                            ]}
+                            disabled={index === 0}
+                            onPress={() => moveServerPriority(index, 'up')}
+                          >
+                            <MaterialIcons
+                              name="arrow-upward"
+                              size={18}
+                              color={index === 0 ? '#475569' : '#38bdf8'}
+                            />
+                          </Pressable>
+
+                          <Pressable
+                            style={[
+                              styles.reorderBtn,
+                              index === vodSettings.servers_priority.length - 1 &&
+                                styles.reorderBtnDisabled,
+                            ]}
+                            disabled={index === vodSettings.servers_priority.length - 1}
+                            onPress={() => moveServerPriority(index, 'down')}
+                          >
+                            <MaterialIcons
+                              name="arrow-downward"
+                              size={18}
+                              color={
+                                index === vodSettings.servers_priority.length - 1
+                                  ? '#475569'
+                                  : '#38bdf8'
+                              }
+                            />
+                          </Pressable>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+
+                {/* زر حفظ عريض إضافي في الأسفل */}
+                <Pressable
+                  style={[styles.saveVodBtnBottom, vodSaving && { opacity: 0.7 }]}
+                  onPress={handleSaveVodSettings}
+                  disabled={vodSaving}
+                >
+                  {vodSaving ? (
+                    <ActivityIndicator color="#070b14" size="small" />
+                  ) : (
+                    <>
+                      <MaterialIcons name="cloud-done" size={22} color="#070b14" />
+                      <Text style={styles.saveVodBtnText}>حفظ وتطبيق إعدادات السيرفرات فوراً</Text>
+                    </>
+                  )}
+                </Pressable>
               </View>
             )}
           </View>
@@ -2932,5 +3312,214 @@ const styles = StyleSheet.create({
   emptyText: {
     color: '#94a3b8',
     fontSize: 15,
+  },
+
+  // إعدادات وسيرفرات الأفلام والمسلسلات VOD
+  vodTabContainer: {
+    paddingBottom: 32,
+  },
+  saveVodBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#ec4899',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  saveVodBtnText: {
+    color: '#070b14',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  saveVodBtnBottom: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: '#ec4899',
+    paddingVertical: 14,
+    borderRadius: 12,
+    marginTop: 20,
+  },
+  vodCardsStack: {
+    gap: 18,
+    marginTop: 16,
+  },
+  vodCard: {
+    backgroundColor: '#0f172a',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#1e293b',
+    padding: 20,
+  },
+  vodCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 14,
+  },
+  vodCardIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  vodCardTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#ffffff',
+    marginBottom: 4,
+  },
+  vodCardDesc: {
+    fontSize: 13,
+    color: '#94a3b8',
+    lineHeight: 19,
+  },
+  toggleSwitchBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  toggleSwitchBtnActive: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    borderColor: 'rgba(16, 185, 129, 0.4)',
+  },
+  toggleSwitchBtnInactive: {
+    backgroundColor: 'rgba(100, 116, 139, 0.15)',
+    borderColor: 'rgba(100, 116, 139, 0.3)',
+  },
+  toggleSwitchText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#94a3b8',
+  },
+  policyOptionsRow: {
+    gap: 12,
+    marginTop: 16,
+  },
+  policyOptionCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    backgroundColor: '#1e293b',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#334155',
+    padding: 14,
+  },
+  policyOptionCardActive: {
+    borderColor: '#ec4899',
+    backgroundColor: 'rgba(236, 72, 153, 0.08)',
+  },
+  policyOptionRadio: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#64748b',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  policyOptionRadioDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#ec4899',
+  },
+  policyOptionTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#ffffff',
+    marginBottom: 3,
+  },
+  policyOptionSub: {
+    fontSize: 12,
+    color: '#94a3b8',
+    lineHeight: 18,
+  },
+  serverList: {
+    marginTop: 16,
+    gap: 10,
+  },
+  serverRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1e293b',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+    padding: 12,
+    gap: 12,
+  },
+  serverRankBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: 'rgba(236, 72, 153, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  serverRankText: {
+    color: '#ec4899',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  serverName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  serverIdText: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  serverStatusBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  serverStatusBtnActive: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    borderColor: 'rgba(16, 185, 129, 0.4)',
+  },
+  serverStatusBtnInactive: {
+    backgroundColor: 'rgba(100, 116, 139, 0.15)',
+    borderColor: 'rgba(100, 116, 139, 0.3)',
+  },
+  serverStatusBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#94a3b8',
+  },
+  reorderBtns: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  reorderBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  reorderBtnDisabled: {
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderColor: 'rgba(255, 255, 255, 0.06)',
   },
 });

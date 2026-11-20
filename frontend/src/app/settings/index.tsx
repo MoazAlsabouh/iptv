@@ -1,18 +1,41 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet } from 'react-native';
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../../store/useAppStore';
+import { useAuth } from '../../context/AuthContext';
 
 /**
- * شاشة الإعدادات والرقابة الأبوية بتصميم تلفاز داكن (#0f172a).
+ * شاشة الإعدادات ومعلومات الاشتراك والرقابة الأبوية بتصميم تلفاز داكن (#0f172a).
  */
 export default function SettingsScreen(): React.JSX.Element {
+  const router = useRouter();
   const { isChildMode, pinCode, setChildMode, setPinCode } = useAppStore();
+  const { subscription, logout } = useAuth();
 
   const [inputPin, setInputPin] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [successMessage, setSuccessMessage] = useState<string>('');
   const [isInputFocused, setIsInputFocused] = useState<boolean>(false);
+  const [copiedCode, setCopiedCode] = useState<boolean>(false);
+
+  const handleCopyCode = async () => {
+    if (!subscription?.code) return;
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(subscription.code);
+        setCopiedCode(true);
+        setTimeout(() => setCopiedCode(false), 2500);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleLogout = async () => {
+    await logout();
+    router.replace('/activate');
+  };
 
   const handleToggleChildMode = () => {
     setErrorMessage('');
@@ -48,8 +71,105 @@ export default function SettingsScreen(): React.JSX.Element {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>إعدادات التطبيق</Text>
         <Text style={styles.headerSub}>
-          إدارة الرقابة الأبوية، أمان المحتوى، وتخصيص تجربة التلفاز
+          إدارة معلومات الاشتراك، الرقابة الأبوية، وتخصيص تجربة التلفاز
         </Text>
+      </View>
+
+      {/* بطاقة معلومات الاشتراك */}
+      <View style={styles.subInfoCard}>
+        <View style={styles.subInfoHeader}>
+          <View style={styles.subInfoTitleGroup}>
+            <View style={styles.subIconWrapper}>
+              <MaterialIcons name="workspace-premium" size={28} color="#38bdf8" />
+            </View>
+            <View>
+              <Text style={styles.subInfoMainTitle}>معلومات الاشتراك</Text>
+              <Text style={styles.subInfoSubTitle}>تفاصيل كود التفعيل وصلاحية الحساب الحالية</Text>
+            </View>
+          </View>
+
+          <View
+            style={[
+              styles.subStatusPill,
+              subscription?.isExpired ? styles.subStatusExpired : styles.subStatusActive,
+            ]}
+          >
+            <View
+              style={[
+                styles.subStatusDot,
+                subscription?.isExpired
+                  ? { backgroundColor: '#ef4444' }
+                  : { backgroundColor: '#10b981' },
+              ]}
+            />
+            <Text
+              style={[
+                styles.subStatusPillText,
+                subscription?.isExpired ? { color: '#ef4444' } : { color: '#10b981' },
+              ]}
+            >
+              {subscription ? (subscription.isExpired ? 'منتهي الصلاحية' : 'اشتراك نشط') : 'غير مفعل'}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.subDetailsRow}>
+          {/* كود الاشتراك */}
+          <View style={styles.subDetailBox}>
+            <Text style={styles.subDetailLabel}>كود التفعيل الحالي:</Text>
+            <View style={styles.subCodeRow}>
+              <Text style={styles.subCodeVal}>{subscription?.code || '—'}</Text>
+              {subscription?.code && (
+                <Pressable
+                  onPress={handleCopyCode}
+                  style={({ focused }) => [styles.copyBtn, focused && styles.copyBtnFocused]}
+                >
+                  <MaterialIcons
+                    name={copiedCode ? 'check' : 'content-copy'}
+                    size={16}
+                    color={copiedCode ? '#10b981' : '#38bdf8'}
+                  />
+                  <Text style={[styles.copyBtnText, copiedCode && { color: '#10b981' }]}>
+                    {copiedCode ? 'تم النسخ!' : 'نسخ الكود'}
+                  </Text>
+                </Pressable>
+              )}
+            </View>
+          </View>
+
+          {/* المدة المتبقية */}
+          <View style={styles.subDetailBox}>
+            <Text style={styles.subDetailLabel}>المدة المتبقية:</Text>
+            <Text style={styles.subHighlightVal}>
+              {subscription ? `${subscription.remainingDays} يوم` : '—'}
+            </Text>
+          </View>
+
+          {/* تاريخ الانتهاء */}
+          <View style={styles.subDetailBox}>
+            <Text style={styles.subDetailLabel}>تاريخ الانتهاء:</Text>
+            <Text style={styles.subDetailText}>
+              {subscription?.expiresAt
+                ? new Date(subscription.expiresAt).toLocaleDateString('ar-EG', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                  })
+                : '—'}
+            </Text>
+          </View>
+
+          {/* زر تغيير الكود / تسجيل الخروج */}
+          <View style={styles.subActionBox}>
+            <Pressable
+              onPress={handleLogout}
+              style={({ focused }) => [styles.subLogoutBtn, focused && styles.subLogoutBtnFocused]}
+            >
+              <MaterialIcons name="logout" size={18} color="#ef4444" />
+              <Text style={styles.subLogoutBtnText}>تغيير الكود / خروج</Text>
+            </Pressable>
+          </View>
+        </View>
       </View>
 
       <View style={styles.gridRow}>
@@ -386,5 +506,157 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     marginLeft: 8,
+  },
+  subInfoCard: {
+    backgroundColor: '#1e293b',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#334155',
+    padding: 20,
+    marginBottom: 24,
+  },
+  subInfoHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#334155',
+  },
+  subInfoTitleGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  subIconWrapper: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#0369a130',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#0284c750',
+  },
+  subInfoMainTitle: {
+    color: '#f8fafc',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  subInfoSubTitle: {
+    color: '#94a3b8',
+    fontSize: 13,
+    marginTop: 2,
+  },
+  subStatusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    gap: 8,
+  },
+  subStatusActive: {
+    backgroundColor: '#10b98120',
+    borderWidth: 1,
+    borderColor: '#10b98150',
+  },
+  subStatusExpired: {
+    backgroundColor: '#ef444420',
+    borderWidth: 1,
+    borderColor: '#ef444450',
+  },
+  subStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  subStatusPillText: {
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
+  subDetailsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  subDetailBox: {
+    backgroundColor: '#0f172a',
+    borderRadius: 12,
+    padding: 12,
+    minWidth: 180,
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#1e293b',
+  },
+  subDetailLabel: {
+    color: '#64748b',
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  subCodeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  subCodeVal: {
+    color: '#f8fafc',
+    fontSize: 15,
+    fontWeight: 'bold',
+    letterSpacing: 1,
+  },
+  copyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1e293b',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    gap: 4,
+  },
+  copyBtnFocused: {
+    backgroundColor: '#38bdf8',
+  },
+  copyBtnText: {
+    color: '#38bdf8',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  subHighlightVal: {
+    color: '#38bdf8',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  subDetailText: {
+    color: '#e2e8f0',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  subActionBox: {
+    justifyContent: 'center',
+  },
+  subLogoutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#450a0a',
+    borderWidth: 1,
+    borderColor: '#ef4444',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    gap: 8,
+  },
+  subLogoutBtnFocused: {
+    backgroundColor: '#ef4444',
+    transform: [{ scale: 1.05 }],
+  },
+  subLogoutBtnText: {
+    color: '#ef4444',
+    fontSize: 14,
+    fontWeight: 'bold',
   },
 });
