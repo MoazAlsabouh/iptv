@@ -5,12 +5,12 @@ import {
   TextInput,
   Pressable,
   Image,
-  FlatList,
   ScrollView,
   ActivityIndicator,
   StyleSheet,
   Platform,
   useWindowDimensions,
+  Modal,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -44,273 +44,423 @@ export interface VodItem {
   sources: VodSource[];
 }
 
-type MainTabType = 'all' | 'movie' | 'tv';
-
-interface SubCategory {
+export interface CategoryDef {
   id: string;
   title: string;
   icon: keyof typeof MaterialIcons.glyphMap;
+  iconColor: string;
+  bgColor: string;
 }
 
-const SUB_CATEGORIES: SubCategory[] = [
-  { id: 'favorites', title: 'المفضلة ★', icon: 'star' },
-  { id: 'trending', title: 'الرائج', icon: 'whatshot' },
-  { id: 'tv_schedule', title: 'جدول الحلقات اليوم', icon: 'schedule' },
-  { id: 'arabic_movies', title: 'أفلام عربية', icon: 'local-movies' },
-  { id: 'arabic_series', title: 'مسلسلات عربية', icon: 'tv' },
-  { id: 'action', title: 'أكشن', icon: 'flash-on' },
-  { id: 'drama', title: 'دراما', icon: 'theater-comedy' },
-  { id: 'comedy', title: 'كوميديا', icon: 'sentiment-very-satisfied' },
-  { id: 'horror', title: 'رعب', icon: 'warning' },
-  { id: 'scifi', title: 'خيال علمي', icon: 'rocket' },
-  { id: 'animation', title: 'أنمي', icon: 'animation' },
+const CATEGORIES: CategoryDef[] = [
+  {
+    id: 'all',
+    title: 'الكل',
+    icon: 'apps',
+    iconColor: '#0EA5E9',
+    bgColor: 'rgba(14, 165, 233, 0.15)',
+  },
+  {
+    id: 'arabic_movies',
+    title: 'أفلام عربية',
+    icon: 'local-movies',
+    iconColor: '#F43F5E',
+    bgColor: 'rgba(244, 63, 94, 0.15)',
+  },
+  {
+    id: 'arabic_series',
+    title: 'مسلسلات عربية',
+    icon: 'tv',
+    iconColor: '#A855F7',
+    bgColor: 'rgba(168, 85, 247, 0.15)',
+  },
+  {
+    id: 'foreign_movies',
+    title: 'أفلام أجنبية',
+    icon: 'movie-filter',
+    iconColor: '#10B981',
+    bgColor: 'rgba(16, 185, 129, 0.15)',
+  },
+  {
+    id: 'foreign_series',
+    title: 'مسلسلات أجنبية',
+    icon: 'live-tv',
+    iconColor: '#38BDF8',
+    bgColor: 'rgba(56, 189, 248, 0.15)',
+  },
+  {
+    id: 'favorites',
+    title: 'المفضلة ★',
+    icon: 'star',
+    iconColor: '#F59E0B',
+    bgColor: 'rgba(245, 158, 11, 0.15)',
+  },
 ];
 
 interface VodCardProps {
   item: VodItem;
   onSelect: (item: VodItem) => void;
-  index: number;
-  isFav?: boolean;
-  onToggleFav?: (item: VodItem) => void;
+  isFav: boolean;
+  onToggleFav: (item: VodItem) => void;
+  width?: number;
+  hasTVPreferredFocus?: boolean;
 }
 
-const VodCard: React.FC<VodCardProps> = ({ item, onSelect, index, isFav, onToggleFav }) => {
+const VodCard: React.FC<VodCardProps> = ({
+  item,
+  onSelect,
+  isFav,
+  onToggleFav,
+  width,
+  hasTVPreferredFocus,
+}) => {
   const [imageError, setImageError] = useState<boolean>(false);
+  const [isHovered, setIsHovered] = useState<boolean>(false);
+  const [isFocused, setIsFocused] = useState<boolean>(false);
+
+  const isActive = isHovered || isFocused;
 
   return (
     <Pressable
-      hasTVPreferredFocus={index === 0}
+      hasTVPreferredFocus={hasTVPreferredFocus}
       onPress={() => onSelect(item)}
-      style={({ focused }) => [styles.card, focused && styles.cardFocused]}
+      onFocus={() => setIsFocused(true)}
+      onBlur={() => setIsFocused(false)}
+      {...(Platform.OS === 'web'
+        ? ({
+            onMouseEnter: () => setIsHovered(true),
+            onMouseLeave: () => setIsHovered(false),
+          } as any)
+        : {})}
+      style={[
+        styles.cardContainer,
+        width ? { width } : styles.cardFixedRailWidth,
+        Platform.OS === 'web'
+          ? ({
+              cursor: 'pointer',
+              transition:
+                'transform 0.22s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.22s ease, border-color 0.22s ease',
+            } as any)
+          : undefined,
+      ]}
     >
-      {({ focused }) => (
-        <View style={styles.cardInner}>
-          {/* البوستر العمودي بنسبة قياسية 2:3 تمنع القص تماماً */}
-          <View style={styles.posterContainer}>
-            {item.poster && !imageError ? (
-              <Image
-                source={{ uri: item.poster }}
-                style={styles.posterImage}
-                resizeMode="cover"
-                onError={() => setImageError(true)}
-              />
-            ) : (
-              <View style={styles.fallbackPoster}>
-                <ChannelLogo uri="" name={item.title} size={64} focused={focused} />
-              </View>
-            )}
+      {({ focused }: any) => {
+        const effectiveActive = isActive || focused;
+        return (
+          <View style={styles.cardInner}>
+            {/* إطار البوستر العمودي بنسبة قياسية 2:3 مع زوايا دائرية 14 */}
+            <View
+              style={[
+                styles.posterBox,
+                effectiveActive && styles.posterBoxFocused,
+              ]}
+            >
+              {item.poster && !imageError ? (
+                <Image
+                  source={{ uri: item.poster }}
+                  style={styles.posterImg}
+                  resizeMode="cover"
+                  onError={() => setImageError(true)}
+                />
+              ) : (
+                <View style={styles.fallbackPoster}>
+                  <ChannelLogo uri="" name={item.title} size={54} focused={effectiveActive} />
+                </View>
+              )}
 
-            {/* تدرج لوني داكن خفيف من الأسفل لإبراز التفاصيل */}
-            <View style={styles.posterGradientOverlay} />
+              {/* تدرج داكن خفيف أسفل البوستر */}
+              <View style={styles.posterBottomGradient} />
 
-            {/* شارات الرأس (التقييم ونوع العمل) وزر المفضلة */}
-            <View style={styles.topBadgesRow}>
-              <View style={styles.topBadgesLeft}>
-                <View style={[styles.typeBadge, item.type === 'tv' && styles.typeBadgeTv]}>
-                  <Text style={styles.typeBadgeText}>
-                    {item.type === 'tv' ? 'مسلسل' : 'فيلم'}
+              {/* شارات الرأس العلوية: التقييم + زر المفضلة */}
+              <View style={styles.posterTopBadges}>
+                {/* التقييم */}
+                <View style={styles.ratingBadge}>
+                  <MaterialIcons name="star" size={13} color="#F59E0B" />
+                  <Text style={styles.ratingBadgeText}>
+                    {item.rating > 0 ? item.rating.toFixed(1) : 'جديد'}
                   </Text>
                 </View>
 
-                {item.rating > 0 ? (
-                  <View style={styles.ratingBadge}>
-                    <MaterialIcons name="star" size={13} color="#eab308" />
-                    <Text style={styles.ratingBadgeText}>{item.rating}</Text>
-                  </View>
-                ) : null}
-              </View>
-
-              {onToggleFav ? (
+                {/* زر المفضلة الأنيق بالزاوية */}
                 <Pressable
                   onPress={(e: any) => {
                     e?.stopPropagation?.();
                     onToggleFav(item);
                   }}
-                  style={({ focused: favFocused }) => [
-                    styles.cardFavBtn,
-                    isFav && styles.cardFavBtnActive,
-                    favFocused && styles.cardFavBtnFocused,
+                  style={[
+                    styles.favBtn,
+                    isFav && styles.favBtnActive,
                   ]}
+                  {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
                 >
                   <MaterialIcons
                     name={isFav ? 'favorite' : 'favorite-border'}
                     size={16}
-                    color={isFav ? '#ef4444' : '#ffffff'}
+                    color={isFav ? '#EF4444' : '#FFFFFF'}
                   />
                 </Pressable>
-              ) : null}
+              </View>
+
+              {/* شارة أسفل البوستر: نوع العمل أو موعد قريباً */}
+              <View style={styles.posterBottomBadges}>
+                {item.isUnreleased ? (
+                  <View style={styles.unreleasedBadge}>
+                    <MaterialIcons name="alarm" size={11} color="#FFFFFF" />
+                    <Text numberOfLines={1} style={styles.unreleasedBadgeText}>
+                      قريباً
+                    </Text>
+                  </View>
+                ) : (
+                  <View
+                    style={[
+                      styles.typeBadge,
+                      item.type === 'tv' ? styles.typeBadgeTv : styles.typeBadgeMovie,
+                    ]}
+                  >
+                    <Text style={styles.typeBadgeText}>
+                      {item.type === 'tv' ? 'مسلسل' : 'فيلم'}
+                    </Text>
+                  </View>
+                )}
+              </View>
             </View>
 
-            {/* شارة العمل الذي لم يصدر بعد، أو شارة الحلقة المجدولة */}
-            {item.isUnreleased ? (
-              <View style={styles.unreleasedBadge}>
-                <MaterialIcons name="alarm" size={12} color="#ffffff" />
-                <Text numberOfLines={1} style={styles.unreleasedBadgeText}>
-                  قريباً • غير متاح بعد
+            {/* تفاصيل العمل النصية أسفل البوستر */}
+            <View style={styles.metaBox}>
+              <Text
+                numberOfLines={1}
+                style={[
+                  styles.cardTitle,
+                  effectiveActive && styles.cardTitleActive,
+                ]}
+              >
+                {item.title}
+              </Text>
+
+              <View style={styles.subMetaRow}>
+                {item.year ? <Text style={styles.metaYear}>{item.year}</Text> : null}
+                <Text style={styles.metaHint}>
+                  {item.type === 'tv' ? 'عرض الحلقات' : 'مشاهدة الآن'}
                 </Text>
               </View>
-            ) : item.episodeInfo ? (
-              <View style={styles.episodeBadge}>
-                <Text numberOfLines={1} style={styles.episodeBadgeText}>
-                  {item.episodeInfo}
-                </Text>
-              </View>
-            ) : null}
-          </View>
-
-          {/* تفاصيل العمل أسفل البوستر */}
-          <View style={styles.metaContainer}>
-            <Text
-              numberOfLines={2}
-              style={[styles.itemTitle, focused && styles.itemTitleFocused]}
-            >
-              {item.title}
-            </Text>
-
-            <View style={styles.subMetaRow}>
-              {item.year ? <Text style={styles.metaYear}>{item.year}</Text> : null}
-              {item.isUnreleased ? (
-                <View style={styles.unreleasedDateRow}>
-                  <MaterialIcons name="event" size={13} color="#f97316" />
-                  <Text numberOfLines={1} style={styles.metaUnreleasedDate}>
-                    {item.releaseDate ? `الإصدار: ${item.releaseDate}` : 'قريباً'}
-                  </Text>
-                </View>
-              ) : (
-                <Text style={styles.metaSources}>
-                  {item.type === 'tv' ? 'عرض الحلقات' : `${item.sources?.length || 0} سيرفرات`}
-                </Text>
-              )}
             </View>
           </View>
-        </View>
-      )}
+        );
+      }}
     </Pressable>
   );
 };
 
-/**
- * شاشة استعراض الأفلام والمسلسلات VOD الموسعة عبر TMDB + TVmaze.
- * تدعم شريط البحث اللحظي، شريط تصنيفات Glassmorphic، والتوجيه الذكي للمسلسلات.
- */
 export default function MoviesScreen(): React.JSX.Element {
   const router = useRouter();
   const { width } = useWindowDimensions();
 
-  // ضبط عدد الأعمدة بمرونة ليصبح 5 على الشاشات العريضة/التلفاز و 6 على الشاشات الكبيرة
+  // حساب الأعمدة ديناميكياً للشبكة
   const numColumns = useMemo(() => {
     if (width >= 1600) return 6;
-    if (width >= 1050) return 5;
-    if (width >= 750) return 4;
-    if (width >= 480) return 3;
+    if (width >= 1150) return 5;
+    if (width >= 800) return 4;
+    if (width >= 520) return 3;
     return 2;
   }, [width]);
 
-  const [mainTab, setMainTab] = useState<MainTabType>('all');
-  const [selectedCategory, setSelectedCategory] = useState<string>('trending');
+  // حساب عرض البطاقة في وضع الشبكة
+  const gridCardWidth = useMemo(() => {
+    const horizontalPadding = 48;
+    const gapTotal = (numColumns - 1) * 16;
+    const availableWidth = Math.max(300, width - horizontalPadding);
+    return Math.floor((availableWidth - gapTotal) / numColumns);
+  }, [width, numColumns]);
+
+  // التصنيف المختار
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+
+  // البحث
+  const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [debouncedQuery, setDebouncedQuery] = useState<string>('');
+  const searchInputRef = useRef<TextInput>(null);
 
+  // المفضلة من المتجر العام
   const { favoriteIds, vodFavorites, toggleFavorite } = useAppStore();
 
-  const [items, setItems] = useState<VodItem[]>([]);
-  const [page, setPage] = useState<number>(1);
-  const [totalPages, setTotalPages] = useState<number>(1);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
-  const [isError, setIsError] = useState<boolean>(false);
+  // بيانات الصفوف الأفقية (Rails)
+  const [railTrending, setRailTrending] = useState<VodItem[]>([]);
+  const [railArabic, setRailArabic] = useState<VodItem[]>([]);
+  const [railLatest, setRailLatest] = useState<VodItem[]>([]);
+  const [isRailsLoading, setIsRailsLoading] = useState<boolean>(true);
+  const [isRailsError, setIsRailsError] = useState<boolean>(false);
 
-  // حالة النافذة التنبيهية للأعمال التي لم تصدر بعد
+  // بيانات وضع الشبكة (Grid View)
+  const [gridItems, setGridItems] = useState<VodItem[]>([]);
+  const [gridPage, setGridPage] = useState<number>(1);
+  const [gridTotalPages, setGridTotalPages] = useState<number>(1);
+  const [isGridLoading, setIsGridLoading] = useState<boolean>(false);
+  const [isGridLoadingMore, setIsGridLoadingMore] = useState<boolean>(false);
+  const [isGridError, setIsGridError] = useState<boolean>(false);
+
+  // نافذة تنبيه الأعمال التي لم تصدر بعد
   const [unreleasedNotice, setUnreleasedNotice] = useState<{
     visible: boolean;
     title: string;
     releaseDate?: string;
   } | null>(null);
 
-  // Debounce للبحث 500ms
+  // تأخير إرسال استعلام البحث 400ms
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedQuery(searchQuery.trim());
-    }, 500);
-
+    }, 400);
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  // إعادة ضبط الصفحة إلى 1 عند تغيير التبويب أو التصنيف أو نص البحث
-  useEffect(() => {
-    setPage(1);
-    setItems([]);
-  }, [mainTab, selectedCategory, debouncedQuery]);
-
-  // جلب البيانات من الخادم السحابي
-  const fetchCatalogData = useCallback(async () => {
-    if (selectedCategory === 'favorites') {
-      setIsLoading(false);
-      setIsLoadingMore(false);
-      return;
-    }
-
-    const isFirstPage = page === 1;
-    if (isFirstPage) {
-      setIsLoading(true);
-    } else {
-      setIsLoadingMore(true);
-    }
-    setIsError(false);
-
+  // جلب بيانات الصفوف الأفقية الرئيسية عند البدء
+  const fetchRailsData = useCallback(async () => {
+    setIsRailsLoading(true);
+    setIsRailsError(false);
     try {
-      let endpoint = '';
-      if (debouncedQuery.length > 0) {
-        endpoint = `${BACKEND_BASE_URL}/api/vod/search?q=${encodeURIComponent(debouncedQuery)}&page=${page}`;
-      } else {
-        endpoint = `${BACKEND_BASE_URL}/api/vod/catalog?type=${mainTab}&category=${selectedCategory}&page=${page}`;
+      const [trendRes, arMovieRes, arSeriesRes, latestRes] = await Promise.allSettled([
+        fetch(`${BACKEND_BASE_URL}/api/vod/catalog?type=all&category=trending&page=1`),
+        fetch(`${BACKEND_BASE_URL}/api/vod/catalog?type=all&category=arabic_movies&page=1`),
+        fetch(`${BACKEND_BASE_URL}/api/vod/catalog?type=all&category=arabic_series&page=1`),
+        fetch(`${BACKEND_BASE_URL}/api/vod/catalog?type=movie&category=trending&page=2`),
+      ]);
+
+      if (trendRes.status === 'fulfilled' && trendRes.value.ok) {
+        const data = await trendRes.value.json();
+        setRailTrending(data.results || []);
       }
 
-      const res = await fetch(endpoint, {
-        headers: { Accept: 'application/json' },
-      });
+      // دمج الأفلام والمسلسلات العربية لصف عربي غني ومتنوع
+      const arMovies: VodItem[] =
+        arMovieRes.status === 'fulfilled' && arMovieRes.value.ok
+          ? (await arMovieRes.value.json()).results || []
+          : [];
+      const arSeries: VodItem[] =
+        arSeriesRes.status === 'fulfilled' && arSeriesRes.value.ok
+          ? (await arSeriesRes.value.json()).results || []
+          : [];
 
-      if (!res.ok) {
-        throw new Error(`خطأ في جلب البيانات: ${res.status}`);
+      const combinedArabic: VodItem[] = [];
+      const maxLen = Math.max(arMovies.length, arSeries.length);
+      for (let i = 0; i < maxLen; i++) {
+        if (arMovies[i]) combinedArabic.push(arMovies[i]);
+        if (arSeries[i]) combinedArabic.push(arSeries[i]);
       }
+      setRailArabic(combinedArabic);
 
-      const data = await res.json();
-      const newResults: VodItem[] = data.results || [];
-
-      setTotalPages(data.totalPages || 1);
-      setItems((prev) => (isFirstPage ? newResults : [...prev, ...newResults]));
+      if (latestRes.status === 'fulfilled' && latestRes.value.ok) {
+        const data = await latestRes.value.json();
+        setRailLatest(data.results || []);
+      }
     } catch {
-      setIsError(true);
+      setIsRailsError(true);
     } finally {
-      setIsLoading(false);
-      setIsLoadingMore(false);
+      setIsRailsLoading(false);
     }
-  }, [debouncedQuery, mainTab, selectedCategory, page]);
+  }, []);
 
   useEffect(() => {
-    fetchCatalogData();
-  }, [fetchCatalogData]);
+    fetchRailsData();
+  }, [fetchRailsData]);
 
-  const displayedItems: VodItem[] = useMemo(() => {
-    if (selectedCategory === 'favorites') {
-      let list = (vodFavorites || []) as VodItem[];
-      if (mainTab === 'movie') {
-        list = list.filter((i) => i.type === 'movie' || (!i.type && !i.category?.includes('مسلسل')));
-      } else if (mainTab === 'tv') {
-        list = list.filter((i) => i.type === 'tv' || i.category?.includes('مسلسل'));
+  // جلب بيانات الشبكة عند اختيار تصنيف معين أو إدخال بحث
+  const fetchGridData = useCallback(
+    async (pageToLoad: number, append: boolean = false) => {
+      if (selectedCategory === 'all' && debouncedQuery.length === 0) {
+        return;
       }
-      if (debouncedQuery.trim().length > 0) {
-        const q = debouncedQuery.trim().toLowerCase();
-        list = list.filter((i) => (i.title || '').toLowerCase().includes(q));
+
+      if (selectedCategory === 'favorites' && debouncedQuery.length === 0) {
+        setIsGridLoading(false);
+        setIsGridLoadingMore(false);
+        return;
       }
-      return list;
+
+      if (append) {
+        setIsGridLoadingMore(true);
+      } else {
+        setIsGridLoading(true);
+      }
+      setIsGridError(false);
+
+      try {
+        let endpoint = '';
+        if (debouncedQuery.length > 0) {
+          endpoint = `${BACKEND_BASE_URL}/api/vod/search?q=${encodeURIComponent(
+            debouncedQuery
+          )}&page=${pageToLoad}`;
+        } else if (selectedCategory === 'arabic_movies') {
+          endpoint = `${BACKEND_BASE_URL}/api/vod/catalog?type=all&category=arabic_movies&page=${pageToLoad}`;
+        } else if (selectedCategory === 'arabic_series') {
+          endpoint = `${BACKEND_BASE_URL}/api/vod/catalog?type=all&category=arabic_series&page=${pageToLoad}`;
+        } else if (selectedCategory === 'foreign_movies') {
+          endpoint = `${BACKEND_BASE_URL}/api/vod/catalog?type=movie&category=trending&page=${pageToLoad}`;
+        } else if (selectedCategory === 'foreign_series') {
+          endpoint = `${BACKEND_BASE_URL}/api/vod/catalog?type=tv&category=trending&page=${pageToLoad}`;
+        }
+
+        if (!endpoint) return;
+
+        const res = await fetch(endpoint, {
+          headers: { Accept: 'application/json' },
+        });
+
+        if (!res.ok) {
+          throw new Error('فشل جلب قائمة المحتوى');
+        }
+
+        const data = await res.json();
+        const results: VodItem[] = data.results || [];
+        setGridTotalPages(data.totalPages || 1);
+        setGridItems((prev) => (append ? [...prev, ...results] : results));
+      } catch {
+        setIsGridError(true);
+      } finally {
+        setIsGridLoading(false);
+        setIsGridLoadingMore(false);
+      }
+    },
+    [selectedCategory, debouncedQuery]
+  );
+
+  // إعادة ضبط وتحميل عند تغيير التصنيف أو البحث
+  useEffect(() => {
+    setGridPage(1);
+    if (selectedCategory !== 'all' || debouncedQuery.length > 0) {
+      fetchGridData(1, false);
     }
-    return items;
-  }, [selectedCategory, vodFavorites, mainTab, debouncedQuery, items]);
+  }, [selectedCategory, debouncedQuery, fetchGridData]);
 
+  // العناصر المعروضة في وضع الشبكة (مع دعم الفلترة السريعة للمفضلة)
+  const displayedGridItems: VodItem[] = useMemo(() => {
+    if (selectedCategory === 'favorites' && debouncedQuery.length === 0) {
+      return (vodFavorites || []) as VodItem[];
+    }
+    return gridItems;
+  }, [selectedCategory, debouncedQuery, vodFavorites, gridItems]);
+
+  const handleLoadMoreGrid = () => {
+    if (!isGridLoadingMore && gridPage < gridTotalPages) {
+      const nextPage = gridPage + 1;
+      setGridPage(nextPage);
+      fetchGridData(nextPage, true);
+    }
+  };
+
+  // التنقل والريموت
   const handleGoBack = () => {
     if (unreleasedNotice?.visible) {
       setUnreleasedNotice(null);
+      return;
+    }
+    if (isSearchOpen && searchQuery.length > 0) {
+      setSearchQuery('');
+      setIsSearchOpen(false);
+      return;
+    }
+    if (selectedCategory !== 'all') {
+      setSelectedCategory('all');
       return;
     }
     if (router.canGoBack()) {
@@ -324,8 +474,8 @@ export default function MoviesScreen(): React.JSX.Element {
     onBack: handleGoBack,
   });
 
+  // فتح الفيلم أو المسلسل
   const handleSelect = (item: VodItem) => {
-    // التحقق أولاً إن كان العمل لم يصدر بعد
     if (item.isUnreleased) {
       setUnreleasedNotice({
         visible: true,
@@ -339,10 +489,9 @@ export default function MoviesScreen(): React.JSX.Element {
       item.originalLanguage === 'ar' ||
       item.category === 'arabic_movies' ||
       item.category === 'arabic_series';
-    const detectedLang = isExplicitArabic ? 'ar' : (item.originalLanguage || 'en');
+    const detectedLang = isExplicitArabic ? 'ar' : item.originalLanguage || 'en';
 
     if (item.type === 'tv') {
-      // توجيه المسلسل لشاشة تفاصيل واختيار الحلقات
       router.push({
         pathname: '/movies/series',
         params: {
@@ -361,7 +510,6 @@ export default function MoviesScreen(): React.JSX.Element {
         },
       });
     } else {
-      // تشغيل الفيلم مباشرة
       const initialUrl = item.sources && item.sources.length > 0 ? item.sources[0].url : '';
       router.push({
         pathname: '/play/[id]',
@@ -381,471 +529,830 @@ export default function MoviesScreen(): React.JSX.Element {
     }
   };
 
-  const handleLoadMore = () => {
-    if (!isLoadingMore && page < totalPages) {
-      setPage((prev) => prev + 1);
-    }
+  // تبديل حالة المفضلة
+  const handleToggleFav = (item: VodItem) => {
+    toggleFavorite(item);
   };
+
+  // هل نحن في وضع الصفوف الأفقية الافتراضي؟
+  const isRailsView = selectedCategory === 'all' && debouncedQuery.length === 0;
 
   return (
     <View style={styles.container}>
-      {/* 1. الشريط العلوي: العنوان وعناصر التحكم */}
-      <View style={styles.topHeader}>
+      {/* 1. الشريط العلوي البسيط (Minimal Top Bar) */}
+      <View style={styles.topBar}>
+        {/* عنوان وقسم السينما */}
         <View style={styles.titleArea}>
-          <Text style={styles.pageTitle}>الأفلام والمسلسلات</Text>
-          <Text style={styles.pageSubtitle}>
-            كتالوج الترفيه العربي والعالمي الشامل
-          </Text>
+          <View style={styles.titleIconBadge}>
+            <MaterialIcons name="local-movies" size={22} color="#0EA5E9" />
+          </View>
+          <View>
+            <Text style={styles.pageTitle}>الأفلام والمسلسلات</Text>
+            <Text style={styles.pageSubtitle}>تلفازي سينما • كتالوج الترفيه الذكي</Text>
+          </View>
         </View>
 
-        {/* أدوات الرأس: Segmented Control + مربع البحث */}
-        <View style={styles.headerControls}>
-          {/* Segmented Control للنوع (الكل • أفلام • مسلسلات) */}
-          {debouncedQuery.length === 0 && (
-            <View style={styles.segmentedControl}>
+        {/* أدوات البحث والمفضلة الدائرية في الرأس */}
+        <View style={styles.headerActions}>
+          {/* مربع البحث الموسع أو الزر الدائري */}
+          {isSearchOpen ? (
+            <View style={styles.searchExpandedBox}>
+              <MaterialIcons name="search" size={20} color="#0EA5E9" />
+              <TextInput
+                ref={searchInputRef}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                placeholder="ابحث عن فيلم أو مسلسل..."
+                placeholderTextColor="#64748B"
+                style={styles.searchInput}
+                autoFocus
+                returnKeyType="search"
+              />
               <Pressable
-                onPress={() => setMainTab('all')}
-                style={({ focused }) => [
-                  styles.segmentBtn,
-                  mainTab === 'all' && styles.segmentBtnActive,
-                  focused && styles.segmentBtnFocused,
-                ]}
+                onPress={() => {
+                  if (searchQuery.length > 0) {
+                    setSearchQuery('');
+                  } else {
+                    setIsSearchOpen(false);
+                  }
+                }}
+                style={styles.searchCloseBtn}
+                {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
               >
-                {({ focused }) => (
-                  <Text
-                    style={[
-                      styles.segmentText,
-                      mainTab === 'all' && styles.segmentTextActive,
-                      focused && styles.focusedTextDark,
-                    ]}
-                  >
-                    الكل
-                  </Text>
-                )}
-              </Pressable>
-
-              <Pressable
-                onPress={() => setMainTab('movie')}
-                style={({ focused }) => [
-                  styles.segmentBtn,
-                  mainTab === 'movie' && styles.segmentBtnActive,
-                  focused && styles.segmentBtnFocused,
-                ]}
-              >
-                {({ focused }) => (
-                  <Text
-                    style={[
-                      styles.segmentText,
-                      mainTab === 'movie' && styles.segmentTextActive,
-                      focused && styles.focusedTextDark,
-                    ]}
-                  >
-                    أفلام
-                  </Text>
-                )}
-              </Pressable>
-
-              <Pressable
-                onPress={() => setMainTab('tv')}
-                style={({ focused }) => [
-                  styles.segmentBtn,
-                  mainTab === 'tv' && styles.segmentBtnActive,
-                  focused && styles.segmentBtnFocused,
-                ]}
-              >
-                {({ focused }) => (
-                  <Text
-                    style={[
-                      styles.segmentText,
-                      mainTab === 'tv' && styles.segmentTextActive,
-                      focused && styles.focusedTextDark,
-                    ]}
-                  >
-                    مسلسلات
-                  </Text>
-                )}
+                <MaterialIcons name="close" size={18} color="#94A3B8" />
               </Pressable>
             </View>
+          ) : (
+            <Pressable
+              onPress={() => {
+                setIsSearchOpen(true);
+                setTimeout(() => searchInputRef.current?.focus(), 100);
+              }}
+              style={({ focused }: any) => [
+                styles.iconCircleBtn,
+                focused && styles.iconCircleBtnFocused,
+              ]}
+              {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+            >
+              <MaterialIcons name="search" size={20} color="#FFFFFF" />
+            </Pressable>
           )}
 
-          {/* حقل البحث الذكي */}
-          <View style={styles.searchBox}>
-            <MaterialIcons name="search" size={20} color="#94a3b8" />
-            <TextInput
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              placeholder="ابحث عن أي عمل ترفيهي..."
-              placeholderTextColor="#64748b"
-              style={styles.searchInput}
-              returnKeyType="search"
+          {/* زر سريع للمفضلة */}
+          <Pressable
+            onPress={() => {
+              setSelectedCategory((prev) => (prev === 'favorites' ? 'all' : 'favorites'));
+            }}
+            style={({ focused }: any) => [
+              styles.iconCircleBtn,
+              selectedCategory === 'favorites' && styles.iconCircleBtnGoldActive,
+              focused && styles.iconCircleBtnFocused,
+            ]}
+            {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+          >
+            <MaterialIcons
+              name="star"
+              size={20}
+              color={selectedCategory === 'favorites' ? '#F59E0B' : '#FFFFFF'}
             />
-            {searchQuery.length > 0 && (
-              <Pressable onPress={() => setSearchQuery('')} style={styles.clearBtn}>
-                <MaterialIcons name="close" size={18} color="#94a3b8" />
-              </Pressable>
-            )}
-          </View>
+          </Pressable>
+
+          {/* زر إعادة التحميل */}
+          <Pressable
+            onPress={() => {
+              if (isRailsView) {
+                fetchRailsData();
+              } else {
+                fetchGridData(1, false);
+              }
+            }}
+            style={({ focused }: any) => [
+              styles.iconCircleBtn,
+              focused && styles.iconCircleBtnFocused,
+            ]}
+            {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+          >
+            <MaterialIcons name="refresh" size={20} color="#94A3B8" />
+          </Pressable>
         </View>
       </View>
 
-      {/* 2. شريط التصنيفات العصري بنمط Glassmorphic */}
-      {debouncedQuery.length === 0 && (
-        <View style={styles.categoriesContainer}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.categoriesScroll}
-          >
-            {SUB_CATEGORIES.map((cat) => {
-              const isActive = selectedCategory === cat.id;
-              return (
+      {/* المحتوى الرئيسي القابل للتمرير */}
+      <ScrollView
+        style={styles.scrollArea}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* ==================================================== */}
+        {/* وضع الصفوف الأفقية الافتراضي (Horizontal Poster Rails) */}
+        {/* ==================================================== */}
+        {isRailsView ? (
+          <>
+            {isRailsLoading ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#0EA5E9" />
+                <Text style={styles.loadingText}>جاري تجهيز الكتالوج السينمائي...</Text>
+              </View>
+            ) : isRailsError ? (
+              <View style={styles.errorContainer}>
+                <MaterialIcons name="error-outline" size={48} color="#EF4444" />
+                <Text style={styles.errorTitle}>تعذر تحميل الأفلام والمسلسلات</Text>
                 <Pressable
-                  key={cat.id}
-                  onPress={() => setSelectedCategory(cat.id)}
-                  style={({ focused }) => [
-                    styles.glassChip,
-                    isActive && styles.glassChipActive,
-                    focused && styles.glassChipFocused,
-                  ]}
+                  onPress={fetchRailsData}
+                  style={styles.retryBtn}
+                  {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
                 >
-                  {({ focused }) => (
-                    <View style={styles.glassChipContent}>
-                      <MaterialIcons
-                        name={cat.icon}
-                        size={16}
-                        color={focused ? '#000000' : isActive ? '#ffffff' : '#38bdf8'}
-                      />
+                  <Text style={styles.retryBtnText}>إعادة المحاولة</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <>
+                {/* 1. صف البوسترات الأول: المقترحة والأكثر مشاهدة */}
+                {railTrending.length > 0 && (
+                  <View style={styles.railSection}>
+                    <View style={styles.railHeader}>
+                      <View style={styles.railHeaderRight}>
+                        <View style={[styles.railIndicator, { backgroundColor: '#F59E0B' }]} />
+                        <View>
+                          <Text style={styles.railTitle}>المقترحة والأكثر مشاهدة</Text>
+                          <Text style={styles.railSubtitle}>
+                            أقوى وأشهر الأعمال التي يتابعها الجميع الآن
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.railScrollContent}
+                    >
+                      {railTrending.map((item, idx) => (
+                        <VodCard
+                          key={`trend-${item.id}-${idx}`}
+                          item={item}
+                          onSelect={handleSelect}
+                          isFav={favoriteIds.includes(item.id)}
+                          onToggleFav={handleToggleFav}
+                          hasTVPreferredFocus={idx === 0}
+                        />
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {/* 2. صف بطاقات التصنيفات الأفقية (Categories Cards Row) */}
+                <View style={styles.categoriesSection}>
+                  <View style={styles.categoriesSectionHeader}>
+                    <View style={[styles.railIndicator, { backgroundColor: '#0EA5E9' }]} />
+                    <Text style={styles.categoriesSectionTitle}>تصفح حسب التصنيف</Text>
+                  </View>
+
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.categoriesScrollContent}
+                  >
+                    {CATEGORIES.map((cat) => {
+                      const isCatActive = selectedCategory === cat.id;
+                      const isFavCat = cat.id === 'favorites';
+
+                      return (
+                        <Pressable
+                          key={`cat-${cat.id}`}
+                          onPress={() => setSelectedCategory(cat.id)}
+                          style={({ focused }: any) => [
+                            styles.categoryCard,
+                            isCatActive &&
+                              (isFavCat
+                                ? styles.categoryCardFavActive
+                                : styles.categoryCardActive),
+                            focused && styles.categoryCardFocused,
+                            Platform.OS === 'web'
+                              ? ({
+                                  cursor: 'pointer',
+                                  transition: 'all 0.2s ease',
+                                } as any)
+                              : undefined,
+                          ]}
+                        >
+                          <View
+                            style={[
+                              styles.categoryIconBox,
+                              { backgroundColor: cat.bgColor },
+                            ]}
+                          >
+                            <MaterialIcons
+                              name={cat.icon}
+                              size={20}
+                              color={cat.iconColor}
+                            />
+                          </View>
+                          <Text
+                            style={[
+                              styles.categoryTitle,
+                              isCatActive &&
+                                (isFavCat
+                                  ? styles.categoryTitleFavActive
+                                  : styles.categoryTitleActive),
+                            ]}
+                          >
+                            {cat.title}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+
+                {/* 3. صف البوسترات الثاني: أفلام ومسلسلات عربية */}
+                {railArabic.length > 0 && (
+                  <View style={styles.railSection}>
+                    <View style={styles.railHeader}>
+                      <View style={styles.railHeaderRight}>
+                        <View style={[styles.railIndicator, { backgroundColor: '#F43F5E' }]} />
+                        <View>
+                          <Text style={styles.railTitle}>أفلام ومسلسلات عربية</Text>
+                          <Text style={styles.railSubtitle}>
+                            أحدث وأفضل الإنتاجات والدراما السينمائية العربية
+                          </Text>
+                        </View>
+                      </View>
+                      <Pressable
+                        onPress={() => setSelectedCategory('arabic_movies')}
+                        style={styles.viewAllBtn}
+                        {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+                      >
+                        <Text style={styles.viewAllBtnText}>عرض المزيد</Text>
+                        <MaterialIcons name="chevron-left" size={18} color="#0EA5E9" />
+                      </Pressable>
+                    </View>
+
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.railScrollContent}
+                    >
+                      {railArabic.map((item, idx) => (
+                        <VodCard
+                          key={`arabic-${item.id}-${idx}`}
+                          item={item}
+                          onSelect={handleSelect}
+                          isFav={favoriteIds.includes(item.id)}
+                          onToggleFav={handleToggleFav}
+                        />
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {/* 4. صف البوسترات الثالث: أحدث الإضافات العالمية */}
+                {railLatest.length > 0 && (
+                  <View style={styles.railSection}>
+                    <View style={styles.railHeader}>
+                      <View style={styles.railHeaderRight}>
+                        <View style={[styles.railIndicator, { backgroundColor: '#10B981' }]} />
+                        <View>
+                          <Text style={styles.railTitle}>أحدث الإضافات العالمية</Text>
+                          <Text style={styles.railSubtitle}>
+                            أحدث الأفلام والمسلسلات المختارة بعناية فائقة
+                          </Text>
+                        </View>
+                      </View>
+                      <Pressable
+                        onPress={() => setSelectedCategory('foreign_movies')}
+                        style={styles.viewAllBtn}
+                        {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+                      >
+                        <Text style={styles.viewAllBtnText}>عرض المزيد</Text>
+                        <MaterialIcons name="chevron-left" size={18} color="#0EA5E9" />
+                      </Pressable>
+                    </View>
+
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.railScrollContent}
+                    >
+                      {railLatest.map((item, idx) => (
+                        <VodCard
+                          key={`latest-${item.id}-${idx}`}
+                          item={item}
+                          onSelect={handleSelect}
+                          isFav={favoriteIds.includes(item.id)}
+                          onToggleFav={handleToggleFav}
+                        />
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+              </>
+            )}
+          </>
+        ) : (
+          /* ==================================================== */
+          /* وضع الشبكة (Grid View) عند البحث أو اختيار تصنيف     */
+          /* ==================================================== */
+          <View style={styles.gridSection}>
+            {/* شريط التصنيفات في أعلى الشبكة لسهولة التنقل والعودة */}
+            <View style={styles.categoriesBarInGrid}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.categoriesScrollContent}
+              >
+                {CATEGORIES.map((cat) => {
+                  const isCatActive = selectedCategory === cat.id;
+                  const isFavCat = cat.id === 'favorites';
+
+                  return (
+                    <Pressable
+                      key={`cat-grid-${cat.id}`}
+                      onPress={() => {
+                        setSearchQuery('');
+                        setSelectedCategory(cat.id);
+                      }}
+                      style={({ focused }: any) => [
+                        styles.categoryCard,
+                        isCatActive &&
+                          (isFavCat
+                            ? styles.categoryCardFavActive
+                            : styles.categoryCardActive),
+                        focused && styles.categoryCardFocused,
+                        Platform.OS === 'web'
+                          ? ({
+                              cursor: 'pointer',
+                              transition: 'all 0.2s ease',
+                            } as any)
+                          : undefined,
+                      ]}
+                    >
+                      <View
+                        style={[
+                          styles.categoryIconBox,
+                          { backgroundColor: cat.bgColor },
+                        ]}
+                      >
+                        <MaterialIcons
+                          name={cat.icon}
+                          size={18}
+                          color={cat.iconColor}
+                        />
+                      </View>
                       <Text
                         style={[
-                          styles.glassChipText,
-                          isActive && styles.glassChipTextActive,
-                          focused && styles.focusedTextDark,
+                          styles.categoryTitle,
+                          isCatActive &&
+                            (isFavCat
+                              ? styles.categoryTitleFavActive
+                              : styles.categoryTitleActive),
                         ]}
                       >
                         {cat.title}
                       </Text>
-                    </View>
-                  )}
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-        </View>
-      )}
-
-      {/* 3. شبكة المحتوى أو حالات التحميل/الخطأ */}
-      {isLoading ? (
-        <View style={styles.centerBox}>
-          <ActivityIndicator size="large" color="#38bdf8" />
-          <Text style={styles.loadingText}>جاري استعراض الكتالوج السينمائي...</Text>
-        </View>
-      ) : isError ? (
-        <View style={styles.centerBox}>
-          <MaterialIcons name="error-outline" size={60} color="#ef4444" />
-          <Text style={styles.errorTitle}>تعذر الاتصال بالخادم</Text>
-          <Text style={styles.errorSub}>يرجى التحقق من اتصال الإنترنت ثم إعادة المحاولة</Text>
-          <Pressable
-            hasTVPreferredFocus
-            onPress={() => fetchCatalogData()}
-            style={({ focused }) => [styles.retryBtn, focused && styles.glassChipFocused]}
-          >
-            <Text style={styles.retryBtnText}>إعادة المحاولة</Text>
-          </Pressable>
-        </View>
-      ) : displayedItems.length === 0 ? (
-        <View style={styles.centerBox}>
-          {selectedCategory === 'favorites' ? (
-            <>
-              <MaterialIcons name="star-border" size={64} color="#eab308" />
-              <Text style={styles.emptyTitle}>لا توجد أعمال في المفضلة حالياً</Text>
-              <Text style={styles.emptySub}>
-                اضغط على أيقونة القلب في أي فيلم أو مسلسل لحفظه هنا والوصول إليه بسرعة في أي وقت.
-              </Text>
-            </>
-          ) : (
-            <>
-              <MaterialIcons name="local-movies" size={64} color="#475569" />
-              <Text style={styles.emptyTitle}>
-                {debouncedQuery.length > 0
-                  ? `لم يتم العثور على نتائج للبحث عن "${debouncedQuery}"`
-                  : 'لا يتوفر محتوى حالياً في هذا القسم'}
-              </Text>
-              <Text style={styles.emptySub}>
-                {debouncedQuery.length > 0
-                  ? 'تأكد من كتابة الاسم بشكل صحيح أو جرب كلمات أخرى'
-                  : 'سيتم إضافة المزيد من الأعمال الترفيهية قريباً'}
-              </Text>
-            </>
-          )}
-        </View>
-      ) : (
-        <FlatList<VodItem>
-          key={`vod-grid-${numColumns}`}
-          data={displayedItems}
-          keyExtractor={(item) => `${item.id}-${item.episodeInfo || ''}`}
-          numColumns={numColumns}
-          contentContainerStyle={styles.gridContent}
-          showsVerticalScrollIndicator={false}
-          renderItem={({ item, index }) => (
-            <View style={styles.gridCol}>
-              <VodCard
-                item={item}
-                onSelect={handleSelect}
-                index={index}
-                isFav={favoriteIds.includes(item.id)}
-                onToggleFav={toggleFavorite}
-              />
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
             </View>
-          )}
-          ListFooterComponent={
-            selectedCategory !== 'favorites' && page < totalPages ? (
-              <View style={styles.footerLoader}>
+
+            {/* رأس قسم الشبكة */}
+            <View style={styles.gridHeaderRow}>
+              <View style={styles.gridHeaderRight}>
+                <Text style={styles.gridTitle}>
+                  {debouncedQuery.length > 0
+                    ? `نتائج البحث: "${debouncedQuery}"`
+                    : CATEGORIES.find((c) => c.id === selectedCategory)?.title || 'الأعمال المتاحة'}
+                </Text>
+                <Text style={styles.gridCount}>
+                  ({displayedGridItems.length} عمل متاح)
+                </Text>
+              </View>
+
+              <Pressable
+                onPress={() => {
+                  setSearchQuery('');
+                  setSelectedCategory('all');
+                }}
+                style={styles.backToRailsBtn}
+                {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+              >
+                <MaterialIcons name="arrow-forward" size={16} color="#0EA5E9" />
+                <Text style={styles.backToRailsText}>العودة للرئيسية</Text>
+              </Pressable>
+            </View>
+
+            {/* محتوى الشبكة */}
+            {isGridLoading ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#0EA5E9" />
+                <Text style={styles.loadingText}>جاري تحميل الأعمال...</Text>
+              </View>
+            ) : isGridError ? (
+              <View style={styles.errorContainer}>
+                <MaterialIcons name="error-outline" size={48} color="#EF4444" />
+                <Text style={styles.errorTitle}>حدث خطأ أثناء جلب البيانات</Text>
                 <Pressable
-                  onPress={handleLoadMore}
-                  disabled={isLoadingMore}
-                  style={({ focused }) => [
-                    styles.loadMoreBtn,
-                    focused && styles.loadMoreBtnFocused,
-                  ]}
+                  onPress={() => fetchGridData(gridPage, false)}
+                  style={styles.retryBtn}
+                  {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
                 >
-                  {isLoadingMore ? (
-                    <ActivityIndicator size="small" color="#ffffff" />
-                  ) : (
-                    <View style={styles.btnRow}>
-                      <MaterialIcons name="expand-more" size={22} color="#ffffff" />
-                      <Text style={styles.loadMoreText}>تحميل المزيد من الأعمال</Text>
-                    </View>
-                  )}
+                  <Text style={styles.retryBtnText}>إعادة المحاولة</Text>
                 </Pressable>
+              </View>
+            ) : displayedGridItems.length === 0 ? (
+              <View style={styles.emptyContainer}>
+                <MaterialIcons
+                  name={selectedCategory === 'favorites' ? 'star-border' : 'movie'}
+                  size={56}
+                  color="#64748B"
+                />
+                <Text style={styles.emptyTitle}>
+                  {selectedCategory === 'favorites'
+                    ? 'قائمة المفضلة فارغة'
+                    : 'لم يتم العثور على أي عمل مطابق'}
+                </Text>
+                <Text style={styles.emptySubtitle}>
+                  {selectedCategory === 'favorites'
+                    ? 'يمكنك إضافة الأفلام والمسلسلات المفضلة بالضغط على أيقونة القلب في أي بوستر'
+                    : 'جرّب كتابة كلمات بحث أخرى أو اختر تصنيفاً مختلفاً من الأعلى'}
+                </Text>
               </View>
             ) : (
-              <View style={styles.footerEnd}>
-                <Text style={styles.footerEndText}>تم عرض جميع النتائج المتاحة</Text>
-              </View>
-            )
-          }
-        />
-      )}
+              <>
+                <View style={styles.gridContainer}>
+                  {displayedGridItems.map((item, idx) => (
+                    <VodCard
+                      key={`grid-${item.id}-${idx}`}
+                      item={item}
+                      onSelect={handleSelect}
+                      isFav={favoriteIds.includes(item.id)}
+                      onToggleFav={handleToggleFav}
+                      width={gridCardWidth}
+                      hasTVPreferredFocus={idx === 0}
+                    />
+                  ))}
+                </View>
 
-      {/* 4. نافذة تنبيه فاخرة للأعمال التي لم تصدر بعد */}
-      {unreleasedNotice?.visible && (
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalBox}>
-            <View style={styles.modalIconCircle}>
-              <MaterialIcons name="schedule" size={36} color="#f97316" />
-            </View>
-
-            <Text style={styles.modalTitle}>هذا العمل لم يصدر بعد</Text>
-
-            <Text style={styles.modalItemName} numberOfLines={2}>
-              {unreleasedNotice.title}
-            </Text>
-
-            <View style={styles.modalDateBadge}>
-              <MaterialIcons name="event" size={16} color="#f97316" />
-              <Text style={styles.modalDateText}>
-                تاريخ الإصدار المتوقع: {unreleasedNotice.releaseDate || 'قريباً'}
-              </Text>
-            </View>
-
-            <Text style={styles.modalDesc}>
-              هذا العمل لا يزال قيد الإنتاج أو في صالات العرض السينمائي ولم يتم طرحه على منصات البث الرقمي بعد. سيتم توفيره فور صدوره رسمياً.
-            </Text>
-
-            <Pressable
-              hasTVPreferredFocus
-              onPress={() => setUnreleasedNotice(null)}
-              style={({ focused }) => [
-                styles.modalCloseBtn,
-                focused && styles.modalCloseBtnFocused,
-              ]}
-            >
-              {({ focused }) => (
-                <Text
-                  style={[
-                    styles.modalCloseBtnText,
-                    focused && styles.focusedTextDark,
-                  ]}
-                >
-                  حسناً، فهمت
-                </Text>
-              )}
-            </Pressable>
+                {/* زر تحميل المزيد */}
+                {selectedCategory !== 'favorites' &&
+                  debouncedQuery.length === 0 &&
+                  gridPage < gridTotalPages && (
+                    <View style={styles.loadMoreContainer}>
+                      <Pressable
+                        onPress={handleLoadMoreGrid}
+                        disabled={isGridLoadingMore}
+                        style={({ focused }: any) => [
+                          styles.loadMoreBtn,
+                          focused && styles.loadMoreBtnFocused,
+                        ]}
+                        {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+                      >
+                        {isGridLoadingMore ? (
+                          <ActivityIndicator size="small" color="#0EA5E9" />
+                        ) : (
+                          <>
+                            <Text style={styles.loadMoreBtnText}>تحميل المزيد</Text>
+                            <MaterialIcons name="expand-more" size={20} color="#0EA5E9" />
+                          </>
+                        )}
+                      </Pressable>
+                    </View>
+                  )}
+              </>
+            )}
           </View>
-        </View>
+        )}
+      </ScrollView>
+
+      {/* نافذة تنبيهية للعمل الذي لم يصدر بعد */}
+      {unreleasedNotice?.visible && (
+        <Modal
+          visible={unreleasedNotice.visible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setUnreleasedNotice(null)}
+        >
+          <View style={styles.modalBackdrop}>
+            <View style={styles.modalDialog}>
+              <View style={styles.modalIconBox}>
+                <MaterialIcons name="alarm" size={32} color="#F59E0B" />
+              </View>
+
+              <Text style={styles.modalTitle}>العمل قيد الإصدار قريباً</Text>
+              <Text style={styles.modalContentName}>{unreleasedNotice.title}</Text>
+              <Text style={styles.modalNoticeDesc}>
+                {unreleasedNotice.releaseDate
+                  ? `هذا العمل لم يتوفر للبث بعد على المنصات الرقمية. موعد الإصدار الرسمي هو ${unreleasedNotice.releaseDate}.`
+                  : 'هذا العمل لم يصدر بعد رسمياً في دور العرض أو على المنصات الرقمية.'}
+              </Text>
+
+              <Pressable
+                onPress={() => setUnreleasedNotice(null)}
+                style={({ focused }: any) => [
+                  styles.modalCloseBtn,
+                  focused && styles.modalCloseBtnFocused,
+                ]}
+                {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+              >
+                <Text style={styles.modalCloseBtnText}>حسناً، فهمت</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
       )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  // الحاوية الكلية - الخلفية السينمائية الداكنة #0B1120
   container: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#0B1120',
   },
-  topHeader: {
+
+  // الشريط العلوي البسيط (Minimal Top Bar)
+  topBar: {
+    height: 76,
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 14,
-    flexWrap: 'wrap',
-    gap: 16,
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: 'rgba(11, 17, 32, 0.96)',
+    zIndex: 20,
   },
   titleArea: {
-    minWidth: 220,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  titleIconBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: '#131C31',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   pageTitle: {
-    fontSize: 26,
-    fontWeight: '900',
-    color: '#ffffff',
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '700',
+    textAlign: 'right',
   },
   pageSubtitle: {
-    fontSize: 13,
-    color: '#94a3b8',
-    marginTop: 4,
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '400',
+    textAlign: 'right',
+    marginTop: 2,
   },
-  headerControls: {
+
+  headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    flexWrap: 'wrap',
+    gap: 10,
   },
-  segmentedControl: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    borderRadius: 999,
-    padding: 4,
+  iconCircleBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#131C31',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
-    gap: 4,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  segmentBtn: {
-    paddingVertical: 7,
-    paddingHorizontal: 16,
-    borderRadius: 999,
+  iconCircleBtnFocused: {
+    borderColor: '#0EA5E9',
+    backgroundColor: '#1E293B',
+    transform: [{ scale: 1.08 }],
+    ...(Platform.OS === 'web'
+      ? ({
+          boxShadow: '0 0 16px rgba(14, 165, 233, 0.45)',
+        } as any)
+      : {}),
   },
-  segmentBtnActive: {
-    backgroundColor: '#0284c7',
+  iconCircleBtnGoldActive: {
+    borderColor: '#F59E0B',
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
   },
-  segmentBtnFocused: {
-    backgroundColor: '#ffffff',
-    transform: [{ scale: 1.05 }],
-    shadowColor: '#38bdf8',
-    shadowOpacity: 0.9,
-    shadowRadius: 10,
-  },
-  segmentText: {
-    color: '#94a3b8',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  segmentTextActive: {
-    color: '#ffffff',
-    fontWeight: '800',
-  },
-  searchBox: {
+
+  // مربع البحث عند التوسيع
+  searchExpandedBox: {
+    height: 42,
+    width: 280,
+    borderRadius: 21,
+    backgroundColor: '#131C31',
+    borderWidth: 1.5,
+    borderColor: '#0EA5E9',
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
     paddingHorizontal: 14,
-    paddingVertical: 7,
-    width: 260,
     gap: 8,
+    ...(Platform.OS === 'web'
+      ? ({
+          boxShadow: '0 0 18px rgba(14, 165, 233, 0.35)',
+        } as any)
+      : {}),
   },
   searchInput: {
     flex: 1,
-    color: '#ffffff',
+    color: '#FFFFFF',
     fontSize: 13,
-    fontWeight: '600',
-    padding: 0,
     textAlign: 'right',
+    paddingVertical: 0,
   },
-  clearBtn: {
-    padding: 2,
+  searchCloseBtn: {
+    padding: 4,
   },
-  categoriesContainer: {
-    marginBottom: 16,
+
+  // منطقة التمرير
+  scrollArea: {
+    flex: 1,
   },
-  categoriesScroll: {
-    flexDirection: 'row',
-    gap: 12,
-    paddingHorizontal: 4,
-    paddingVertical: 6,
+  scrollContent: {
+    paddingBottom: 48,
   },
-  glassChip: {
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    paddingVertical: 9,
-    paddingHorizontal: 18,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
+
+  // ===================================
+  // صفوف البوسترات الأفقية (Rails)
+  // ===================================
+  railSection: {
+    marginBottom: 32,
+    marginTop: 18,
   },
-  glassChipActive: {
-    backgroundColor: '#0284c7',
-    borderColor: '#38bdf8',
-  },
-  glassChipFocused: {
-    backgroundColor: '#ffffff',
-    borderColor: '#ffffff',
-    transform: [{ scale: 1.06 }],
-    shadowColor: '#38bdf8',
-    shadowOpacity: 0.9,
-    shadowRadius: 12,
-  },
-  glassChipContent: {
+  railHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    marginBottom: 16,
   },
-  glassChipText: {
-    color: '#94a3b8',
-    fontSize: 13,
+  railHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  railIndicator: {
+    width: 4,
+    height: 36,
+    borderRadius: 2,
+  },
+  railTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+    textAlign: 'right',
+  },
+  railSubtitle: {
+    color: '#94A3B8',
+    fontSize: 12,
+    textAlign: 'right',
+    marginTop: 2,
+  },
+  viewAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(14, 165, 233, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(14, 165, 233, 0.2)',
+  },
+  viewAllBtnText: {
+    color: '#0EA5E9',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  railScrollContent: {
+    paddingHorizontal: 24,
+    gap: 16,
+    paddingVertical: 12,
+  },
+
+  // ===================================
+  // صف بطاقات التصنيفات (Categories Cards)
+  // ===================================
+  categoriesSection: {
+    marginBottom: 32,
+    marginTop: 8,
+  },
+  categoriesSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 24,
+    marginBottom: 14,
+  },
+  categoriesSectionTitle: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '700',
+    textAlign: 'right',
+  },
+  categoriesScrollContent: {
+    paddingHorizontal: 24,
+    gap: 12,
+    paddingVertical: 6,
+  },
+  categoryCard: {
+    height: 54,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    backgroundColor: '#131C31',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  categoryCardActive: {
+    borderColor: '#0EA5E9',
+    backgroundColor: 'rgba(14, 165, 233, 0.12)',
+    ...(Platform.OS === 'web'
+      ? ({
+          boxShadow: '0 0 18px rgba(14, 165, 233, 0.35)',
+        } as any)
+      : {}),
+  },
+  categoryCardFavActive: {
+    borderColor: '#F59E0B',
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    ...(Platform.OS === 'web'
+      ? ({
+          boxShadow: '0 0 18px rgba(245, 158, 11, 0.35)',
+        } as any)
+      : {}),
+  },
+  categoryCardFocused: {
+    transform: [{ scale: 1.05 }],
+    borderColor: '#0EA5E9',
+  },
+  categoryIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  categoryTitle: {
+    color: '#94A3B8',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  categoryTitleActive: {
+    color: '#FFFFFF',
     fontWeight: '700',
   },
-  glassChipTextActive: {
-    color: '#ffffff',
-    fontWeight: '800',
+  categoryTitleFavActive: {
+    color: '#F59E0B',
+    fontWeight: '700',
   },
-  focusedTextDark: {
-    color: '#000000',
-    fontWeight: '900',
+
+  // ===================================
+  // بطاقة البوستر (VodCard)
+  // ===================================
+  cardContainer: {
+    position: 'relative',
   },
-  gridContent: {
-    paddingBottom: 40,
-  },
-  gridCol: {
-    flex: 1,
-    padding: 8,
-  },
-  card: {
-    backgroundColor: '#1e293b',
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    overflow: 'hidden',
-  },
-  cardFocused: {
-    backgroundColor: '#ffffff',
-    borderColor: '#ffffff',
-    transform: [{ scale: 1.05 }],
-    shadowColor: '#38bdf8',
-    shadowOpacity: 0.9,
-    shadowRadius: 14,
+  cardFixedRailWidth: {
+    width: 175,
   },
   cardInner: {
     width: '100%',
   },
-  posterContainer: {
+  // إطار البوستر 2:3 مع حواف دائرية 14 وحالة التركيز والتوهج
+  posterBox: {
     width: '100%',
     aspectRatio: 2 / 3,
-    backgroundColor: '#0b1120',
-    position: 'relative',
+    borderRadius: 14,
     overflow: 'hidden',
+    backgroundColor: '#131C31',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    position: 'relative',
   },
-  posterImage: {
+  posterBoxFocused: {
+    borderColor: '#0EA5E9',
+    transform: [{ scale: 1.07 }],
+    zIndex: 10,
+    ...(Platform.OS === 'web'
+      ? ({
+          boxShadow: '0 0 24px rgba(14, 165, 233, 0.45)',
+        } as any)
+      : {
+          elevation: 10,
+        }),
+  },
+  posterImg: {
     width: '100%',
     height: '100%',
   },
@@ -854,24 +1361,17 @@ const styles = StyleSheet.create({
     height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#0f172a',
+    backgroundColor: '#1E293B',
   },
-  posterGradientOverlay: {
+  posterBottomGradient: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    height: '65%',
-    ...(Platform.OS === 'web'
-      ? {
-          backgroundImage:
-            'linear-gradient(to top, rgba(15, 23, 42, 0.95) 0%, rgba(15, 23, 42, 0.4) 60%, transparent 100%)',
-        }
-      : {
-          backgroundColor: 'rgba(15, 23, 42, 0.65)',
-        }),
+    height: 70,
+    backgroundColor: 'rgba(11, 17, 32, 0.85)',
   },
-  topBadgesRow: {
+  posterTopBadges: {
     position: 'absolute',
     top: 8,
     left: 8,
@@ -879,317 +1379,309 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    zIndex: 2,
-  },
-  topBadgesLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  cardFavBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(15, 23, 42, 0.75)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.25)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cardFavBtnActive: {
-    backgroundColor: 'rgba(239, 68, 68, 0.25)',
-    borderColor: '#ef4444',
-  },
-  cardFavBtnFocused: {
-    borderColor: '#ffffff',
-    backgroundColor: 'rgba(255, 255, 255, 0.35)',
-  },
-  typeBadge: {
-    backgroundColor: 'rgba(2, 132, 199, 0.85)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  typeBadgeTv: {
-    backgroundColor: 'rgba(124, 58, 237, 0.85)',
-  },
-  typeBadgeText: {
-    color: '#ffffff',
-    fontSize: 11,
-    fontWeight: '800',
   },
   ratingBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    gap: 4,
+    backgroundColor: 'rgba(11, 17, 32, 0.85)',
     paddingHorizontal: 7,
     paddingVertical: 3,
-    borderRadius: 6,
-    gap: 3,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: 'rgba(234, 179, 8, 0.4)',
+    borderColor: 'rgba(255, 255, 255, 0.1)',
   },
   ratingBadgeText: {
-    color: '#eab308',
+    color: '#F59E0B',
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '700',
+  },
+  favBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(11, 17, 32, 0.85)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  favBtnActive: {
+    backgroundColor: 'rgba(239, 68, 68, 0.25)',
+    borderColor: '#EF4444',
+  },
+
+  posterBottomBadges: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+  },
+  typeBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  typeBadgeMovie: {
+    backgroundColor: 'rgba(14, 165, 233, 0.25)',
+    borderWidth: 1,
+    borderColor: 'rgba(14, 165, 233, 0.4)',
+  },
+  typeBadgeTv: {
+    backgroundColor: 'rgba(168, 85, 247, 0.25)',
+    borderWidth: 1,
+    borderColor: 'rgba(168, 85, 247, 0.4)',
+  },
+  typeBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '600',
   },
   unreleasedBadge: {
-    position: 'absolute',
-    bottom: 8,
-    left: 8,
-    right: 8,
-    backgroundColor: 'rgba(234, 88, 12, 0.95)',
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 8,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     gap: 4,
-    zIndex: 2,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.25)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: 'rgba(249, 115, 22, 0.85)',
   },
   unreleasedBadgeText: {
-    color: '#ffffff',
-    fontSize: 11,
-    fontWeight: '800',
-    textAlign: 'center',
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '600',
   },
-  episodeBadge: {
-    position: 'absolute',
-    bottom: 8,
-    left: 8,
-    right: 8,
-    backgroundColor: 'rgba(5, 150, 105, 0.9)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    zIndex: 2,
+
+  // التفاصيل النصية أسفل البوستر
+  metaBox: {
+    marginTop: 8,
+    paddingHorizontal: 2,
   },
-  episodeBadgeText: {
-    color: '#ffffff',
-    fontSize: 11,
-    fontWeight: '800',
-    textAlign: 'center',
-  },
-  metaContainer: {
-    padding: 10,
-    justifyContent: 'space-between',
-    minHeight: 68,
-  },
-  itemTitle: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '800',
-    lineHeight: 18,
+  cardTitle: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
     textAlign: 'right',
   },
-  itemTitleFocused: {
-    color: '#000000',
-    fontWeight: '900',
+  cardTitleActive: {
+    color: '#38BDF8',
   },
   subMetaRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 6,
+    marginTop: 3,
   },
   metaYear: {
-    color: '#94a3b8',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  metaSources: {
-    color: '#38bdf8',
+    color: '#64748B',
     fontSize: 11,
-    fontWeight: '700',
+    fontWeight: '500',
   },
-  unreleasedDateRow: {
+  metaHint: {
+    color: '#94A3B8',
+    fontSize: 11,
+  },
+
+  // ===================================
+  // وضع الشبكة (Grid View)
+  // ===================================
+  gridSection: {
+    paddingTop: 16,
+  },
+  categoriesBarInGrid: {
+    marginBottom: 20,
+  },
+  gridHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-  },
-  metaUnreleasedDate: {
-    color: '#f97316',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  centerBox: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 60,
-  },
-  loadingText: {
-    color: '#38bdf8',
-    fontSize: 16,
-    fontWeight: '700',
-    marginTop: 16,
-  },
-  errorTitle: {
-    color: '#ef4444',
-    fontSize: 22,
-    fontWeight: 'bold',
-    marginTop: 16,
-  },
-  errorSub: {
-    color: '#94a3b8',
-    fontSize: 14,
-    marginTop: 8,
-    textAlign: 'center',
-  },
-  retryBtn: {
-    backgroundColor: '#0284c7',
-    paddingVertical: 12,
+    justifyContent: 'space-between',
     paddingHorizontal: 24,
-    borderRadius: 12,
-    marginTop: 20,
+    marginBottom: 20,
   },
-  retryBtnText: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: 'bold',
-  },
-  emptyTitle: {
-    color: '#ffffff',
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginTop: 16,
-  },
-  emptySub: {
-    color: '#94a3b8',
-    fontSize: 14,
-    marginTop: 8,
-    textAlign: 'center',
-  },
-  footerLoader: {
-    alignItems: 'center',
-    paddingVertical: 24,
-  },
-  loadMoreBtn: {
-    backgroundColor: '#0284c7',
-    paddingVertical: 14,
-    paddingHorizontal: 32,
-    borderRadius: 14,
-  },
-  loadMoreBtnFocused: {
-    backgroundColor: '#ffffff',
-    transform: [{ scale: 1.05 }],
-    shadowColor: '#38bdf8',
-    shadowOpacity: 0.9,
-    shadowRadius: 10,
-  },
-  loadMoreText: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: 'bold',
-    marginLeft: 6,
-  },
-  btnRow: {
+  gridHeaderRight: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'baseline',
+    gap: 8,
   },
-  footerEnd: {
-    alignItems: 'center',
-    paddingVertical: 20,
-  },
-  footerEndText: {
-    color: '#64748b',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  modalBackdrop: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.82)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 99,
-    padding: 20,
-  },
-  modalBox: {
-    backgroundColor: '#1e293b',
-    borderRadius: 20,
-    padding: 28,
-    width: '100%',
-    maxWidth: 480,
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: 'rgba(249, 115, 22, 0.4)',
-    shadowColor: '#000',
-    shadowOpacity: 0.8,
-    shadowRadius: 20,
-  },
-  modalIconCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: 'rgba(249, 115, 22, 0.15)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-    borderWidth: 1.5,
-    borderColor: 'rgba(249, 115, 22, 0.3)',
-  },
-  modalTitle: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: '#ffffff',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  modalItemName: {
-    fontSize: 16,
+  gridTitle: {
+    color: '#FFFFFF',
+    fontSize: 19,
     fontWeight: '700',
-    color: '#38bdf8',
-    marginBottom: 12,
-    textAlign: 'center',
+    textAlign: 'right',
   },
-  modalDateBadge: {
+  gridCount: {
+    color: '#94A3B8',
+    fontSize: 13,
+  },
+  backToRailsBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(249, 115, 22, 0.12)',
+    gap: 6,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
-    gap: 6,
-    marginBottom: 14,
+    backgroundColor: 'rgba(14, 165, 233, 0.08)',
     borderWidth: 1,
-    borderColor: 'rgba(249, 115, 22, 0.3)',
+    borderColor: 'rgba(14, 165, 233, 0.25)',
   },
-  modalDateText: {
-    color: '#f97316',
-    fontSize: 13,
-    fontWeight: '800',
+  backToRailsText: {
+    color: '#0EA5E9',
+    fontSize: 12,
+    fontWeight: '600',
   },
-  modalDesc: {
+  gridContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 24,
+    gap: 16,
+  },
+  loadMoreContainer: {
+    alignItems: 'center',
+    marginTop: 36,
+    marginBottom: 20,
+  },
+  loadMoreBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 28,
+    paddingVertical: 12,
+    borderRadius: 24,
+    backgroundColor: '#131C31',
+    borderWidth: 1,
+    borderColor: 'rgba(14, 165, 233, 0.4)',
+  },
+  loadMoreBtnFocused: {
+    borderColor: '#0EA5E9',
+    transform: [{ scale: 1.05 }],
+  },
+  loadMoreBtnText: {
+    color: '#0EA5E9',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
+  // حالات التحميل والخطأ والفارغة
+  loadingContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 80,
+    gap: 16,
+  },
+  loadingText: {
+    color: '#94A3B8',
+    fontSize: 14,
+  },
+  errorContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+    gap: 14,
+  },
+  errorTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  retryBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#131C31',
+    borderWidth: 1,
+    borderColor: '#0EA5E9',
+    marginTop: 8,
+  },
+  retryBtnText: {
+    color: '#0EA5E9',
     fontSize: 13,
-    color: '#94a3b8',
+    fontWeight: '600',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 80,
+    paddingHorizontal: 32,
+    gap: 12,
+  },
+  emptyTitle: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '600',
     textAlign: 'center',
+  },
+  emptySubtitle: {
+    color: '#94A3B8',
+    fontSize: 13,
+    textAlign: 'center',
+    maxWidth: 420,
     lineHeight: 20,
-    marginBottom: 24,
+  },
+
+  // النافذة التنبيهية للأعمال غير المصرح بإصدارها بعد
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalDialog: {
+    width: '100%',
+    maxWidth: 440,
+    backgroundColor: '#131C31',
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#0EA5E9',
+    padding: 24,
+    alignItems: 'center',
+    ...(Platform.OS === 'web'
+      ? ({
+          boxShadow: '0 0 32px rgba(14, 165, 233, 0.4)',
+        } as any)
+      : {}),
+  },
+  modalIconBox: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  modalContentName: {
+    color: '#0EA5E9',
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  modalNoticeDesc: {
+    color: '#94A3B8',
+    fontSize: 13,
+    lineHeight: 22,
+    textAlign: 'center',
+    marginBottom: 20,
   },
   modalCloseBtn: {
-    backgroundColor: '#0284c7',
+    paddingHorizontal: 28,
     paddingVertical: 12,
-    paddingHorizontal: 36,
     borderRadius: 12,
+    backgroundColor: '#0EA5E9',
   },
   modalCloseBtnFocused: {
-    backgroundColor: '#ffffff',
     transform: [{ scale: 1.05 }],
-    shadowColor: '#38bdf8',
-    shadowOpacity: 0.9,
-    shadowRadius: 12,
   },
   modalCloseBtnText: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '800',
+    color: '#0B1120',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });
