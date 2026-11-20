@@ -3478,6 +3478,212 @@ async function handleAdminUpdateVodSettings(request: Request, env: Env): Promise
   }
 }
 
+/**
+ * 5. نظام HLS Stream Proxy
+ * يقوم بإعادة كتابة روابط ملفات .m3u8 ومقاطع .ts/.m4s وحذف ترويسة Origin وتعيين Referer مناسب
+ * لتمكين المشاهدة من المتصفح دون حظر 403 لقنوات MBC وغيرها
+ */
+function rewriteM3u8Playlist(content: string, baseOriginUrl: string, proxyOrigin: string): string {
+  const proxyBase = `${proxyOrigin}/api/proxy`;
+  const parentUrl = new URL(baseOriginUrl);
+  const lines = content.split('\n');
+
+  const rewrittenLines = lines.map((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return line;
+
+    // 1. معالجة التوجيهات التي تحتوي على سمات URI="..."
+    // مثل #EXT-X-KEY:METHOD=...,URI="..." أو #EXT-X-MAP:URI="..." أو #EXT-X-MEDIA:...URI="..."
+    if (trimmed.startsWith('#')) {
+      if (trimmed.includes('URI="')) {
+        return line.replace(/URI="([^"]+)"/g, (match, uriValue) => {
+          try {
+            let resolved = new URL(uriValue, baseOriginUrl);
+            if (!resolved.search && parentUrl.search) {
+              resolved.search = parentUrl.search;
+            }
+            return `URI="${proxyBase}?url=${encodeURIComponent(resolved.toString())}"`;
+          } catch {
+            return match;
+          }
+        });
+      }
+      return line;
+    }
+
+    // 2. معالجة سطور روابط المقاطع وقوائم التشغيل الفرعية (lines not starting with #)
+    try {
+      let resolved = new URL(trimmed, baseOriginUrl);
+      if (!resolved.search && parentUrl.search) {
+        resolved.search = parentUrl.search;
+      }
+      return `${proxyBase}?url=${encodeURIComponent(resolved.toString())}`;
+    } catch {
+      return line;
+    }
+  });
+
+  return rewrittenLines.join('\n');
+}
+
+async function handleHlsProxy(request: Request, url: URL): Promise<Response> {
+  const targetUrlStr = url.searchParams.get('url');
+  if (!targetUrlStr) {
+    return new Response('معلمة الرابط url مطلوبة للبروكسي', {
+      status: 400,
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+      },
+    });
+  }
+
+  let targetUrl: URL;
+  try {
+    targetUrl = new URL(targetUrlStr);
+  } catch {
+    return new Response('رابط غير صالح', {
+      status: 400,
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+      },
+    });
+  }
+
+  const reqHeaders = new Headers();
+
+  // ترويسة متصفح قياسية
+  reqHeaders.set(
+    'User-Agent',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+  );
+
+  // إعداد Referer مناسب حسب النطاق (مثل سيرفرات shahid.mbc.net و edgenextcdn.net)
+  const hostname = targetUrl.hostname.toLowerCase();
+  if (
+    hostname.includes('edgenextcdn.net') ||
+    hostname.includes('mbc') ||
+    hostname.includes('shahid')
+  ) {
+    reqHeaders.set('Referer', 'https://shahid.mbc.net/');
+  } else {
+    reqHeaders.set('Referer', targetUrl.origin + '/');
+  }
+
+  // عدم تمرير ترويسة Origin تماماً لمنع السيرفر من رفض الطلب
+  // تمرير ترويسة Range إذا كانت مطلوبة للمقاطع الجزئية
+  const rangeHeader = request.headers.get('Range');
+  if (rangeHeader) {
+    reqHeaders.set('Range', rangeHeader);
+  }
+
+  reqHeaders.set('Accept', '*/*');
+
+  try {
+    const originRes = await fetch(targetUrl.toString(), {
+      method: 'GET',
+      headers: reqHeaders,
+      redirect: 'follow',
+    });
+
+    if (originRes.status !== 200 && originRes.status !== 206) {
+      return new Response(originRes.body, {
+        status: originRes.status,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+          'Access-Control-Allow-Headers': '*',
+          'Content-Type': originRes.headers.get('Content-Type') || 'text/plain; charset=utf-8',
+        },
+      });
+    }
+
+    const finalUrl = originRes.url || targetUrl.toString();
+    const contentType = (originRes.headers.get('Content-Type') || '').toLowerCase();
+    const isM3u8Url =
+      finalUrl.toLowerCase().includes('.m3u8') ||
+      contentType.includes('mpegurl') ||
+      contentType.includes('application/x-mpegurl') ||
+      contentType.includes('application/vnd.apple.mpegurl');
+
+    // إذا كانت الاستجابة قائمة تشغيل HLS
+    if (isM3u8Url) {
+      const text = await originRes.text();
+      if (text.trim().startsWith('#EXTM3U')) {
+        const rewritten = rewriteM3u8Playlist(text, finalUrl, url.origin);
+        return new Response(rewritten, {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/vnd.apple.mpegurl; charset=utf-8',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+            'Access-Control-Allow-Headers': '*',
+            'Access-Control-Expose-Headers': '*',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+          },
+        });
+      } else {
+        return new Response(text, {
+          status: originRes.status,
+          headers: {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+            'Access-Control-Allow-Headers': '*',
+            'Content-Type': originRes.headers.get('Content-Type') || 'text/plain; charset=utf-8',
+          },
+        });
+      }
+    }
+
+    // للمقاطع الثنائية (TS / M4S / مفاتيح التشفير)
+    const respHeaders = new Headers();
+    respHeaders.set('Access-Control-Allow-Origin', '*');
+    respHeaders.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+    respHeaders.set('Access-Control-Allow-Headers', '*');
+    respHeaders.set(
+      'Access-Control-Expose-Headers',
+      'Content-Length, Content-Range, Content-Type, Accept-Ranges'
+    );
+
+    const origCt = originRes.headers.get('Content-Type');
+    if (origCt) {
+      respHeaders.set('Content-Type', origCt);
+    } else if (finalUrl.includes('.ts')) {
+      respHeaders.set('Content-Type', 'video/mp2t');
+    } else if (finalUrl.includes('.m4s')) {
+      respHeaders.set('Content-Type', 'video/iso.segment');
+    }
+
+    const cl = originRes.headers.get('Content-Length');
+    if (cl) respHeaders.set('Content-Length', cl);
+
+    const cr = originRes.headers.get('Content-Range');
+    if (cr) respHeaders.set('Content-Range', cr);
+
+    const ar = originRes.headers.get('Accept-Ranges');
+    if (ar) respHeaders.set('Accept-Ranges', ar);
+
+    // كاش للمقاطع الثنائية لتقليل استهلاك السيرفر
+    respHeaders.set('Cache-Control', 'public, max-age=3600');
+
+    return new Response(originRes.body, {
+      status: originRes.status,
+      headers: respHeaders,
+    });
+  } catch (err: any) {
+    return new Response('خطأ في الاتصال بالسيرفر الأصلي للبث: ' + (err?.message || ''), {
+      status: 502,
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+      },
+    });
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -3487,11 +3693,16 @@ export default {
       return new Response(null, {
         headers: {
           'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Key, Cache-Control, Pragma, *',
+          'Access-Control-Allow-Methods': 'GET, HEAD, POST, PATCH, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Key, Cache-Control, Pragma, Range, *',
           'Access-Control-Max-Age': '86400',
         },
       });
+    }
+
+    // نقطة نهاية بروكسي بث HLS المباشر (تخطي حظر 403 للمتصفحات)
+    if (url.pathname === '/api/proxy' && (request.method === 'GET' || request.method === 'HEAD')) {
+      return handleHlsProxy(request, url);
     }
 
     // 1. نقاط نهاية التوثيق والاشتراكات

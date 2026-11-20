@@ -3,6 +3,7 @@ import { View, Text, Pressable, Platform, StyleSheet, StyleProp, ViewStyle } fro
 import { Video, ResizeMode, AVPlaybackStatus } from 'expo-av';
 import { MaterialIcons } from '@expo/vector-icons';
 import Hls from 'hls.js';
+import { shouldAutoProxy, getProxyStreamUrl } from '../../utils/proxy';
 
 export interface HlsLevelOption {
   id: number; // -1 for auto
@@ -138,12 +139,37 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
 
     let playbackStarted = false;
     let timeoutId: NodeJS.Timeout | null = null;
+    let hasTriedProxy = shouldAutoProxy(streamUrl);
 
     const clearPlaybackTimeout = () => {
       if (timeoutId) {
         clearTimeout(timeoutId);
         timeoutId = null;
       }
+    };
+
+    const resetPlaybackTimeout = () => {
+      clearPlaybackTimeout();
+      timeoutId = setTimeout(() => {
+        if (!playbackStarted) {
+          if (!hasTriedProxy) {
+            console.log('[TVPlayer] Connection timeout. Retrying via HLS stream proxy...');
+            hasTriedProxy = true;
+            if (hlsRef.current) {
+              hlsRef.current.destroy();
+              hlsRef.current = null;
+            }
+            loadHlsStream(getProxyStreamUrl(streamUrl));
+            return;
+          }
+          clearPlaybackTimeout();
+          if (hlsRef.current) {
+            hlsRef.current.destroy();
+            hlsRef.current = null;
+          }
+          onErrorRef.current?.('استغرق الاتصال بمصدر البث وقتاً أطول من المتوقع');
+        }
+      }, 10000);
     };
 
     const onPlaySuccess = () => {
@@ -154,6 +180,16 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
 
     const onVideoError = () => {
       clearPlaybackTimeout();
+      if (!hasTriedProxy) {
+        console.log('[TVPlayer] HTML5 video error. Retrying via HLS stream proxy...');
+        hasTriedProxy = true;
+        if (hlsRef.current) {
+          hlsRef.current.destroy();
+          hlsRef.current = null;
+        }
+        loadHlsStream(getProxyStreamUrl(streamUrl));
+        return;
+      }
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
@@ -164,18 +200,6 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
     videoEl.addEventListener('playing', onPlaySuccess);
     videoEl.addEventListener('canplay', onPlaySuccess);
     videoEl.addEventListener('error', onVideoError);
-
-    // مؤقت أمان لمدة 10 ثوانٍ
-    timeoutId = setTimeout(() => {
-      if (!playbackStarted) {
-        clearPlaybackTimeout();
-        if (hlsRef.current) {
-          hlsRef.current.destroy();
-          hlsRef.current = null;
-        }
-        onErrorRef.current?.('استغرق الاتصال بمصدر البث وقتاً أطول من المتوقع');
-      }
-    }, 10000);
 
     const safePlay = () => {
       videoEl.play().catch((err: any) => {
@@ -191,57 +215,85 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
       });
     };
 
-    const isM3u8 = streamUrl.toLowerCase().includes('.m3u8') || streamUrl.includes('playlist');
+    const loadHlsStream = (urlToLoad: string) => {
+      resetPlaybackTimeout();
 
-    if (isM3u8 && Hls.isSupported()) {
-      const hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: true,
-        backBufferLength: 90,
-      });
+      const isM3u8 =
+        urlToLoad.toLowerCase().includes('.m3u8') ||
+        urlToLoad.includes('playlist') ||
+        urlToLoad.includes('/api/proxy');
 
-      hlsRef.current = hls;
-      hls.loadSource(streamUrl);
-      hls.attachMedia(videoEl);
+      if (isM3u8 && Hls.isSupported()) {
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: true,
+          backBufferLength: 90,
+        });
 
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        safePlay();
+        hlsRef.current = hls;
+        hls.loadSource(urlToLoad);
+        hls.attachMedia(videoEl);
 
-        const levels: HlsLevelOption[] = [
-          { id: -1, label: 'تلقائي (Auto)' },
-        ];
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          safePlay();
 
-        if (hls.levels && hls.levels.length > 0) {
-          hls.levels.forEach((lvl, idx) => {
-            const h = lvl.height || 0;
-            const label = h > 0 ? `${h}p` : `جودة ${idx + 1}`;
-            levels.push({
-              id: idx,
-              label,
-              height: lvl.height,
-              bitrate: lvl.bitrate,
+          const levels: HlsLevelOption[] = [{ id: -1, label: 'تلقائي (Auto)' }];
+
+          if (hls.levels && hls.levels.length > 0) {
+            hls.levels.forEach((lvl, idx) => {
+              const h = lvl.height || 0;
+              const label = h > 0 ? `${h}p` : `جودة ${idx + 1}`;
+              levels.push({
+                id: idx,
+                label,
+                height: lvl.height,
+                bitrate: lvl.bitrate,
+              });
             });
-          });
-        }
+          }
 
-        onLevelsLoadedRef.current?.(levels);
-      });
+          onLevelsLoadedRef.current?.(levels);
+        });
 
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal) {
-          clearPlaybackTimeout();
-          hls.destroy();
-          hlsRef.current = null;
-          onErrorRef.current?.('تعذر الاتصال بمصدر البث، يرجى إعادة المحاولة أو اختيار مصدر آخر');
-        }
-      });
-    } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-      videoEl.src = streamUrl;
-      videoEl.addEventListener('loadedmetadata', safePlay, { once: true });
-    } else {
-      videoEl.src = streamUrl;
-      videoEl.addEventListener('loadedmetadata', safePlay, { once: true });
-    }
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) {
+            const isNetworkOrBlocked =
+              data.type === Hls.ErrorTypes.NETWORK_ERROR ||
+              data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR ||
+              data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT ||
+              data.details === Hls.ErrorDetails.LEVEL_LOAD_ERROR ||
+              (data.response && (data.response.code === 403 || data.response.code === 0));
+
+            if (isNetworkOrBlocked && !hasTriedProxy) {
+              console.log(
+                '[TVPlayer] Direct stream failed (403/Network). Retrying via HLS stream proxy...'
+              );
+              hasTriedProxy = true;
+              clearPlaybackTimeout();
+              hls.destroy();
+              hlsRef.current = null;
+              loadHlsStream(getProxyStreamUrl(streamUrl));
+              return;
+            }
+
+            clearPlaybackTimeout();
+            hls.destroy();
+            hlsRef.current = null;
+            onErrorRef.current?.('تعذر الاتصال بمصدر البث، يرجى إعادة المحاولة أو اختيار مصدر آخر');
+          }
+        });
+      } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+        videoEl.src = urlToLoad;
+        videoEl.addEventListener('loadedmetadata', safePlay, { once: true });
+      } else {
+        videoEl.src = urlToLoad;
+        videoEl.addEventListener('loadedmetadata', safePlay, { once: true });
+      }
+    };
+
+    // بدء تشغيل البث الأولي (مباشر أو عبر البروكسي للنطاقات المعروفة بالحظر)
+    const initialUrlToLoad = hasTriedProxy ? getProxyStreamUrl(streamUrl) : streamUrl;
+    loadHlsStream(initialUrlToLoad);
 
     return () => {
       clearPlaybackTimeout();

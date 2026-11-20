@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   StyleSheet,
   ScrollView,
+  Platform,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeKeepAwake } from '../../hooks/useSafeKeepAwake';
@@ -17,6 +18,7 @@ import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 import { ChannelLogo } from '../../components/ChannelLogo';
 import { StreamSource } from '../../types/media';
 import { useAuth } from '../../context/AuthContext';
+import { shouldAutoProxy, getProxyStreamUrl } from '../../utils/proxy';
 
 /**
  * شاشة مشغل الفيديو بتصميم ملء الشاشة الداكن والتحكم الكامل بالريموت كنترول.
@@ -279,10 +281,15 @@ export function PlayerScreen(): React.JSX.Element {
 
   // رابط البث الفعلي بناءً على المصدر المختار
   const currentStreamUrl = useMemo(() => {
+    let url = rawStreamUrl;
     if (channelSources.length > 0 && channelSources[activeSourceIndex]) {
-      return channelSources[activeSourceIndex].url;
+      url = channelSources[activeSourceIndex].url;
     }
-    return rawStreamUrl;
+    // إذا كان الرابط ينتمي لنطاقات تفرض حظر 403 على المتصفحات، نوجهه مباشرة للبروكسي
+    if (Platform.OS === 'web' && shouldAutoProxy(url)) {
+      return getProxyStreamUrl(url);
+    }
+    return url;
   }, [channelSources, activeSourceIndex, rawStreamUrl]);
 
   const [isBuffering, setIsBuffering] = useState<boolean>(true);
