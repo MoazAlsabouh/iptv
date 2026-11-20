@@ -125,6 +125,50 @@ if (Platform.OS === 'web' && typeof document !== 'undefined') {
     document.head.appendChild(link);
   }
   link.href = '/icon.png';
+
+  // معالجة تلقائية لأخطاء تحميل الحزم والوحدات المجزأة (Chunks) مثل AsyncRequireError عند نشر إصدار جديد أو انقطاع الشبكة
+  const win = window as any;
+  if (!win.__telfazi_chunk_handler_attached) {
+    win.__telfazi_chunk_handler_attached = true;
+
+    const handleChunkError = (rawError: any) => {
+      try {
+        const errorMsg = String(
+          rawError?.message ||
+          rawError?.reason?.message ||
+          rawError?.reason ||
+          rawError?.error?.message ||
+          rawError ||
+          ''
+        ).toLowerCase();
+
+        const isChunkError =
+          errorMsg.includes('asyncrequireerror') ||
+          errorMsg.includes('loading module') ||
+          errorMsg.includes('chunkloaderror') ||
+          errorMsg.includes('failed to fetch dynamically imported module');
+
+        if (isChunkError) {
+          const lastReload = window.sessionStorage?.getItem('telfazi_chunk_reload');
+          const now = Date.now();
+          // منع الدخول في حلقة إعادة تحميل متكررة إذا حدثت خلال آخر 10 ثوانٍ
+          if (!lastReload || now - Number(lastReload) > 10000) {
+            window.sessionStorage?.setItem('telfazi_chunk_reload', String(now));
+            console.warn('[ChunkReload] تم رصد خطأ في تحميل الحزمة المجزأة، جاري إعادة تحميل الصفحة لجلب أحدث إصدار...');
+            window.location.reload();
+          }
+        }
+      } catch {}
+    };
+
+    window.addEventListener('error', (event) => {
+      handleChunkError(event.error || event.message);
+    });
+
+    window.addEventListener('unhandledrejection', (event) => {
+      handleChunkError(event.reason);
+    });
+  }
 }
 
 /**
