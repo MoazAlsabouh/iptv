@@ -3635,6 +3635,7 @@ async function handleHlsProxy(request: Request, url: URL): Promise<Response> {
       headers: {
         'Content-Type': 'text/plain; charset=utf-8',
         'Access-Control-Allow-Origin': '*',
+        'X-Proxy-Source': 'cloudflare-worker',
       },
     });
   }
@@ -3648,141 +3649,307 @@ async function handleHlsProxy(request: Request, url: URL): Promise<Response> {
       headers: {
         'Content-Type': 'text/plain; charset=utf-8',
         'Access-Control-Allow-Origin': '*',
+        'X-Proxy-Source': 'cloudflare-worker',
       },
     });
   }
 
-  const reqHeaders = new Headers();
+  if (targetUrl.protocol !== 'http:' && targetUrl.protocol !== 'https:') {
+    return new Response('البروتوكول غير مدعوم في البروكسي (يسمح فقط بـ http و https)', {
+      status: 400,
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+        'X-Proxy-Source': 'cloudflare-worker',
+      },
+    });
+  }
 
-  // ترويسة متصفح قياسية
-  reqHeaders.set(
-    'User-Agent',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-  );
+  const rawHostname = targetUrl.hostname.trim();
+  const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+  const isRawIp = ipv4Regex.test(rawHostname);
 
-  // إعداد Referer مناسب حسب النطاق (مثل سيرفرات shahid.mbc.net و edgenextcdn.net)
-  const hostname = targetUrl.hostname.toLowerCase();
-  if (
-    hostname.includes('edgenextcdn.net') ||
-    hostname.includes('mbc') ||
-    hostname.includes('shahid')
-  ) {
-    reqHeaders.set('Referer', 'https://shahid.mbc.net/');
+  // حماية SSRF: حظر العناوين المحلية والشبكات الخاصة
+  if (isRawIp) {
+    const parts = rawHostname.split('.').map(Number);
+    if (parts.some((p) => p < 0 || p > 255 || isNaN(p))) {
+      return new Response('عنوان IP غير صالح', {
+        status: 400,
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Access-Control-Allow-Origin': '*',
+          'X-Proxy-Source': 'cloudflare-worker',
+        },
+      });
+    }
+
+    const isPrivate =
+      parts[0] === 0 ||
+      parts[0] === 127 ||
+      parts[0] === 10 ||
+      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+      (parts[0] === 192 && parts[1] === 168) ||
+      (parts[0] === 169 && parts[1] === 254);
+
+    if (isPrivate) {
+      return new Response('العناوين المحلية والشبكات الخاصة غير مسموح بها في البروكسي', {
+        status: 403,
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Access-Control-Allow-Origin': '*',
+          'X-Proxy-Source': 'cloudflare-worker',
+        },
+      });
+    }
   } else {
-    reqHeaders.set('Referer', targetUrl.origin + '/');
+    const lowerHost = rawHostname.toLowerCase();
+    if (
+      lowerHost === 'localhost' ||
+      lowerHost.endsWith('.localhost') ||
+      lowerHost.endsWith('.local') ||
+      lowerHost.endsWith('.internal')
+    ) {
+      return new Response('العناوين المحلية والشبكات الخاصة غير مسموح بها في البروكسي', {
+        status: 403,
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Access-Control-Allow-Origin': '*',
+          'X-Proxy-Source': 'cloudflare-worker',
+        },
+      });
+    }
   }
 
-  // عدم تمرير ترويسة Origin تماماً لمنع السيرفر من رفض الطلب
-  // تمرير ترويسة Range إذا كانت مطلوبة للمقاطع الجزئية
-  const rangeHeader = request.headers.get('Range');
-  if (rangeHeader) {
-    reqHeaders.set('Range', rangeHeader);
+  // كلاودفلير ووركر يرفض طلبات fetch الصادرة لعناوين IP المباشرة بكود الخطأ 1003
+  // نحول عنوان IP إلى FQDN مكافئ باستخدام nip.io ليقوم كلاودفلير بحل النطاق وتمرير الطلب بسلاسة
+  let outboundFetchUrl = targetUrl.toString();
+  if (isRawIp) {
+    const patchedUrl = new URL(targetUrl.toString());
+    patchedUrl.hostname = `${rawHostname}.nip.io`;
+    outboundFetchUrl = patchedUrl.toString();
   }
 
-  reqHeaders.set('Accept', '*/*');
+  const lowerHostname = rawHostname.toLowerCase();
+  const isMbcOrShahid =
+    lowerHostname.includes('edgenextcdn.net') ||
+    lowerHostname.includes('mbc') ||
+    lowerHostname.includes('shahid');
+
+  const createRequestHeaders = (browserUa: boolean, sendReferer: boolean) => {
+    const headers = new Headers();
+    if (browserUa) {
+      headers.set(
+        'User-Agent',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+      );
+    } else {
+      headers.set('User-Agent', 'VLC/3.0.20 LibVLC/3.0.20');
+    }
+
+    if (sendReferer) {
+      if (isMbcOrShahid) {
+        headers.set('Referer', 'https://shahid.mbc.net/');
+      } else {
+        headers.set('Referer', targetUrl.origin + '/');
+      }
+    }
+
+    const rangeHeader = request.headers.get('Range');
+    if (rangeHeader) {
+      headers.set('Range', rangeHeader);
+    }
+    headers.set('Accept', '*/*');
+    return headers;
+  };
+
+  let originRes: Response;
+  const isHead = request.method === 'HEAD';
 
   try {
-    const originRes = await fetch(targetUrl.toString(), {
-      method: 'GET',
-      headers: reqHeaders,
+    originRes = await fetch(outboundFetchUrl, {
+      method: isHead ? 'HEAD' : 'GET',
+      headers: createRequestHeaders(isMbcOrShahid, isMbcOrShahid),
       redirect: 'follow',
     });
 
-    if (originRes.status !== 200 && originRes.status !== 206) {
-      return new Response(originRes.body, {
+    // إذا أعاد السيرفر الأصلي 403 أو 401، نحاول محاولة ثانية بترويسات بديلة
+    if ((originRes.status === 403 || originRes.status === 401) && !isMbcOrShahid) {
+      const retryHeaders = createRequestHeaders(true, true);
+      const retryRes = await fetch(outboundFetchUrl, {
+        method: isHead ? 'HEAD' : 'GET',
+        headers: retryHeaders,
+        redirect: 'follow',
+      });
+      if (retryRes.status === 200 || retryRes.status === 206) {
+        originRes = retryRes;
+      }
+    }
+  } catch (err: any) {
+    // في حال فشل الاتصال عبر nip.io، نجرب عبر sslip.io كاحتياط لعناوين IP
+    if (isRawIp) {
+      try {
+        const fallbackUrl = new URL(targetUrl.toString());
+        fallbackUrl.hostname = `${rawHostname.replace(/\./g, '-')}.sslip.io`;
+        originRes = await fetch(fallbackUrl.toString(), {
+          method: isHead ? 'HEAD' : 'GET',
+          headers: createRequestHeaders(isMbcOrShahid, isMbcOrShahid),
+          redirect: 'follow',
+        });
+      } catch (fallbackErr: any) {
+        return new Response(
+          `خطأ في الاتصال بسيرفر البث (${targetUrl.host}): ${err?.message || fallbackErr?.message || ''}`,
+          {
+            status: 502,
+            headers: {
+              'Content-Type': 'text/plain; charset=utf-8',
+              'Access-Control-Allow-Origin': '*',
+              'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+              'Access-Control-Allow-Headers': '*',
+              'Access-Control-Expose-Headers': '*',
+              'X-Proxy-Source': 'cloudflare-worker',
+              'X-Proxy-Origin-Status': '502',
+              'X-Proxy-Target-Host': targetUrl.host,
+            },
+          }
+        );
+      }
+    } else {
+      return new Response(
+        `خطأ في الاتصال بسيرفر البث (${targetUrl.host}): ${err?.message || ''}`,
+        {
+          status: 502,
+          headers: {
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+            'Access-Control-Allow-Headers': '*',
+            'Access-Control-Expose-Headers': '*',
+            'X-Proxy-Source': 'cloudflare-worker',
+            'X-Proxy-Origin-Status': '502',
+            'X-Proxy-Target-Host': targetUrl.host,
+          },
+        }
+      );
+    }
+  }
+
+  // إذا لم تكن الاستجابة ناجحة (ليست 200 أو 206)
+  if (originRes.status !== 200 && originRes.status !== 206) {
+    return new Response(originRes.body, {
+      status: originRes.status,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+        'Access-Control-Allow-Headers': '*',
+        'Access-Control-Expose-Headers': '*',
+        'Content-Type': originRes.headers.get('Content-Type') || 'text/plain; charset=utf-8',
+        'X-Proxy-Source': 'cloudflare-worker',
+        'X-Proxy-Origin-Status': String(originRes.status),
+        'X-Proxy-Target-Host': targetUrl.host,
+      },
+    });
+  }
+
+  // إعادة بناء رابط الأصل للتأكد من نظافة الروابط الداخلية بقائمة m3u8
+  let baseForRewriting = targetUrl.toString();
+  if (originRes.url) {
+    try {
+      const parsedResUrl = new URL(originRes.url);
+      if (isRawIp && parsedResUrl.hostname.endsWith('.nip.io')) {
+        parsedResUrl.hostname = rawHostname;
+      } else if (isRawIp && parsedResUrl.hostname.endsWith('.sslip.io')) {
+        parsedResUrl.hostname = rawHostname;
+      }
+      baseForRewriting = parsedResUrl.toString();
+    } catch {
+      baseForRewriting = targetUrl.toString();
+    }
+  }
+
+  const finalUrl = originRes.url || outboundFetchUrl;
+  const contentType = (originRes.headers.get('Content-Type') || '').toLowerCase();
+  const isM3u8Url =
+    targetUrl.pathname.toLowerCase().includes('.m3u8') ||
+    finalUrl.toLowerCase().includes('.m3u8') ||
+    contentType.includes('mpegurl') ||
+    contentType.includes('application/x-mpegurl') ||
+    contentType.includes('application/vnd.apple.mpegurl');
+
+  if (isM3u8Url) {
+    const text = await originRes.text();
+    if (text.trim().startsWith('#EXTM3U')) {
+      const rewritten = rewriteM3u8Playlist(text, baseForRewriting, url.origin);
+      return new Response(rewritten, {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/vnd.apple.mpegurl; charset=utf-8',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+          'Access-Control-Allow-Headers': '*',
+          'Access-Control-Expose-Headers': '*',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+          'X-Proxy-Source': 'cloudflare-worker',
+          'X-Proxy-Origin-Status': '200',
+          'X-Proxy-Target-Host': targetUrl.host,
+        },
+      });
+    } else {
+      return new Response(text, {
         status: originRes.status,
         headers: {
           'Access-Control-Allow-Origin': '*',
           'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
           'Access-Control-Allow-Headers': '*',
+          'Access-Control-Expose-Headers': '*',
           'Content-Type': originRes.headers.get('Content-Type') || 'text/plain; charset=utf-8',
+          'X-Proxy-Source': 'cloudflare-worker',
+          'X-Proxy-Origin-Status': String(originRes.status),
+          'X-Proxy-Target-Host': targetUrl.host,
         },
       });
     }
-
-    const finalUrl = originRes.url || targetUrl.toString();
-    const contentType = (originRes.headers.get('Content-Type') || '').toLowerCase();
-    const isM3u8Url =
-      finalUrl.toLowerCase().includes('.m3u8') ||
-      contentType.includes('mpegurl') ||
-      contentType.includes('application/x-mpegurl') ||
-      contentType.includes('application/vnd.apple.mpegurl');
-
-    // إذا كانت الاستجابة قائمة تشغيل HLS
-    if (isM3u8Url) {
-      const text = await originRes.text();
-      if (text.trim().startsWith('#EXTM3U')) {
-        const rewritten = rewriteM3u8Playlist(text, finalUrl, url.origin);
-        return new Response(rewritten, {
-          status: 200,
-          headers: {
-            'Content-Type': 'application/vnd.apple.mpegurl; charset=utf-8',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-            'Access-Control-Allow-Headers': '*',
-            'Access-Control-Expose-Headers': '*',
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0',
-          },
-        });
-      } else {
-        return new Response(text, {
-          status: originRes.status,
-          headers: {
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-            'Access-Control-Allow-Headers': '*',
-            'Content-Type': originRes.headers.get('Content-Type') || 'text/plain; charset=utf-8',
-          },
-        });
-      }
-    }
-
-    // للمقاطع الثنائية (TS / M4S / مفاتيح التشفير)
-    const respHeaders = new Headers();
-    respHeaders.set('Access-Control-Allow-Origin', '*');
-    respHeaders.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-    respHeaders.set('Access-Control-Allow-Headers', '*');
-    respHeaders.set(
-      'Access-Control-Expose-Headers',
-      'Content-Length, Content-Range, Content-Type, Accept-Ranges'
-    );
-
-    const origCt = originRes.headers.get('Content-Type');
-    if (origCt) {
-      respHeaders.set('Content-Type', origCt);
-    } else if (finalUrl.includes('.ts')) {
-      respHeaders.set('Content-Type', 'video/mp2t');
-    } else if (finalUrl.includes('.m4s')) {
-      respHeaders.set('Content-Type', 'video/iso.segment');
-    }
-
-    const cl = originRes.headers.get('Content-Length');
-    if (cl) respHeaders.set('Content-Length', cl);
-
-    const cr = originRes.headers.get('Content-Range');
-    if (cr) respHeaders.set('Content-Range', cr);
-
-    const ar = originRes.headers.get('Accept-Ranges');
-    if (ar) respHeaders.set('Accept-Ranges', ar);
-
-    // كاش للمقاطع الثنائية لتقليل استهلاك السيرفر
-    respHeaders.set('Cache-Control', 'public, max-age=3600');
-
-    return new Response(originRes.body, {
-      status: originRes.status,
-      headers: respHeaders,
-    });
-  } catch (err: any) {
-    return new Response('خطأ في الاتصال بالسيرفر الأصلي للبث: ' + (err?.message || ''), {
-      status: 502,
-      headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
-        'Access-Control-Allow-Origin': '*',
-      },
-    });
   }
+
+  // للمقاطع الثنائية (TS / M4S / مفاتيح التشفير)
+  const respHeaders = new Headers();
+  respHeaders.set('Access-Control-Allow-Origin', '*');
+  respHeaders.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  respHeaders.set('Access-Control-Allow-Headers', '*');
+  respHeaders.set(
+    'Access-Control-Expose-Headers',
+    'Content-Length, Content-Range, Content-Type, Accept-Ranges, X-Proxy-Source, X-Proxy-Origin-Status, X-Proxy-Target-Host'
+  );
+  respHeaders.set('X-Proxy-Source', 'cloudflare-worker');
+  respHeaders.set('X-Proxy-Origin-Status', String(originRes.status));
+  respHeaders.set('X-Proxy-Target-Host', targetUrl.host);
+
+  const origCt = originRes.headers.get('Content-Type');
+  if (origCt) {
+    respHeaders.set('Content-Type', origCt);
+  } else if (finalUrl.includes('.ts')) {
+    respHeaders.set('Content-Type', 'video/mp2t');
+  } else if (finalUrl.includes('.m4s')) {
+    respHeaders.set('Content-Type', 'video/iso.segment');
+  }
+
+  const cl = originRes.headers.get('Content-Length');
+  if (cl) respHeaders.set('Content-Length', cl);
+
+  const cr = originRes.headers.get('Content-Range');
+  if (cr) respHeaders.set('Content-Range', cr);
+
+  const ar = originRes.headers.get('Accept-Ranges');
+  if (ar) respHeaders.set('Accept-Ranges', ar);
+
+  // كاش للمقاطع الثنائية لتقليل استهلاك السيرفر
+  respHeaders.set('Cache-Control', 'public, max-age=3600');
+
+  return new Response(originRes.body, {
+    status: originRes.status,
+    headers: respHeaders,
+  });
 }
 
 export default {
