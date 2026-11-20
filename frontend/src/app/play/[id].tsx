@@ -262,7 +262,6 @@ export function PlayerScreen(): React.JSX.Element {
   const [hlsLevels, setHlsLevels] = useState<HlsLevelOption[]>([]);
   const [selectedHlsLevel, setSelectedHlsLevel] = useState<number>(-1);
   const [showQualityModal, setShowQualityModal] = useState<boolean>(false);
-  const [isFetchingYouTube, setIsFetchingYouTube] = useState<boolean>(false);
 
   // اختيار حلقة معينة للمسلسلات
   const handleSelectEpisode = (seasonNum: number, episodeNum: number) => {
@@ -365,114 +364,6 @@ export function PlayerScreen(): React.JSX.Element {
     setRetryKey((prev) => prev + 1);
     resetOverlayTimer();
   };
-
-  // التحقق مما إذا كان المصدر الحالي يعمل عبر يوتيوب
-  const isYouTubeActive = useMemo(() => {
-    if (!currentStreamUrl) return false;
-    const lower = currentStreamUrl.toLowerCase();
-    const activeSource = channelSources[activeSourceIndex];
-    const labelLower = activeSource?.label?.toLowerCase() || '';
-    return (
-      lower.includes('youtube.com') ||
-      lower.includes('youtu.be') ||
-      labelLower.includes('يوتيوب') ||
-      labelLower.includes('youtube')
-    );
-  }, [currentStreamUrl, channelSources, activeSourceIndex]);
-
-  // التبديل السريع والبحث في يوتيوب عند تعطل السيرفر
-  const handleSwitchToYouTube = useCallback(async () => {
-    if (isFetchingYouTube) return;
-
-    // 1. إذا كان يوتيوب موجوداً بالفعل ضمن قائمة السيرفرات الحالية، ننتقل إليه مباشرة
-    const ytIndex = channelSources.findIndex(
-      (s) =>
-        s.label.includes('يوتيوب') ||
-        s.label.toLowerCase().includes('youtube') ||
-        s.url.includes('youtube.com') ||
-        s.url.includes('youtu.be')
-    );
-
-    if (ytIndex >= 0 && ytIndex !== activeSourceIndex) {
-      setSwitchToast('جاري التبديل إلى مشغل يوتيوب...');
-      setTimeout(() => setSwitchToast(null), 3000);
-      setActiveSourceIndex(ytIndex);
-      setIsBuffering(true);
-      setPlaybackError(null);
-      setRetryKey((prev) => prev + 1);
-      return;
-    }
-
-    // 2. إذا لم يكن يوتيوب ضمن القائمة، نطلبه صراحة من الخادم عبر force_youtube=1
-    setIsFetchingYouTube(true);
-    setSwitchToast('جاري البحث عن بديل في يوتيوب...');
-
-    try {
-      const queryParams = new URLSearchParams();
-      if (params.tmdbId) queryParams.set('tmdbId', params.tmdbId);
-      if (params.imdbId) queryParams.set('imdbId', params.imdbId);
-
-      let cleanTitle = channelTitle || '';
-      cleanTitle = cleanTitle
-        .replace(/\s*-\s*الموسم\s*\d+\s*الحلقة\s*\d+/g, '')
-        .replace(/\s*-\s*الحلقة\s*\d+/g, '')
-        .trim();
-      if (cleanTitle) queryParams.set('title', cleanTitle);
-
-      queryParams.set('type', isTvSeries ? 'tv' : 'movie');
-      const effectiveLang = (params.lang || params.originalLanguage || 'en').toLowerCase();
-      queryParams.set('lang', effectiveLang);
-      queryParams.set('season', String(selectedSeason));
-      queryParams.set('episode', String(selectedEpisode));
-      queryParams.set('force_youtube', '1');
-
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-
-      const res = await fetch(
-        `https://iptv-backend.moaznsm.workers.dev/api/vod/sources?${queryParams.toString()}`,
-        { headers }
-      );
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.sources && Array.isArray(data.sources) && data.sources.length > 0) {
-          setVodSources(data.sources);
-          setActiveSourceIndex(0);
-          setIsBuffering(true);
-          setPlaybackError(null);
-          setRetryKey((prev) => prev + 1);
-          setSwitchToast('تم التبديل لمصدر يوتيوب بنجاح!');
-          setTimeout(() => setSwitchToast(null), 3500);
-          setIsFetchingYouTube(false);
-          return;
-        }
-      }
-      setSwitchToast('عذراً، لم يتم العثور على بديل في يوتيوب لهذا العمل');
-      setTimeout(() => setSwitchToast(null), 3500);
-    } catch (err) {
-      console.warn('[Player] Failed to force YouTube fallback:', err);
-      setSwitchToast('فشل الاتصال، يرجى إعادة المحاولة');
-      setTimeout(() => setSwitchToast(null), 3000);
-    } finally {
-      setIsFetchingYouTube(false);
-    }
-  }, [
-    isFetchingYouTube,
-    channelSources,
-    activeSourceIndex,
-    params.tmdbId,
-    params.imdbId,
-    channelTitle,
-    isTvSeries,
-    params.lang,
-    params.originalLanguage,
-    selectedSeason,
-    selectedEpisode,
-    token,
-  ]);
 
   const hasMultiQuality = channelSources.length > 1 || hlsLevels.length > 1;
 
@@ -588,44 +479,6 @@ export function PlayerScreen(): React.JSX.Element {
                       ]}
                     >
                       الحلقات (S{selectedSeason}E{selectedEpisode})
-                    </Text>
-                  </View>
-                )}
-              </Pressable>
-            ) : null}
-
-            {/* زر البديل السريع للبحث في يوتيوب عند تعطل السيرفر */}
-            {isVod && !isYouTubeActive ? (
-              <Pressable
-                onPress={() => {
-                  handleSwitchToYouTube();
-                  resetOverlayTimer();
-                }}
-                disabled={isFetchingYouTube}
-                style={({ focused }) => [
-                  styles.youtubeFallbackBtn,
-                  focused && styles.overlayBtnFocused,
-                  isFetchingYouTube && { opacity: 0.7 },
-                ]}
-              >
-                {({ focused }) => (
-                  <View style={styles.btnRow}>
-                    {isFetchingYouTube ? (
-                      <ActivityIndicator size="small" color="#f87171" />
-                    ) : (
-                      <MaterialIcons
-                        name="smart-display"
-                        size={18}
-                        color={focused ? '#000000' : '#f87171'}
-                      />
-                    )}
-                    <Text
-                      style={[
-                        styles.youtubeFallbackBtnText,
-                        focused && styles.overlayBtnTextFocused,
-                      ]}
-                    >
-                      {isFetchingYouTube ? 'جاري البحث...' : 'السيرفر لا يعمل؟ بحث في يوتيوب'}
                     </Text>
                   </View>
                 )}
@@ -1079,42 +932,6 @@ export function PlayerScreen(): React.JSX.Element {
                 </View>
               )}
             </Pressable>
-
-            {isVod && !isYouTubeActive && (
-              <Pressable
-                onPress={handleSwitchToYouTube}
-                disabled={isFetchingYouTube}
-                style={({ focused }) => [
-                  styles.youtubeFallbackBtn,
-                  styles.errorYoutubeBtn,
-                  focused && styles.overlayBtnFocused,
-                  isFetchingYouTube && { opacity: 0.7 },
-                ]}
-              >
-                {({ focused }) => (
-                  <View style={styles.btnRow}>
-                    {isFetchingYouTube ? (
-                      <ActivityIndicator size="small" color="#ffffff" />
-                    ) : (
-                      <MaterialIcons
-                        name="smart-display"
-                        size={20}
-                        color={focused ? '#000000' : '#ffffff'}
-                      />
-                    )}
-                    <Text
-                      style={[
-                        styles.youtubeFallbackBtnText,
-                        { color: focused ? '#000000' : '#ffffff', fontSize: 14 },
-                        focused && styles.overlayBtnTextFocused,
-                      ]}
-                    >
-                      {isFetchingYouTube ? 'جاري البحث في يوتيوب...' : 'البحث والتشغيل من يوتيوب'}
-                    </Text>
-                  </View>
-                )}
-              </Pressable>
-            )}
           </View>
         </View>
       ) : null}
@@ -1196,26 +1013,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     flexShrink: 1,
-  },
-  youtubeFallbackBtn: {
-    backgroundColor: 'rgba(239, 68, 68, 0.16)',
-    borderWidth: 1.5,
-    borderColor: 'rgba(239, 68, 68, 0.45)',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 30,
-  },
-  youtubeFallbackBtnText: {
-    color: '#f87171',
-    fontSize: 13,
-    fontWeight: '800',
-    marginLeft: 6,
-  },
-  errorYoutubeBtn: {
-    backgroundColor: '#dc2626',
-    borderColor: '#ef4444',
-    paddingVertical: 14,
-    paddingHorizontal: 22,
   },
   episodesBtn: {
     backgroundColor: 'rgba(124, 58, 237, 0.25)',
