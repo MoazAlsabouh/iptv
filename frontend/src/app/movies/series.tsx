@@ -355,11 +355,7 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
       <View style={styles.seasonsHeader}>
         <Text style={styles.sectionTitle}>المواسم والحلقات</Text>
         {seasons.length > 1 && (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.seasonsScroll}
-          >
+          <View style={styles.seasonsContainer}>
             {seasons.map((s) => {
               const isCurrent = s.season === selectedSeason;
               return (
@@ -386,7 +382,7 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
                 </Pressable>
               );
             })}
-          </ScrollView>
+          </View>
         )}
       </View>
 
@@ -630,24 +626,24 @@ const styles = StyleSheet.create({
   seasonsHeader: {
     paddingHorizontal: 24,
     paddingTop: 16,
-    paddingBottom: 10,
+    paddingBottom: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#1e293b',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    flexWrap: 'wrap',
     gap: 12,
   },
   sectionTitle: {
     fontSize: 20,
     fontWeight: '800',
     color: '#ffffff',
+    textAlign: 'right',
   },
-  seasonsScroll: {
-    flexDirection: 'row',
+  seasonsContainer: {
+    flexDirection: 'row-reverse',
+    flexWrap: 'wrap',
     gap: 10,
+    alignItems: 'center',
     paddingVertical: 4,
+    width: '100%',
   },
   seasonChip: {
     backgroundColor: 'rgba(255, 255, 255, 0.06)',
@@ -658,14 +654,14 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   seasonChipActive: {
-    backgroundColor: '#0284c7',
+    backgroundColor: '#0EA5E9',
     borderColor: '#38bdf8',
   },
   seasonChipFocused: {
     backgroundColor: '#ffffff',
     borderColor: '#ffffff',
-    transform: [{ scale: 1.08 }],
-    shadowColor: '#38bdf8',
+    transform: [{ scale: 1.05 }],
+    shadowColor: '#0EA5E9',
     shadowOpacity: 0.9,
     shadowRadius: 10,
   },
