@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ActivityIndicator, Platform } from 'react-native';
-import { Slot, usePathname, useRouter } from 'expo-router';
+import { Slot, usePathname, useRouter, useSegments } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Font from 'expo-font';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import { MainLayout } from '../components/layout/MainLayout';
 
-// تحميل الخطوط عبر expo-font على الويب مباشرة من المسار الثابت /fonts/...
+// تحميل الخطوط عبر expo-font على الويب مباشرة من المتصفح
 // هذا يمنع @expo/vector-icons من طلب ملفات الخط من /assets/node_modules/... نهائياً
-if (Platform.OS === 'web') {
+if (Platform.OS === 'web' && typeof window !== 'undefined') {
   Font.loadAsync({
     MaterialIcons: '/fonts/MaterialIcons.ttf',
     material: '/fonts/MaterialIcons.ttf',
@@ -128,37 +128,45 @@ if (Platform.OS === 'web' && typeof document !== 'undefined') {
 }
 
 /**
- * دالة مساعدة لحساب المسار وتطبيع الشرطة المائلة مع قراءة window.location.pathname فورياً على الويب
- */
-function getNormalizedPath(expoPathname: string | null | undefined): string {
-  let raw = expoPathname || '';
-  if (!raw && Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.pathname) {
-    raw = window.location.pathname;
-  }
-  if (!raw) {
-    raw = '/';
-  }
-  // إزالة أي شرطات مائلة متكررة في النهاية مع الحفاظ على الجذر '/'
-  return raw.replace(/\/+$/, '') || '/';
-}
-
-/**
  * حارس التنقل العام للتحقق من وجود اشتراك نشط وتوجيه المستخدمين
  */
 function NavigationGuard(): React.JSX.Element {
+  const segments = useSegments();
   const expoPathname = usePathname();
   const router = useRouter();
   const { token, isLoading } = useAuth();
 
-  // الحصول على المسار المطبع فوراً (بدون انتظار تهيئة usePathname على الويب)
-  const normalizedPath = getNormalizedPath(expoPathname);
+  // 1. فحص المقاطع عبر useSegments() من expo-router (يعمل بكفاءة عالية أثناء البناء الثابت والعميل)
+  const firstSegment = segments && segments.length > 0 ? segments[0] : '';
+  const isSegmentPublic =
+    segments.length === 0 || // الصفحة الرئيسية الجذرية /
+    firstSegment === 'admin' ||
+    firstSegment === 'reseller' ||
+    firstSegment === 'activate';
 
-  // تحديد المسارات العامة المستثناة من حماية الاشتراك وشاشات الانتظار
-  const isPublic =
-    normalizedPath === '/' ||
-    normalizedPath.startsWith('/admin') ||
-    normalizedPath.startsWith('/reseller') ||
-    normalizedPath.startsWith('/activate');
+  // 2. فحص المسار عبر window.location.pathname على الويب كبديل فوري متزامن
+  let browserPath = '';
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.pathname) {
+    browserPath = window.location.pathname.replace(/\/+$/, '') || '/';
+  }
+
+  // 3. فحص المسار عبر usePathname()
+  const rawExpoPath = (expoPathname || '').replace(/\/+$/, '') || '/';
+
+  const isBrowserPathPublic =
+    browserPath === '/' ||
+    browserPath.startsWith('/admin') ||
+    browserPath.startsWith('/reseller') ||
+    browserPath.startsWith('/activate');
+
+  const isExpoPathPublic =
+    rawExpoPath === '/' ||
+    rawExpoPath.startsWith('/admin') ||
+    rawExpoPath.startsWith('/reseller') ||
+    rawExpoPath.startsWith('/activate');
+
+  // المسار عام إذا تحقق أي شرط من الشروط الثلاثة
+  const isPublic = isSegmentPublic || isBrowserPathPublic || isExpoPathPublic;
 
   useEffect(() => {
     // منع أي تحويل تلقائي للمسارات العامة لمنع التعليق
@@ -174,10 +182,15 @@ function NavigationGuard(): React.JSX.Element {
   // توجيه المستخدم المشترك خارج صفحة التفعيل فقط إذا كان في /activate
   useEffect(() => {
     if (isLoading) return;
-    if (token && normalizedPath === '/activate') {
+    if (
+      token &&
+      (firstSegment === 'activate' ||
+        rawExpoPath === '/activate' ||
+        browserPath === '/activate')
+    ) {
       router.replace('/home');
     }
-  }, [token, isLoading, normalizedPath, router]);
+  }, [token, isLoading, firstSegment, rawExpoPath, browserPath, router]);
 
   // لا نعرض شاشة التحميل للمسارات العامة إطلاقاً حتى لو كان isLoading === true
   if (isLoading && !isPublic) {
@@ -201,8 +214,10 @@ function NavigationGuard(): React.JSX.Element {
   // المسارات العامة والمشغل تعمل بملء الشاشة دون الشريط الجانبي
   const isFullscreen =
     isPublic ||
-    normalizedPath.startsWith('/play') ||
-    normalizedPath.startsWith('/player');
+    firstSegment === 'play' ||
+    firstSegment === 'player' ||
+    rawExpoPath.startsWith('/play') ||
+    browserPath.startsWith('/play');
 
   return isFullscreen ? (
     <Slot />
