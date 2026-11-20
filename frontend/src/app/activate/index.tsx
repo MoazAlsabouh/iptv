@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
+  Image,
   TextInput,
   Pressable,
   ActivityIndicator,
@@ -77,10 +78,16 @@ export default function ActivateScreen(): React.JSX.Element {
         <View style={[styles.card, isWide && styles.cardWide]}>
           {/* الشعار والعنوان */}
           <View style={styles.header}>
-            <View style={styles.iconCircle}>
-              <MaterialIcons name="live-tv" size={42} color="#38bdf8" />
+            <Image
+              source={{ uri: '/icon.png' }}
+              style={styles.logoImg}
+              resizeMode="contain"
+            />
+            <View style={styles.brandTitleRow}>
+              <Text style={styles.brandTitle}>تلفازي</Text>
+              <Text style={styles.brandTitleDivider}>|</Text>
+              <Text style={styles.brandTitleEn}>Telfazi</Text>
             </View>
-            <Text style={styles.brandTitle}>IPTV STREAM</Text>
             <Text style={styles.title}>تفعيل اشتراك المنصة</Text>
             <Text style={styles.subtitle}>
               أدخل كود التفعيل المخصص لك للوصول إلى كافة القنوات الفضائية ومكتبة الأفلام والمسلسلات بجودة عالية
@@ -193,7 +200,7 @@ export default function ActivateScreen(): React.JSX.Element {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#070b14',
+    backgroundColor: '#0B1120',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -204,7 +211,7 @@ const styles = StyleSheet.create({
     width: 350,
     height: 350,
     borderRadius: 999,
-    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+    backgroundColor: 'rgba(14, 165, 233, 0.12)',
   },
   glowBlob2: {
     position: 'absolute',
@@ -213,7 +220,7 @@ const styles = StyleSheet.create({
     width: 350,
     height: 350,
     borderRadius: 999,
-    backgroundColor: 'rgba(124, 58, 237, 0.12)',
+    backgroundColor: 'rgba(14, 165, 233, 0.08)',
   },
   scrollContent: {
     flexGrow: 1,
@@ -224,11 +231,11 @@ const styles = StyleSheet.create({
   card: {
     width: '100%',
     maxWidth: 460,
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    backgroundColor: '#131C31',
     borderRadius: 24,
     padding: 32,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
+    borderColor: 'rgba(14, 165, 233, 0.2)',
     shadowColor: '#000000',
     shadowOpacity: 0.6,
     shadowRadius: 24,
@@ -240,23 +247,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 28,
   },
-  iconCircle: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: 'rgba(56, 189, 248, 0.12)',
-    borderWidth: 1.5,
-    borderColor: 'rgba(56, 189, 248, 0.3)',
-    justifyContent: 'center',
+  logoImg: {
+    width: 72,
+    height: 72,
+    borderRadius: 16,
+    marginBottom: 14,
+  },
+  brandTitleRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
+    gap: 6,
+    marginBottom: 6,
   },
   brandTitle: {
-    color: '#38bdf8',
-    fontSize: 14,
+    color: '#ffffff',
+    fontSize: 16,
     fontWeight: '900',
-    letterSpacing: 2,
-    marginBottom: 6,
+    letterSpacing: 0.5,
+  },
+  brandTitleDivider: {
+    color: '#0EA5E9',
+    fontSize: 15,
+    fontWeight: '400',
+  },
+  brandTitleEn: {
+    color: '#94a3b8',
+    fontSize: 15,
+    fontWeight: '800',
   },
   title: {
     color: '#f8fafc',
@@ -285,9 +302,9 @@ const styles = StyleSheet.create({
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(2, 6, 23, 0.8)',
+    backgroundColor: '#0B1120',
     borderWidth: 1.5,
-    borderColor: 'rgba(56, 189, 248, 0.25)',
+    borderColor: 'rgba(14, 165, 233, 0.3)',
     borderRadius: 16,
     paddingHorizontal: 16,
   },
@@ -305,7 +322,7 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
   },
   deviceInfoBox: {
-    backgroundColor: 'rgba(2, 6, 23, 0.5)',
+    backgroundColor: 'rgba(11, 17, 32, 0.6)',
     borderRadius: 14,
     padding: 12,
     marginBottom: 20,
@@ -364,7 +381,7 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   submitBtn: {
-    backgroundColor: '#0284c7',
+    backgroundColor: '#0EA5E9',
     borderRadius: 16,
     paddingVertical: 16,
     alignItems: 'center',
@@ -376,7 +393,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     borderColor: '#ffffff',
     transform: [{ scale: 1.03 }],
-    shadowColor: '#38bdf8',
+    shadowColor: '#0EA5E9',
     shadowOpacity: 0.9,
     shadowRadius: 16,
     elevation: 8,

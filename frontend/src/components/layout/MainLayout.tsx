@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Platform, Image } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../../store/useAppStore';
@@ -37,15 +37,18 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       {/* الشريط الجانبي (Sidebar) */}
       <View style={styles.sidebar}>
         <View>
-          {/* شعار التطبيق */}
+          {/* شعار المنصة تلفازي */}
           <View style={styles.brandContainer}>
             <View style={styles.logoRow}>
-              <MaterialIcons
-                name="tv"
-                size={34}
-                color={isChildMode ? '#f59e0b' : '#38bdf8'}
+              <Image
+                source={{ uri: '/icon.png' }}
+                style={styles.brandLogoImg}
+                resizeMode="contain"
               />
-              <Text style={styles.brandTitle}>IPTV STREAM</Text>
+              <View style={styles.brandTextCol}>
+                <Text style={styles.brandTitle}>تلفازي</Text>
+                <Text style={styles.brandSub}>Telfazi</Text>
+              </View>
             </View>
 
             {isChildMode && (
@@ -127,7 +130,7 @@ const styles = StyleSheet.create({
   },
   sidebar: {
     width: 260,
-    backgroundColor: '#0b1120',
+    backgroundColor: '#0B1120',
     borderRightWidth: 1,
     borderRightColor: '#1e293b',
     padding: 24,
@@ -140,12 +143,26 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  brandLogoImg: {
+    width: 38,
+    height: 38,
+    borderRadius: 8,
+  },
+  brandTextCol: {
+    marginLeft: 10,
+  },
   brandTitle: {
-    marginLeft: 12,
     fontSize: 20,
     fontWeight: '900',
     color: '#ffffff',
-    letterSpacing: 1.2,
+    letterSpacing: 0.5,
+  },
+  brandSub: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#0EA5E9',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
   },
   childModeBadge: {
     flexDirection: 'row',
@@ -177,14 +194,14 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   navItemActive: {
-    backgroundColor: '#1e293b',
-    borderColor: '#334155',
+    backgroundColor: '#131C31',
+    borderColor: '#0EA5E9',
   },
   navItemFocused: {
     backgroundColor: '#ffffff',
     borderColor: '#ffffff',
     transform: [{ scale: 1.06 }],
-    shadowColor: '#38bdf8',
+    shadowColor: '#0EA5E9',
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.9,
     shadowRadius: 12,
@@ -221,7 +238,7 @@ const styles = StyleSheet.create({
   },
   contentArea: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#0B1120',
     padding: 32,
   },
   subCard: {

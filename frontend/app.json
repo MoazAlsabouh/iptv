@@ -1,15 +1,17 @@
 {
   "expo": {
-    "name": "iptv-app",
-    "slug": "iptv-app",
+    "name": "تلفازي | Telfazi",
+    "slug": "telfazi",
     "version": "1.0.0",
     "orientation": "landscape",
-    "scheme": "iptv-app",
+    "scheme": "telfazi",
     "userInterfaceStyle": "dark",
+    "icon": "./assets/icon.png",
     "plugins": [
       "expo-router"
     ],
     "web": {
+      "favicon": "./assets/favicon.png",
       "bundler": "metro",
       "output": "single"
     }

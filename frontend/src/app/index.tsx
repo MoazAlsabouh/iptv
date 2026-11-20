@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
+  Image,
   Pressable,
   StyleSheet,
   ScrollView,
@@ -88,11 +89,17 @@ export default function LandingPage(): React.JSX.Element {
       {/* شريط الملاحة العلوي */}
       <View style={styles.navbar}>
         <View style={styles.brandRow}>
-          <View style={styles.brandIconCircle}>
-            <MaterialIcons name="live-tv" size={26} color="#38bdf8" />
-          </View>
+          <Image
+            source={{ uri: '/icon.png' }}
+            style={styles.brandLogoImg}
+            resizeMode="contain"
+          />
           <View>
-            <Text style={styles.brandName}>IPTV STREAM</Text>
+            <View style={styles.brandTitleRow}>
+              <Text style={styles.brandName}>تلفازي</Text>
+              <Text style={styles.brandNameDivider}>|</Text>
+              <Text style={styles.brandSubEn}>Telfazi</Text>
+            </View>
             <Text style={styles.brandSub}>منصة الترفيه المنزلي المتكاملة</Text>
           </View>
         </View>
@@ -430,7 +437,14 @@ export default function LandingPage(): React.JSX.Element {
             التذييل (Footer)
             ========================================== */}
         <View style={styles.footer}>
-          <Text style={styles.footerBrand}>IPTV STREAM</Text>
+          <View style={styles.footerBrandRow}>
+            <Image
+              source={{ uri: '/icon.png' }}
+              style={styles.footerLogoImg}
+              resizeMode="contain"
+            />
+            <Text style={styles.footerBrand}>تلفازي | Telfazi</Text>
+          </View>
           <Text style={styles.footerCopyright}>
             جميع الحقوق محفوظة © {new Date().getFullYear()} • أفضل تجربة بث رقمي للشاشات الذكية
           </Text>
@@ -443,7 +457,7 @@ export default function LandingPage(): React.JSX.Element {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#070b14',
+    backgroundColor: '#0B1120',
   },
   scrollArea: {
     flex: 1,
@@ -465,13 +479,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+    backgroundColor: '#131C31',
     borderWidth: 1,
-    borderColor: '#38bdf8',
+    borderColor: '#0EA5E9',
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderRadius: 30,
-    shadowColor: '#38bdf8',
+    shadowColor: '#0EA5E9',
     shadowOpacity: 0.3,
     shadowRadius: 12,
     elevation: 8,
@@ -490,9 +504,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 28,
     paddingVertical: 18,
-    backgroundColor: 'rgba(11, 17, 32, 0.85)',
+    backgroundColor: 'rgba(11, 17, 32, 0.95)',
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(56, 189, 248, 0.15)',
+    borderBottomColor: 'rgba(14, 165, 233, 0.15)',
     zIndex: 100,
   },
   brandRow: {
@@ -500,21 +514,31 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
-  brandIconCircle: {
+  brandLogoImg: {
     width: 44,
     height: 44,
-    borderRadius: 12,
-    backgroundColor: 'rgba(56, 189, 248, 0.15)',
-    justifyContent: 'center',
+    borderRadius: 10,
+  },
+  brandTitleRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(56, 189, 248, 0.3)',
+    gap: 6,
   },
   brandName: {
     fontSize: 18,
     fontWeight: '900',
     color: '#ffffff',
-    letterSpacing: 1,
+    letterSpacing: 0.5,
+  },
+  brandNameDivider: {
+    fontSize: 16,
+    fontWeight: '400',
+    color: '#0EA5E9',
+  },
+  brandSubEn: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#94a3b8',
   },
   brandSub: {
     fontSize: 11,
@@ -525,15 +549,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    backgroundColor: 'rgba(14, 165, 233, 0.15)',
     borderWidth: 1,
-    borderColor: '#38bdf8',
+    borderColor: '#0EA5E9',
     paddingHorizontal: 18,
     paddingVertical: 10,
     borderRadius: 12,
   },
   navCtaBtnFocused: {
-    backgroundColor: '#38bdf8',
+    backgroundColor: '#0EA5E9',
     borderColor: '#ffffff',
     transform: [{ scale: 1.05 }],
   },
@@ -543,7 +567,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   navCtaBtnTextFocused: {
-    color: '#070b14',
+    color: '#0B1120',
   },
 
   // قسم البطل (Hero)
@@ -698,11 +722,11 @@ const styles = StyleSheet.create({
   },
   downloadCard: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    backgroundColor: '#131C31',
     borderRadius: 20,
     padding: 28,
     borderWidth: 1,
-    borderColor: 'rgba(56, 189, 248, 0.2)',
+    borderColor: 'rgba(14, 165, 233, 0.2)',
     justifyContent: 'space-between',
   },
   downloadCardHeader: {
@@ -715,7 +739,7 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 16,
-    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    backgroundColor: 'rgba(14, 165, 233, 0.15)',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -728,7 +752,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   comingSoonText: {
-    color: '#f59e0b',
+    color: '#F59E0B',
     fontSize: 12,
     fontWeight: '800',
   },
@@ -762,24 +786,24 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    backgroundColor: 'rgba(14, 165, 233, 0.1)',
     borderWidth: 1,
-    borderColor: '#38bdf8',
+    borderColor: '#0EA5E9',
     paddingVertical: 14,
     borderRadius: 12,
   },
   downloadBtnFocused: {
-    backgroundColor: '#38bdf8',
+    backgroundColor: '#0EA5E9',
     borderColor: '#ffffff',
     transform: [{ scale: 1.04 }],
   },
   downloadBtnText: {
-    color: '#38bdf8',
+    color: '#0EA5E9',
     fontSize: 15,
     fontWeight: '800',
   },
   downloadBtnTextFocused: {
-    color: '#070b14',
+    color: '#0B1120',
   },
 
   // قسم المميزات
@@ -793,11 +817,11 @@ const styles = StyleSheet.create({
   },
   featureCard: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    backgroundColor: '#131C31',
     borderRadius: 18,
     padding: 24,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: 'rgba(255, 255, 255, 0.07)',
   },
   featureIconBox: {
     width: 56,
@@ -821,7 +845,7 @@ const styles = StyleSheet.create({
 
   // البانر السفلي
   bottomBanner: {
-    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+    backgroundColor: '#131C31',
     borderRadius: 24,
     padding: 36,
     alignItems: 'center',
@@ -829,7 +853,7 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     width: '90%',
     borderWidth: 1,
-    borderColor: 'rgba(56, 189, 248, 0.25)',
+    borderColor: 'rgba(14, 165, 233, 0.25)',
     marginVertical: 24,
   },
   bottomBannerTitle: {
@@ -855,11 +879,22 @@ const styles = StyleSheet.create({
     marginTop: 20,
     gap: 6,
   },
+  footerBrandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 4,
+  },
+  footerLogoImg: {
+    width: 28,
+    height: 28,
+    borderRadius: 7,
+  },
   footerBrand: {
     fontSize: 16,
     fontWeight: '900',
-    color: '#38bdf8',
-    letterSpacing: 1,
+    color: '#0EA5E9',
+    letterSpacing: 0.5,
   },
   footerCopyright: {
     fontSize: 13,

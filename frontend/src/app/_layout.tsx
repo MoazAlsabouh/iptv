@@ -115,6 +115,16 @@ if (Platform.OS === 'web' && typeof document !== 'undefined') {
     `;
     document.head.prepend(styleEl);
   }
+
+  // ضبط عنوان الصفحة والأيقونة (Favicon) للهوية البصرية الجديدة
+  document.title = 'تلفازي | Telfazi';
+  let link = document.querySelector("link[rel*='icon']") as HTMLLinkElement;
+  if (!link) {
+    link = document.createElement('link');
+    link.rel = 'shortcut icon';
+    document.head.appendChild(link);
+  }
+  link.href = '/icon.png';
 }
 
 /**
@@ -147,12 +157,12 @@ function NavigationGuard(): React.JSX.Element {
       <View
         style={{
           flex: 1,
-          backgroundColor: '#070b14',
+          backgroundColor: '#0B1120',
           justifyContent: 'center',
           alignItems: 'center',
         }}
       >
-        <ActivityIndicator size="large" color="#38bdf8" />
+        <ActivityIndicator size="large" color="#0EA5E9" />
         <Text style={{ color: '#94a3b8', marginTop: 16, fontSize: 16, fontWeight: '700' }}>
           جاري التحقق من الاشتراك...
         </Text>

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
+  Image,
   TextInput,
   Pressable,
   ActivityIndicator,
@@ -717,8 +718,15 @@ export default function AdminScreen(): React.JSX.Element {
     return (
       <View style={styles.loginContainer}>
         <View style={styles.loginCard}>
-          <View style={styles.loginIconCircle}>
-            <MaterialIcons name="admin-panel-settings" size={44} color="#f59e0b" />
+          <Image
+            source={{ uri: '/icon.png' }}
+            style={{ width: 64, height: 64, borderRadius: 14, alignSelf: 'center', marginBottom: 14 }}
+            resizeMode="contain"
+          />
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginBottom: 4 }}>
+            <Text style={{ fontSize: 22, fontWeight: '900', color: '#ffffff' }}>تلفازي</Text>
+            <Text style={{ fontSize: 18, color: '#0EA5E9', fontWeight: '400' }}>|</Text>
+            <Text style={{ fontSize: 18, fontWeight: '800', color: '#94a3b8' }}>Telfazi</Text>
           </View>
           <Text style={styles.loginTitle}>لوحة إدارة المنصة</Text>
           <Text style={styles.loginSub}>
@@ -788,12 +796,19 @@ export default function AdminScreen(): React.JSX.Element {
     <View style={styles.container}>
       {/* الشريط العلوي */}
       <View style={styles.topHeader}>
-        <View style={styles.headerTitleRow}>
-          <View style={styles.headerBadge}>
-            <MaterialIcons name="verified-user" size={18} color="#f59e0b" />
-            <Text style={styles.headerBadgeText}>لوحة تحكم المدير العام</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+          <Image
+            source={{ uri: '/icon.png' }}
+            style={{ width: 44, height: 44, borderRadius: 10 }}
+            resizeMode="contain"
+          />
+          <View style={styles.headerTitleRow}>
+            <View style={styles.headerBadge}>
+              <MaterialIcons name="verified-user" size={16} color="#f59e0b" />
+              <Text style={styles.headerBadgeText}>تلفازي | لوحة تحكم المدير العام</Text>
+            </View>
+            <Text style={styles.headerMainTitle}>نظام إدارة المنصة والموزعين</Text>
           </View>
-          <Text style={styles.headerMainTitle}>نظام إدارة المنصة والموزعين</Text>
         </View>
 
         <View style={styles.headerActions}>
@@ -2409,7 +2424,7 @@ export default function AdminScreen(): React.JSX.Element {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#070b14',
+    backgroundColor: '#0B1120',
   },
   scrollArea: {
     flex: 1,
@@ -2422,7 +2437,7 @@ const styles = StyleSheet.create({
   // تسجيل الدخول
   loginContainer: {
     flex: 1,
-    backgroundColor: '#070b14',
+    backgroundColor: '#0B1120',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
@@ -2430,11 +2445,11 @@ const styles = StyleSheet.create({
   loginCard: {
     width: '100%',
     maxWidth: 440,
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    backgroundColor: '#131C31',
     borderRadius: 20,
     padding: 32,
     borderWidth: 1,
-    borderColor: 'rgba(56, 189, 248, 0.2)',
+    borderColor: 'rgba(14, 165, 233, 0.2)',
     alignItems: 'center',
   },
   loginIconCircle: {
