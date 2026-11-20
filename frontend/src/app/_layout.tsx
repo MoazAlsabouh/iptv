@@ -128,30 +128,58 @@ if (Platform.OS === 'web' && typeof document !== 'undefined') {
 }
 
 /**
+ * دالة مساعدة لحساب المسار وتطبيع الشرطة المائلة مع قراءة window.location.pathname فورياً على الويب
+ */
+function getNormalizedPath(expoPathname: string | null | undefined): string {
+  let raw = expoPathname || '';
+  if (!raw && Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.pathname) {
+    raw = window.location.pathname;
+  }
+  if (!raw) {
+    raw = '/';
+  }
+  // إزالة أي شرطات مائلة متكررة في النهاية مع الحفاظ على الجذر '/'
+  return raw.replace(/\/+$/, '') || '/';
+}
+
+/**
  * حارس التنقل العام للتحقق من وجود اشتراك نشط وتوجيه المستخدمين
  */
 function NavigationGuard(): React.JSX.Element {
-  const pathname = usePathname();
+  const expoPathname = usePathname();
   const router = useRouter();
   const { token, isLoading } = useAuth();
 
+  // الحصول على المسار المطبع فوراً (بدون انتظار تهيئة usePathname على الويب)
+  const normalizedPath = getNormalizedPath(expoPathname);
+
+  // تحديد المسارات العامة المستثناة من حماية الاشتراك وشاشات الانتظار
   const isPublic =
-    pathname === '/' ||
-    pathname === '/activate' ||
-    pathname.startsWith('/admin') ||
-    pathname.startsWith('/reseller');
+    normalizedPath === '/' ||
+    normalizedPath.startsWith('/admin') ||
+    normalizedPath.startsWith('/reseller') ||
+    normalizedPath.startsWith('/activate');
 
   useEffect(() => {
+    // منع أي تحويل تلقائي للمسارات العامة لمنع التعليق
+    if (isPublic) return;
+
     if (isLoading) return;
 
-    if (!token && !isPublic) {
+    if (!token) {
       router.replace('/activate');
-    } else if (token && pathname === '/activate') {
+    }
+  }, [token, isLoading, router, isPublic]);
+
+  // توجيه المستخدم المشترك خارج صفحة التفعيل فقط إذا كان في /activate
+  useEffect(() => {
+    if (isLoading) return;
+    if (token && normalizedPath === '/activate') {
       router.replace('/home');
     }
-  }, [token, isLoading, pathname, router, isPublic]);
+  }, [token, isLoading, normalizedPath, router]);
 
-  // لا نعرض شاشة التحميل للمسارات العامة مثل الصفحة التعريفية / أو شاشة التفعيل / أو الإدارة
+  // لا نعرض شاشة التحميل للمسارات العامة إطلاقاً حتى لو كان isLoading === true
   if (isLoading && !isPublic) {
     return (
       <View
@@ -170,14 +198,11 @@ function NavigationGuard(): React.JSX.Element {
     );
   }
 
-  // المشغل، شاشة التفعيل، ولوحة الإدارة تعمل في وضع ملء الشاشة دون الشريط الجانبي
+  // المسارات العامة والمشغل تعمل بملء الشاشة دون الشريط الجانبي
   const isFullscreen =
-    pathname === '/' ||
-    pathname.startsWith('/play/') ||
-    pathname.startsWith('/player') ||
-    pathname === '/activate' ||
-    pathname.startsWith('/admin') ||
-    pathname.startsWith('/reseller');
+    isPublic ||
+    normalizedPath.startsWith('/play') ||
+    normalizedPath.startsWith('/player');
 
   return isFullscreen ? (
     <Slot />
