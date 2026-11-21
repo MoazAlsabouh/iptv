@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { Platform } from 'react-native';
 import { useAppStore } from '../store/useAppStore';
+import { appStorage } from '../utils/storage';
 
 export const BACKEND_BASE_URL = 'https://iptv-backend.moaznsm.workers.dev';
 
@@ -32,23 +33,17 @@ const SUB_KEY = 'iptv_sub_info';
 const DEVICE_ID_KEY = 'iptv_device_id';
 const DEVICE_NAME_KEY = 'iptv_device_name';
 
-function getInitialDeviceId(): string {
-  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
-    let id = window.localStorage.getItem(DEVICE_ID_KEY);
-    if (!id) {
-      id = 'dev_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now().toString(36);
-      window.localStorage.setItem(DEVICE_ID_KEY, id);
-    }
-    return id;
-  }
+function getInitialDeviceIdSync(): string {
+  const syncId = appStorage.getItemSync(DEVICE_ID_KEY);
+  if (syncId) return syncId;
   return 'dev_' + Math.random().toString(36).substring(2, 9);
 }
 
-function getInitialDeviceName(): string {
-  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
-    const saved = window.localStorage.getItem(DEVICE_NAME_KEY);
-    if (saved) return saved;
+function getInitialDeviceNameSync(): string {
+  const syncName = appStorage.getItemSync(DEVICE_NAME_KEY);
+  if (syncName) return syncName;
 
+  if (Platform.OS === 'web') {
     const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
     let name = 'متصفح ويب';
     if (/SmartTV|Tizen|Web0S|NetCast|Android TV|AppleTV/i.test(userAgent)) {
@@ -64,31 +59,28 @@ function getInitialDeviceName(): string {
     } else if (/Macintosh/i.test(userAgent)) {
       name = 'كمبيوتر ماك';
     }
-    window.localStorage.setItem(DEVICE_NAME_KEY, name);
     return name;
   }
 
-  // على الأجهزة والتطبيقات الأصلية (Native - Android / iOS / Android TV)
   if (Platform.isTV) {
     return 'شاشة التلفاز';
-  }
-
-  if (Platform.OS === 'android') {
-    return 'هاتف محمول';
-  }
-
-  if (Platform.OS === 'ios') {
-    return 'هاتف محمول';
   }
 
   return 'هاتف محمول';
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [token, setToken] = useState<string | null>(null);
-  const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
-  const [deviceId] = useState<string>(getInitialDeviceId);
-  const [deviceName] = useState<string>(getInitialDeviceName);
+  const [token, setToken] = useState<string | null>(() => appStorage.getItemSync(TOKEN_KEY));
+  const [subscription, setSubscription] = useState<SubscriptionInfo | null>(() => {
+    try {
+      const s = appStorage.getItemSync(SUB_KEY);
+      return s ? JSON.parse(s) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [deviceId, setDeviceId] = useState<string>(getInitialDeviceIdSync);
+  const [deviceName, setDeviceName] = useState<string>(getInitialDeviceNameSync);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   // استرجاع الجلسة المحفوظة والتحقق من صحتها عبر الخادم
@@ -97,19 +89,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const initAuth = async () => {
       try {
-        if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
-          const savedToken = window.localStorage.getItem(TOKEN_KEY);
-          const savedSub = window.localStorage.getItem(SUB_KEY);
+        // 1. تحميل أو توليد وحفظ معرّف الجهاز الثابت
+        let currentDeviceId = await appStorage.getItem(DEVICE_ID_KEY);
+        if (!currentDeviceId) {
+          currentDeviceId = 'dev_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now().toString(36);
+          await appStorage.setItem(DEVICE_ID_KEY, currentDeviceId);
+        }
+        if (isMounted) {
+          setDeviceId(currentDeviceId);
+        }
 
-          if (savedToken) {
+        // 2. تحميل أو توليد وحفظ اسم الجهاز
+        let currentDeviceName = await appStorage.getItem(DEVICE_NAME_KEY);
+        if (!currentDeviceName) {
+          currentDeviceName = getInitialDeviceNameSync();
+          await appStorage.setItem(DEVICE_NAME_KEY, currentDeviceName);
+        }
+        if (isMounted) {
+          setDeviceName(currentDeviceName);
+        }
+
+        // 3. استرجاع رمز التوثيق وبيانات الاشتراك
+        const savedToken = await appStorage.getItem(TOKEN_KEY);
+        const savedSub = await appStorage.getItem(SUB_KEY);
+
+        if (savedToken) {
+          if (isMounted) {
             setToken(savedToken);
             if (savedSub) {
               try {
                 setSubscription(JSON.parse(savedSub));
               } catch {}
             }
+          }
 
-            // التحقق من الخادم
+          // استعادة المفضلات من التخزين المحلي فوراً
+          useAppStore.getState().loadFavoritesFromStorage?.();
+
+          // التحقق من صحة الجلسة مع الخادم
+          try {
             const res = await fetch(`${BACKEND_BASE_URL}/api/auth/me`, {
               headers: {
                 Authorization: `Bearer ${savedToken}`,
@@ -120,18 +138,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               const data = await res.json();
               if (isMounted && data.valid && data.subscription) {
                 setSubscription(data.subscription);
-                window.localStorage.setItem(SUB_KEY, JSON.stringify(data.subscription));
+                await appStorage.setItem(SUB_KEY, JSON.stringify(data.subscription));
                 useAppStore.getState().syncFavorites(savedToken);
               }
-            } else {
-              // الرمز منتهٍ أو ملغى
+            } else if (res.status === 401 || res.status === 403) {
+              // الرمز منتهٍ أو ملغى رسمياً من الخادم
               if (isMounted) {
                 setToken(null);
                 setSubscription(null);
-                window.localStorage.removeItem(TOKEN_KEY);
-                window.localStorage.removeItem(SUB_KEY);
+                await appStorage.removeItem(TOKEN_KEY);
+                await appStorage.removeItem(SUB_KEY);
               }
             }
+          } catch (netErr) {
+            // في حال حدوث خطأ شبكة مؤقت، نبقي الجلسة المحلية حتى لا يُطرد المستخدم
+            console.warn('[Auth] Network issue verifying session with server:', netErr);
           }
         }
       } catch (err) {
@@ -178,10 +199,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setToken(data.token);
         setSubscription(data.subscription);
 
-        if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
-          window.localStorage.setItem(TOKEN_KEY, data.token);
-          window.localStorage.setItem(SUB_KEY, JSON.stringify(data.subscription));
-        }
+        // حفظ التوكن ومعلومات الاشتراك في التخزين الموحد (Web / AsyncStorage)
+        await appStorage.setItem(TOKEN_KEY, data.token);
+        await appStorage.setItem(SUB_KEY, JSON.stringify(data.subscription));
 
         useAppStore.getState().syncFavorites(data.token);
 
@@ -200,10 +220,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = useCallback(async () => {
     setToken(null);
     setSubscription(null);
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
-      window.localStorage.removeItem(TOKEN_KEY);
-      window.localStorage.removeItem(SUB_KEY);
-    }
+    await appStorage.removeItem(TOKEN_KEY);
+    await appStorage.removeItem(SUB_KEY);
   }, []);
 
   // تحديث حالة الاشتراك من الخادم
@@ -219,9 +237,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const data = await res.json();
         if (data.valid && data.subscription) {
           setSubscription(data.subscription);
-          if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
-            window.localStorage.setItem(SUB_KEY, JSON.stringify(data.subscription));
-          }
+          await appStorage.setItem(SUB_KEY, JSON.stringify(data.subscription));
         }
       }
     } catch {}

@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { appStorage } from './storage';
 import { MediaItem, StreamSource } from '../types/media';
 
 /**
@@ -260,10 +261,10 @@ export async function fetchAndParseM3U(
     const isDirectServer = cleanUrl.includes('workers.dev') || cleanUrl.includes('iptv-backend');
     const finalUrl = useProxy && !isDirectServer ? `${proxyPrefix}${encodeURIComponent(cleanUrl)}` : cleanUrl;
 
-    // استخراج رمز الجلسة (من المعامل أو من التخزين المحلي)
+    // استخراج رمز الجلسة (من المعامل أو من التخزين الموحد)
     let authToken = token;
-    if (!authToken && Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
-      authToken = window.localStorage.getItem(AUTH_TOKEN_KEY);
+    if (!authToken) {
+      authToken = (await appStorage.getItem(AUTH_TOKEN_KEY)) || appStorage.getItemSync(AUTH_TOKEN_KEY);
     }
 
     const headers: Record<string, string> = {};

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { Platform } from 'react-native';
 import { DEFAULT_BACKEND_M3U_URL } from '../utils/m3uParser';
+import { appStorage } from '../utils/storage';
 
 const BACKEND_BASE_URL = 'https://iptv-backend.moaznsm.workers.dev';
 const FAVORITES_STORAGE_KEY = 'iptv_user_favorites_v2';
@@ -28,60 +29,52 @@ export interface AppState {
   toggleFavorite: (target: string | { id: string; type?: string; [key: string]: any }) => Promise<void>;
   isItemFavorite: (id: string) => boolean;
   syncFavorites: (customToken?: string | null) => Promise<void>;
+  loadFavoritesFromStorage: () => Promise<void>;
   setActiveDashboardTab: (tab: 'category' | 'network' | 'country') => void;
   resetAppStore: () => void;
 }
 
-function getStoredToken(): string | null {
-  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
-    try {
-      return window.localStorage.getItem(TOKEN_KEY);
-    } catch {}
-  }
-  return null;
+function getStoredTokenSync(): string | null {
+  return appStorage.getItemSync(TOKEN_KEY);
 }
 
-function loadInitialFavorites(): {
+function loadInitialFavoritesSync(): {
   favoriteIds: string[];
   vodFavorites: any[];
   channelFavorites: any[];
 } {
-  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
-    try {
-      const raw = window.localStorage.getItem(FAVORITES_STORAGE_KEY);
-      if (raw) {
-        const records: FavoriteRecord[] = JSON.parse(raw);
-        if (Array.isArray(records)) {
-          const ids: string[] = [];
-          const vodList: any[] = [];
-          const chList: any[] = [];
-          records.forEach((r) => {
-            if (r && r.id) {
-              ids.push(r.id);
-              if (r.type === 'vod') {
-                vodList.push({ id: r.id, ...(r.data || {}) });
-              } else {
-                chList.push({ id: r.id, ...(r.data || {}) });
-              }
+  try {
+    const raw = appStorage.getItemSync(FAVORITES_STORAGE_KEY);
+    if (raw) {
+      const records: FavoriteRecord[] = JSON.parse(raw);
+      if (Array.isArray(records)) {
+        const ids: string[] = [];
+        const vodList: any[] = [];
+        const chList: any[] = [];
+        records.forEach((r) => {
+          if (r && r.id) {
+            ids.push(r.id);
+            if (r.type === 'vod') {
+              vodList.push({ id: r.id, ...(r.data || {}) });
+            } else {
+              chList.push({ id: r.id, ...(r.data || {}) });
             }
-          });
-          return { favoriteIds: ids, vodFavorites: vodList, channelFavorites: chList };
-        }
+          }
+        });
+        return { favoriteIds: ids, vodFavorites: vodList, channelFavorites: chList };
       }
-    } catch {}
-  }
+    }
+  } catch {}
   return { favoriteIds: [], vodFavorites: [], channelFavorites: [] };
 }
 
-function persistFavoritesLocally(records: FavoriteRecord[]) {
-  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
-    try {
-      window.localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(records));
-    } catch {}
-  }
+async function persistFavoritesLocally(records: FavoriteRecord[]) {
+  try {
+    await appStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(records));
+  } catch {}
 }
 
-const initialFavs = loadInitialFavorites();
+const initialFavs = loadInitialFavoritesSync();
 
 export const useAppStore = create<AppState>((set, get) => ({
   isChildMode: false,
@@ -101,8 +94,40 @@ export const useAppStore = create<AppState>((set, get) => ({
     return get().favoriteIds.includes(id);
   },
 
+  loadFavoritesFromStorage: async () => {
+    try {
+      const raw = await appStorage.getItem(FAVORITES_STORAGE_KEY);
+      if (raw) {
+        const records: FavoriteRecord[] = JSON.parse(raw);
+        if (Array.isArray(records)) {
+          const ids: string[] = [];
+          const vodList: any[] = [];
+          const chList: any[] = [];
+          records.forEach((r) => {
+            if (r && r.id) {
+              ids.push(r.id);
+              if (r.type === 'vod') {
+                vodList.push({ id: r.id, ...(r.data || {}) });
+              } else {
+                chList.push({ id: r.id, ...(r.data || {}) });
+              }
+            }
+          });
+          set({
+            favoriteIds: ids,
+            vodFavorites: vodList,
+            channelFavorites: chList,
+            isFavoritesLoaded: true,
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('[Favorites] Failed to load local favorites:', err);
+    }
+  },
+
   syncFavorites: async (customToken?: string | null) => {
-    const token = customToken || getStoredToken();
+    const token = customToken || (await appStorage.getItem(TOKEN_KEY)) || getStoredTokenSync();
     if (!token) return;
 
     try {
@@ -164,7 +189,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     }
 
-    const token = getStoredToken();
+    const token = (await appStorage.getItem(TOKEN_KEY)) || getStoredTokenSync();
 
     if (isCurrentlyFav) {
       // إزالة من المفضلة
