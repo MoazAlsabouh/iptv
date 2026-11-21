@@ -4,6 +4,11 @@ import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuth } from '../../context/AuthContext';
+import {
+  getRemainingDays,
+  formatRemainingDaysArabic,
+  formatDateStandard,
+} from '../../utils/dateFormat';
 
 /**
  * شاشة الإعدادات ومعلومات الاشتراك والرقابة الأبوية بتصميم تلفاز داكن (#0f172a).
@@ -141,7 +146,12 @@ export default function SettingsScreen(): React.JSX.Element {
           <View style={styles.subDetailBox}>
             <Text style={styles.subDetailLabel}>المدة المتبقية:</Text>
             <Text style={styles.subHighlightVal}>
-              {subscription ? `${subscription.remainingDays} يوم` : '—'}
+              {subscription
+                ? formatRemainingDaysArabic(
+                    getRemainingDays(subscription.expiresAt) || subscription.remainingDays,
+                    subscription.expiresAt
+                  )
+                : '—'}
             </Text>
           </View>
 
@@ -149,13 +159,7 @@ export default function SettingsScreen(): React.JSX.Element {
           <View style={styles.subDetailBox}>
             <Text style={styles.subDetailLabel}>تاريخ الانتهاء:</Text>
             <Text style={styles.subDetailText}>
-              {subscription?.expiresAt
-                ? new Date(subscription.expiresAt).toLocaleDateString('ar-EG', {
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric',
-                  })
-                : '—'}
+              {formatDateStandard(subscription?.expiresAt)}
             </Text>
           </View>
 
@@ -514,6 +518,7 @@ const styles = StyleSheet.create({
     borderColor: '#334155',
     padding: 20,
     marginBottom: 24,
+    direction: 'rtl',
   },
   subInfoHeader: {
     flexDirection: 'row',
@@ -523,11 +528,13 @@ const styles = StyleSheet.create({
     paddingBottom: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#334155',
+    direction: 'rtl',
   },
   subInfoTitleGroup: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    direction: 'rtl',
   },
   subIconWrapper: {
     width: 44,
@@ -543,11 +550,15 @@ const styles = StyleSheet.create({
     color: '#f8fafc',
     fontSize: 18,
     fontWeight: 'bold',
+    textAlign: 'right',
+    writingDirection: 'rtl',
   },
   subInfoSubTitle: {
     color: '#94a3b8',
     fontSize: 13,
     marginTop: 2,
+    textAlign: 'right',
+    writingDirection: 'rtl',
   },
   subStatusPill: {
     flexDirection: 'row',
@@ -556,6 +567,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 20,
     gap: 8,
+    direction: 'rtl',
   },
   subStatusActive: {
     backgroundColor: '#10b98120',
@@ -582,6 +594,7 @@ const styles = StyleSheet.create({
     gap: 16,
     alignItems: 'center',
     justifyContent: 'space-between',
+    direction: 'rtl',
   },
   subDetailBox: {
     backgroundColor: '#0f172a',
@@ -591,17 +604,22 @@ const styles = StyleSheet.create({
     flex: 1,
     borderWidth: 1,
     borderColor: '#1e293b',
+    alignItems: 'flex-start',
+    direction: 'rtl',
   },
   subDetailLabel: {
     color: '#64748b',
     fontSize: 12,
     marginBottom: 4,
+    textAlign: 'right',
+    writingDirection: 'rtl',
   },
   subCodeRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 8,
+    direction: 'rtl',
   },
   subCodeVal: {
     color: '#f8fafc',
@@ -630,11 +648,15 @@ const styles = StyleSheet.create({
     color: '#38bdf8',
     fontSize: 16,
     fontWeight: 'bold',
+    textAlign: 'right',
+    writingDirection: 'rtl',
   },
   subDetailText: {
     color: '#e2e8f0',
     fontSize: 14,
     fontWeight: '600',
+    textAlign: 'right',
+    writingDirection: 'rtl',
   },
   subActionBox: {
     justifyContent: 'center',
@@ -649,6 +671,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 12,
     gap: 8,
+    direction: 'rtl',
   },
   subLogoutBtnFocused: {
     backgroundColor: '#ef4444',

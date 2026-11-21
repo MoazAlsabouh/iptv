@@ -15,6 +15,11 @@ import {
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { BACKEND_BASE_URL } from '../../context/AuthContext';
+import {
+  getRemainingDays,
+  formatRemainingDaysArabic,
+  formatDateStandard,
+} from '../../utils/dateFormat';
 
 interface ResellerInfo {
   id: number;
@@ -721,7 +726,7 @@ export default function ResellerPortalScreen(): React.JSX.Element {
                       <Text style={styles.detailVal}>{item.durationDays} يوم</Text>
                       {item.status === 'active' && (
                         <Text style={styles.remainingVal}>
-                          (متبقي {item.remainingDays} يوم)
+                          ({formatRemainingDaysArabic(getRemainingDays(item.expiresAt) || item.remainingDays, item.expiresAt)})
                         </Text>
                       )}
                     </View>
@@ -747,7 +752,7 @@ export default function ResellerPortalScreen(): React.JSX.Element {
                         <MaterialIcons name="event" size={16} color="#94a3b8" />
                         <Text style={styles.detailLabel}>الانتهاء:</Text>
                         <Text style={styles.detailVal}>
-                          {new Date(item.expiresAt).toLocaleDateString('ar-EG')}
+                          {formatDateStandard(item.expiresAt)}
                         </Text>
                       </View>
                     ) : null}
@@ -1383,25 +1388,34 @@ const styles = StyleSheet.create({
   codeDetails: {
     gap: 6,
     marginBottom: 14,
+    direction: 'rtl',
   },
   detailRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    direction: 'rtl',
+    justifyContent: 'flex-start',
   },
   detailLabel: {
     fontSize: 12,
     color: '#94a3b8',
+    textAlign: 'right',
+    writingDirection: 'rtl',
   },
   detailVal: {
     fontSize: 12,
     color: '#ffffff',
     fontWeight: '600',
+    textAlign: 'right',
+    writingDirection: 'rtl',
   },
   remainingVal: {
     fontSize: 12,
     color: '#34d399',
     fontWeight: '700',
+    textAlign: 'right',
+    writingDirection: 'rtl',
   },
   codeActions: {
     flexDirection: 'row',
