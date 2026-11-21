@@ -14,7 +14,7 @@ import { useSafeKeepAwake } from '../../hooks/useSafeKeepAwake';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../../store/useAppStore';
 import { useMediaData } from '../../hooks/useMediaData';
-import { TVPlayer, HlsLevelOption } from '../../components/player/TVPlayer';
+import { TVPlayer, HlsLevelOption, toYouTubeEmbedUrl } from '../../components/player/TVPlayer';
 import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 import { ChannelLogo } from '../../components/ChannelLogo';
 import { StreamSource } from '../../types/media';
@@ -478,6 +478,10 @@ export function PlayerScreen(): React.JSX.Element {
     let url = liveChannel ? liveChannel.streamUrl : rawStreamUrl;
     if (channelSources.length > 0 && channelSources[activeSourceIndex]) {
       url = channelSources[activeSourceIndex].url;
+    }
+    // تحويل روابط يوتيوب تلقائياً إلى صيغة التضمين الآمنة لمنع خطأ X-Frame-Options
+    if (url && (url.includes('youtube.com') || url.includes('youtu.be'))) {
+      url = toYouTubeEmbedUrl(url);
     }
     // إذا كان الرابط ينتمي لنطاقات تفرض حظر 403 على المتصفحات، نوجهه مباشرة للبروكسي
     if (Platform.OS === 'web' && shouldAutoProxy(url)) {

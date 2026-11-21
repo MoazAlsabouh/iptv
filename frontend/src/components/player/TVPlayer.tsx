@@ -24,20 +24,77 @@ export interface TVPlayerProps {
 }
 
 /**
- * تحويل أي رابط يوتيوب بمختلف صيغه إلى رابط embed جاهز للتشغيل التلقائي
+ * تحويل أي رابط يوتيوب بمختلف صيغه إلى صيغة التضمين (/embed/) مع معاملات التشغيل المناسبة
+ * يدعم: watch?v=, youtu.be/, /shorts/, /live/, /playlist?list=, والروابط المركبة (v + list)
  */
-export function normalizeYouTubeEmbedUrl(url: string): string {
-  if (!url) return url;
+export function toYouTubeEmbedUrl(rawUrl: string): string {
+  if (!rawUrl || typeof rawUrl !== 'string') return rawUrl || '';
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return '';
+
+  if (!trimmed.includes('youtube.com') && !trimmed.includes('youtu.be') && !trimmed.includes('youtube-nocookie.com')) {
+    return trimmed;
+  }
+
   try {
-    const match = url.match(
-      /(?:youtube\.com\/(?:watch\?v=|live\/|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i
-    );
-    if (match && match[1]) {
-      const videoId = match[1];
-      return `https://www.youtube.com/embed/${videoId}?autoplay=1&playsinline=1&enablejsapi=1`;
+    const parsed = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`);
+    const host = parsed.hostname.toLowerCase();
+
+    let videoId = '';
+    const listId = parsed.searchParams.get('list') || '';
+
+    if (host.includes('youtu.be')) {
+      const pathParts = parsed.pathname.split('/').filter(Boolean);
+      videoId = pathParts[0] || '';
+    } else if (host.includes('youtube.com') || host.includes('youtube-nocookie.com')) {
+      if (parsed.pathname.startsWith('/embed/')) {
+        const pathParts = parsed.pathname.split('/').filter(Boolean);
+        const idPart = pathParts[1] || '';
+        if (idPart !== 'videoseries') {
+          videoId = idPart;
+        }
+      } else if (parsed.pathname.startsWith('/shorts/')) {
+        const pathParts = parsed.pathname.split('/').filter(Boolean);
+        videoId = pathParts[1] || '';
+      } else if (parsed.pathname.startsWith('/live/')) {
+        const pathParts = parsed.pathname.split('/').filter(Boolean);
+        videoId = pathParts[1] || '';
+      } else {
+        videoId = parsed.searchParams.get('v') || '';
+      }
     }
-  } catch {}
-  return url;
+
+    if (videoId && listId) {
+      return `https://www.youtube.com/embed/${videoId}?list=${encodeURIComponent(listId)}&autoplay=1&rel=0&playsinline=1&enablejsapi=1`;
+    }
+    if (videoId) {
+      return `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&playsinline=1&enablejsapi=1`;
+    }
+    if (listId) {
+      return `https://www.youtube.com/embed/videoseries?list=${encodeURIComponent(listId)}&autoplay=1&rel=0&playsinline=1&enablejsapi=1`;
+    }
+  } catch {
+    const vMatch = trimmed.match(/(?:[?&]v=|youtu\.be\/|\/embed\/|\/shorts\/|\/live\/)([a-zA-Z0-9_-]{11})/);
+    const listMatch = trimmed.match(/[?&]list=([a-zA-Z0-9_-]+)/);
+    const videoId = vMatch ? vMatch[1] : '';
+    const listId = listMatch ? listMatch[1] : '';
+
+    if (videoId && listId) {
+      return `https://www.youtube.com/embed/${videoId}?list=${encodeURIComponent(listId)}&autoplay=1&rel=0&playsinline=1&enablejsapi=1`;
+    }
+    if (videoId) {
+      return `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&playsinline=1&enablejsapi=1`;
+    }
+    if (listId) {
+      return `https://www.youtube.com/embed/videoseries?list=${encodeURIComponent(listId)}&autoplay=1&rel=0&playsinline=1&enablejsapi=1`;
+    }
+  }
+
+  return trimmed;
+}
+
+export function normalizeYouTubeEmbedUrl(url: string): string {
+  return toYouTubeEmbedUrl(url);
 }
 
 /**

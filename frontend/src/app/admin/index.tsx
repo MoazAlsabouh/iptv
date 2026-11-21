@@ -28,6 +28,7 @@ import {
   formatDateStandard,
 } from '../../utils/dateFormat';
 import { MediaItem, fetchBackendPlaylist } from '../../utils/m3uParser';
+import { toYouTubeEmbedUrl } from '../../components/player/TVPlayer';
 
 export interface VodOverrideItem {
   tmdbId: string;
@@ -925,6 +926,63 @@ export default function AdminScreen(): React.JSX.Element {
     }
   };
 
+  const handleAutoFetchYoutube = async (
+    targetItem?: VodSearchResult,
+    targetSeason?: number | null,
+    targetEpisode?: number | null
+  ) => {
+    const item = targetItem || selectedVodItem;
+    if (!item) return;
+    setAutoYoutubeLoading(true);
+    setAutoYoutubeResults([]);
+    try {
+      const isTv =
+        item.media_type === 'tv' ||
+        String(item.id).startsWith('tmdb-tv-') ||
+        String(item.id).includes('-s');
+      const baseTitle = item.title || item.name || '';
+      const cleanTitle = baseTitle
+        .replace(/\s*-\s*الموسم\s*\d+(\s*-\s*الحلقة\s*\d+)?/g, '')
+        .replace(/\s*\(المسلسل كاملاً\)/g, '')
+        .trim();
+      const season = targetSeason !== undefined ? (targetSeason || 1) : (selectedSeason || 1);
+      const episode = targetEpisode !== undefined ? (targetEpisode || 1) : (selectedEpisode || 1);
+      const url = new URL(`${BACKEND_BASE_URL}/api/admin/vod/auto-youtube`);
+      url.searchParams.set('title', cleanTitle);
+      url.searchParams.set('type', isTv ? 'tv' : 'movie');
+      if (isTv) {
+        url.searchParams.set('season', String(season));
+        url.searchParams.set('episode', String(episode));
+      }
+      const res = await fetch(url.toString(), {
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const results = Array.isArray(data.results) ? data.results : [];
+        const normalizedResults = results.map((r: any) => ({
+          ...r,
+          embedUrl: toYouTubeEmbedUrl(r.embedUrl || r.url),
+          url: toYouTubeEmbedUrl(r.url || r.embedUrl),
+        }));
+        setAutoYoutubeResults(normalizedResults);
+        if (normalizedResults.length > 0) {
+          // عرض رابط اليوتيوب التلقائي مباشرة للأدمن في حقل الإدخال لتسهيل التجربة والمعاينة إن لم يكن هناك رابط مخصص مسبقاً
+          setVodYoutubeUrl((prev) => (prev && prev.trim().length > 0 ? prev : normalizedResults[0].embedUrl));
+          setStatusMessage(`تم العثور تلقائياً على ${normalizedResults.length} مقترح من YouTube`);
+        } else {
+          setStatusMessage('لم يُعثر على مقترحات YouTube تلقائية لهذا العمل');
+        }
+      } else {
+        setStatusMessage('تعذر جلب مقترحات اليوتيوب');
+      }
+    } catch {
+      setStatusMessage('تعذر الاتصال بخدمة فحص اليوتيوب');
+    } finally {
+      setAutoYoutubeLoading(false);
+    }
+  };
+
   const handleSelectVodItem = (
     item: VodSearchResult,
     initialSeason: number | null = null,
@@ -969,6 +1027,7 @@ export default function AdminScreen(): React.JSX.Element {
       }
     }
     handleCheckArchive(archiveQuery);
+    handleAutoFetchYoutube(item, initialSeason, initialEpisode);
   };
 
   const handleSeasonChange = (seasonNum: number | null) => {
@@ -993,6 +1052,7 @@ export default function AdminScreen(): React.JSX.Element {
       .trim();
     const query = seasonNum !== null ? `${cleanTitle} الموسم ${seasonNum}` : cleanTitle;
     handleCheckArchive(query);
+    handleAutoFetchYoutube(selectedVodItem, seasonNum, null);
   };
 
   const handleEpisodeChange = (epNum: number | null) => {
@@ -1014,6 +1074,7 @@ export default function AdminScreen(): React.JSX.Element {
         ? `${cleanTitle} الموسم ${selectedSeason}`
         : cleanTitle;
     handleCheckArchive(query);
+    handleAutoFetchYoutube(selectedVodItem, selectedSeason, epNum);
   };
 
   const fetchArabicCatalog = useCallback(
@@ -1055,47 +1116,6 @@ export default function AdminScreen(): React.JSX.Element {
     [getAuthHeaders, arabicCatalogType, arabicCatalogCategory, arabicStatusFilter, searchVodQuery]
   );
 
-  const handleAutoFetchYoutube = async () => {
-    if (!selectedVodItem) return;
-    setAutoYoutubeLoading(true);
-    setAutoYoutubeResults([]);
-    try {
-      const isTv =
-        selectedVodItem.media_type === 'tv' ||
-        String(selectedVodItem.id).startsWith('tmdb-tv-') ||
-        String(selectedVodItem.id).includes('-s');
-      const title = selectedVodItem.title || selectedVodItem.name || '';
-      const season = selectedSeason || 1;
-      const episode = selectedEpisode || 1;
-      const url = new URL(`${BACKEND_BASE_URL}/api/admin/vod/auto-youtube`);
-      url.searchParams.set('title', title);
-      url.searchParams.set('type', isTv ? 'tv' : 'movie');
-      if (isTv) {
-        url.searchParams.set('season', String(season));
-        url.searchParams.set('episode', String(episode));
-      }
-      const res = await fetch(url.toString(), {
-        headers: getAuthHeaders(),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const results = Array.isArray(data.results) ? data.results : [];
-        setAutoYoutubeResults(results);
-        if (results.length === 0) {
-          setStatusMessage('لم يُعثر على مقترحات يوتيوب تلقائية، يمكنك إدخال الرابط يدوياً');
-        } else {
-          setStatusMessage(`تم العثور على ${results.length} مقترح من يوتيوب`);
-        }
-      } else {
-        setStatusMessage('تعذر جلب مقترحات اليوتيوب');
-      }
-    } catch {
-      setStatusMessage('تعذر الاتصال بخدمة فحص اليوتيوب');
-    } finally {
-      setAutoYoutubeLoading(false);
-    }
-  };
-
   const handleSaveVodOverride = async (options?: {
     forceArchivePrimary?: boolean;
     forceYoutubePrimary?: boolean;
@@ -1125,10 +1145,11 @@ export default function AdminScreen(): React.JSX.Element {
         options?.customApprovedSourceType !== undefined
           ? options.customApprovedSourceType
           : vodApprovedSourceType;
-      const effectiveYoutubeUrl =
+      const rawYoutube =
         options?.customYoutubeUrl !== undefined
           ? options.customYoutubeUrl
           : vodYoutubeUrl.trim() || null;
+      const effectiveYoutubeUrl = rawYoutube ? toYouTubeEmbedUrl(rawYoutube) : null;
 
       const targetKey = getTargetOverrideKey(selectedVodItem, selectedSeason, selectedEpisode);
       const targetTitle = getTargetScopeTitle(selectedVodItem, selectedSeason, selectedEpisode);
@@ -1183,11 +1204,12 @@ export default function AdminScreen(): React.JSX.Element {
   };
 
   const handleApproveYoutubeCandidate = async (candidateUrl: string) => {
-    setVodYoutubeUrl(candidateUrl);
+    const cleanUrl = toYouTubeEmbedUrl(candidateUrl);
+    setVodYoutubeUrl(cleanUrl);
     setVodYoutubePrimary(true);
     setVodArchivePrimary(false);
     await handleSaveVodOverride({
-      customYoutubeUrl: candidateUrl,
+      customYoutubeUrl: cleanUrl,
       forceYoutubePrimary: true,
       customReviewStatus: 'verified',
       customApprovedSourceType: 'youtube',
@@ -1260,7 +1282,8 @@ export default function AdminScreen(): React.JSX.Element {
         : `https://vidsrc.cc/v2/embed/movie/${cleanId}`;
     } else if (server === 'youtube') {
       name = 'YouTube';
-      url = vodYoutubeUrl;
+      url = vodYoutubeUrl.trim() || (autoYoutubeResults[0]?.embedUrl || autoYoutubeResults[0]?.url) || '';
+      url = toYouTubeEmbedUrl(url);
     } else if (server === 'archive') {
       name = 'Archive.org';
       url = vodArchiveUrl;
@@ -1273,7 +1296,7 @@ export default function AdminScreen(): React.JSX.Element {
 
     const scopeTitle = getTargetScopeTitle(selectedVodItem, selectedSeason, selectedEpisode);
     setVodPreviewTitle(`${name}: ${scopeTitle}`);
-    setVodPreviewUrl(url);
+    setVodPreviewUrl(toYouTubeEmbedUrl(url));
     setVodPreviewModalVisible(true);
   };
 
@@ -3452,6 +3475,25 @@ export default function AdminScreen(): React.JSX.Element {
                       <Text style={[styles.smallActionBtnText, { color: '#c084fc', fontWeight: '700' }]}>تجربة سيرفر VidSrc CC</Text>
                     </Pressable>
 
+                    {(vodYoutubeUrl.trim().length > 0 || autoYoutubeResults.length > 0) && (
+                      <Pressable
+                        style={[styles.smallActionBtn, { backgroundColor: '#ef444420', borderColor: '#ef4444' }]}
+                        onPress={() => handlePreviewVodServer('youtube')}
+                      >
+                        <MaterialIcons name="play-arrow" size={16} color="#ef4444" />
+                        <Text style={[styles.smallActionBtnText, { color: '#ef4444', fontWeight: '700' }]}>
+                          تجربة مشغل YouTube {vodYoutubeUrl.trim().length > 0 ? '' : '(تلقائي)'}
+                        </Text>
+                      </Pressable>
+                    )}
+
+                    {autoYoutubeLoading && (
+                      <View style={[styles.smallActionBtn, { backgroundColor: '#ef444410', borderColor: '#ef444440', gap: 6 }]}>
+                        <ActivityIndicator size="small" color="#ef4444" />
+                        <Text style={[styles.smallActionBtnText, { color: '#ef4444', fontSize: 11 }]}>جارٍ جلب YouTube...</Text>
+                      </View>
+                    )}
+
                     {vodArchiveUrl.trim().length > 0 && (
                       <Pressable
                         style={[styles.smallActionBtn, { backgroundColor: '#10b98120', borderColor: '#10b981' }]}
@@ -3491,7 +3533,7 @@ export default function AdminScreen(): React.JSX.Element {
                     </View>
                     <Pressable
                       style={[styles.smallActionBtn, { backgroundColor: '#ef444420', borderColor: '#ef4444' }]}
-                      onPress={handleAutoFetchYoutube}
+                      onPress={() => handleAutoFetchYoutube()}
                       disabled={autoYoutubeLoading}
                     >
                       {autoYoutubeLoading ? (

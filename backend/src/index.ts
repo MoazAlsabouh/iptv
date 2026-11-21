@@ -1310,6 +1310,76 @@ function findVideoRenderers(obj: any, results: any[] = []): any[] {
 }
 
 /**
+ * تحويل أي رابط يوتيوب تلقائياً إلى صيغة التضمين (/embed/) مع معاملات التشغيل المناسبة
+ * يدعم: watch?v=, youtu.be/, /shorts/, /live/, /playlist?list=, والروابط المركبة (v + list)
+ */
+function toYouTubeEmbedUrl(rawUrl: string): string {
+  if (!rawUrl || typeof rawUrl !== 'string') return rawUrl || '';
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return '';
+
+  if (!trimmed.includes('youtube.com') && !trimmed.includes('youtu.be') && !trimmed.includes('youtube-nocookie.com')) {
+    return trimmed;
+  }
+
+  try {
+    const parsed = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`);
+    const host = parsed.hostname.toLowerCase();
+
+    let videoId = '';
+    const listId = parsed.searchParams.get('list') || '';
+
+    if (host.includes('youtu.be')) {
+      const pathParts = parsed.pathname.split('/').filter(Boolean);
+      videoId = pathParts[0] || '';
+    } else if (host.includes('youtube.com') || host.includes('youtube-nocookie.com')) {
+      if (parsed.pathname.startsWith('/embed/')) {
+        const pathParts = parsed.pathname.split('/').filter(Boolean);
+        const idPart = pathParts[1] || '';
+        if (idPart !== 'videoseries') {
+          videoId = idPart;
+        }
+      } else if (parsed.pathname.startsWith('/shorts/')) {
+        const pathParts = parsed.pathname.split('/').filter(Boolean);
+        videoId = pathParts[1] || '';
+      } else if (parsed.pathname.startsWith('/live/')) {
+        const pathParts = parsed.pathname.split('/').filter(Boolean);
+        videoId = pathParts[1] || '';
+      } else {
+        videoId = parsed.searchParams.get('v') || '';
+      }
+    }
+
+    if (videoId && listId) {
+      return `https://www.youtube.com/embed/${videoId}?list=${encodeURIComponent(listId)}&autoplay=1&rel=0`;
+    }
+    if (videoId) {
+      return `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0`;
+    }
+    if (listId) {
+      return `https://www.youtube.com/embed/videoseries?list=${encodeURIComponent(listId)}&autoplay=1&rel=0`;
+    }
+  } catch {
+    const vMatch = trimmed.match(/(?:[?&]v=|youtu\.be\/|\/embed\/|\/shorts\/|\/live\/)([a-zA-Z0-9_-]{11})/);
+    const listMatch = trimmed.match(/[?&]list=([a-zA-Z0-9_-]+)/);
+    const videoId = vMatch ? vMatch[1] : '';
+    const listId = listMatch ? listMatch[1] : '';
+
+    if (videoId && listId) {
+      return `https://www.youtube.com/embed/${videoId}?list=${encodeURIComponent(listId)}&autoplay=1&rel=0`;
+    }
+    if (videoId) {
+      return `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0`;
+    }
+    if (listId) {
+      return `https://www.youtube.com/embed/videoseries?list=${encodeURIComponent(listId)}&autoplay=1&rel=0`;
+    }
+  }
+
+  return trimmed;
+}
+
+/**
  * فحص صارم لقابلية تضمين وتشغيل فيديو يوتيوب داخل iframe
  * يجلب صفحة watch ويتحقق من ytInitialPlayerResponse:
  * يشترط أن يكون "status": "OK" و "playableInEmbed": true حصراً
@@ -2034,8 +2104,8 @@ async function handleVodSources(request: Request, url: URL, env: Env): Promise<R
 
   const cache = (caches as any).default;
   const cacheUrl = new URL(url.toString());
-  // تحديث نسخة الكاش إلى v10-arabfix لتفريغ أي نتائج تالفة أو محجوبة كانت مخزنة مؤقتاً
-  cacheUrl.searchParams.set('v', 'v10-arabfix');
+  // تحديث نسخة الكاش إلى v11-ytembed لتفريغ أي نتائج سابقة وتفعيل صيغة التضمين لليوتيوب
+  cacheUrl.searchParams.set('v', 'v11-ytembed');
   const cacheKey = new Request(cacheUrl.toString(), request);
 
   if (!forceProbe) {
@@ -2140,67 +2210,70 @@ async function handleVodSources(request: Request, url: URL, env: Env): Promise<R
   let finalSources: { label: string; url: string; type: 'embed' | 'direct' }[] = [];
 
   // ==========================================
-  // 1. معالجة المحتوى العربي: السيرفرات المدمجة + الأرشيف فقط افتراضياً، وبدون يوتيوب تلقائياً
+  // 1. معالجة المحتوى العربي: إظهار السيرفرات المدمجة + الأرشيف + يوتيوب معاً
   // مع تطبيق اعتماد الأدمن المخصص إن وُجد (يوتيوب أو أرشيف كأساس أول)
+  // وتحويل روابط اليوتيوب تلقائياً إلى صيغة /embed/
   // ==========================================
   if (isArabic) {
-    const [archiveRes] = await Promise.allSettled([
+    const [archiveRes, youtubeRes] = await Promise.allSettled([
       title && type === 'movie' ? searchArchiveProvider(title) : Promise.resolve([]),
+      title ? searchYouTubeProvider(title, season, episode, type) : Promise.resolve([]),
     ]);
     const autoArchiveSources = archiveRes.status === 'fulfilled' ? archiveRes.value : [];
+    const autoYouTubeSources = (youtubeRes.status === 'fulfilled' ? youtubeRes.value : []).map((s) => ({
+      label: s.label,
+      url: toYouTubeEmbedUrl(s.url),
+      type: 'embed' as const,
+    }));
 
-    const overrideSources: { label: string; url: string; type: 'embed' | 'direct' }[] = [];
+    const customYoutubeUrl = vodOverride?.youtube_url ? toYouTubeEmbedUrl(vodOverride.youtube_url) : null;
+    const customArchiveUrl = vodOverride?.archive_url ? String(vodOverride.archive_url).trim() : null;
 
-    if (vodOverride) {
-      if (vodOverride.use_youtube_primary && vodOverride.youtube_url) {
-        overrideSources.push({
-          label: 'يوتيوب (معتمد)',
-          url: vodOverride.youtube_url,
-          type: 'embed',
-        });
-        if (vodOverride.archive_url) {
-          overrideSources.push({
-            label: 'أرشيف معتمد (Archive)',
-            url: vodOverride.archive_url,
-            type: 'direct',
-          });
-        }
-      } else if (vodOverride.use_archive_primary && vodOverride.archive_url) {
-        overrideSources.push({
-          label: 'أرشيف معتمد (Archive)',
-          url: vodOverride.archive_url,
-          type: 'direct',
-        });
-        if (vodOverride.youtube_url) {
-          overrideSources.push({
-            label: 'يوتيوب (معتمد)',
-            url: vodOverride.youtube_url,
-            type: 'embed',
-          });
-        }
-      } else {
-        if (vodOverride.archive_url) {
-          overrideSources.push({
-            label: 'أرشيف معتمد (Archive)',
-            url: vodOverride.archive_url,
-            type: 'direct',
-          });
-        }
-        if (vodOverride.youtube_url) {
-          overrideSources.push({
-            label: 'يوتيوب (معتمد)',
-            url: vodOverride.youtube_url,
-            type: 'embed',
-          });
-        }
-      }
+    const youtubeSources: { label: string; url: string; type: 'embed' | 'direct' }[] = [];
+    if (customYoutubeUrl) {
+      youtubeSources.push({
+        label: 'يوتيوب (معتمد)',
+        url: customYoutubeUrl,
+        type: 'embed',
+      });
+    } else if (autoYouTubeSources.length > 0) {
+      // إظهار رابط اليوتيوب التلقائي دائماً داخل قائمة المصادر حتى لو لم يحدد الأدمن رابطاً مخصصاً
+      youtubeSources.push(...autoYouTubeSources);
     }
 
-    finalSources = [
-      ...overrideSources,
-      ...allEmbedSources,
-      ...autoArchiveSources,
-    ];
+    const archiveSources: { label: string; url: string; type: 'embed' | 'direct' }[] = [];
+    if (customArchiveUrl) {
+      archiveSources.push({
+        label: 'أرشيف معتمد (Archive)',
+        url: customArchiveUrl,
+        type: 'direct',
+      });
+    }
+    archiveSources.push(...autoArchiveSources);
+
+    // ترتيب المصادر:
+    if (vodOverride?.use_youtube_primary && youtubeSources.length > 0) {
+      // يوتيوب المعتمد هو المشغل الأساسي الأول بقرار الأدمن
+      finalSources = [
+        ...youtubeSources,
+        ...allEmbedSources,
+        ...archiveSources,
+      ];
+    } else if (vodOverride?.use_archive_primary && archiveSources.length > 0) {
+      // الأرشيف المعتمد هو المشغل الأساسي الأول بقرار الأدمن
+      finalSources = [
+        ...archiveSources,
+        ...allEmbedSources,
+        ...youtubeSources,
+      ];
+    } else {
+      // الترتيب الطبيعي الكامل: السيرفرات المدمجة + اليوتيوب (مخصص أو تلقائي) + الأرشيف معاً
+      finalSources = [
+        ...allEmbedSources,
+        ...youtubeSources,
+        ...archiveSources,
+      ];
+    }
   } else {
     // ==========================================
     // 2. معالجة المحتوى الأجنبي: استبعاد يوتيوب تماماً والاعتماد حصرياً على السيرفرات المدمجة مع تصدر VidLink
@@ -4082,7 +4155,8 @@ async function handleAdminSaveVodOverride(request: Request, env: Env): Promise<R
     }
 
     const mediaType = body.mediaType === 'tv' ? 'tv' : 'movie';
-    const youtubeUrl = body.youtubeUrl ? String(body.youtubeUrl).trim() : null;
+    const rawYoutube = body.youtubeUrl ? String(body.youtubeUrl).trim() : null;
+    const youtubeUrl = rawYoutube ? toYouTubeEmbedUrl(rawYoutube) : null;
     const useYoutubePrimary = body.useYoutubePrimary ? 1 : 0;
     const archiveUrl = body.archiveUrl ? String(body.archiveUrl).trim() : null;
     const useArchivePrimary = body.useArchivePrimary ? 1 : 0;
@@ -4570,7 +4644,7 @@ async function handleAdminAutoYoutube(request: Request, env: Env, url: URL): Pro
           id: videoId,
           title: r.label.replace(/^يوتيوب\s*-\s*/, '') || title,
           url: `https://www.youtube.com/watch?v=${videoId}`,
-          embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}`,
+          embedUrl: toYouTubeEmbedUrl(`https://www.youtube.com/watch?v=${videoId}`),
           label: r.label,
         });
       }
@@ -4593,7 +4667,7 @@ async function handleAdminAutoYoutube(request: Request, env: Env, url: URL): Pro
             id: videoId,
             title: r.label.replace(/^يوتيوب\s*-\s*/, '') || title,
             url: `https://www.youtube.com/watch?v=${videoId}`,
-            embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}`,
+            embedUrl: toYouTubeEmbedUrl(`https://www.youtube.com/watch?v=${videoId}`),
             label: r.label,
           });
         }
