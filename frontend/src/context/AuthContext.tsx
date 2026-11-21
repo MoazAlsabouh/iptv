@@ -52,11 +52,13 @@ function getInitialDeviceName(): string {
     const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
     let name = 'متصفح ويب';
     if (/SmartTV|Tizen|Web0S|NetCast|Android TV|AppleTV/i.test(userAgent)) {
-      name = 'تلفاز ذكي (Smart TV)';
+      name = 'شاشة التلفاز';
     } else if (/Android/i.test(userAgent)) {
-      name = 'جهاز أندرويد';
-    } else if (/iPhone|iPad/i.test(userAgent)) {
-      name = 'جهاز آبل';
+      name = 'هاتف أندرويد';
+    } else if (/iPhone/i.test(userAgent)) {
+      name = 'هاتف آيفون';
+    } else if (/iPad/i.test(userAgent)) {
+      name = 'جهاز آيباد';
     } else if (/Windows/i.test(userAgent)) {
       name = 'كمبيوتر ويندوز';
     } else if (/Macintosh/i.test(userAgent)) {
@@ -65,7 +67,21 @@ function getInitialDeviceName(): string {
     window.localStorage.setItem(DEVICE_NAME_KEY, name);
     return name;
   }
-  return 'شاشة التلفاز';
+
+  // على الأجهزة والتطبيقات الأصلية (Native - Android / iOS / Android TV)
+  if (Platform.isTV) {
+    return 'شاشة التلفاز';
+  }
+
+  if (Platform.OS === 'android') {
+    return 'هاتف محمول';
+  }
+
+  if (Platform.OS === 'ios') {
+    return 'هاتف محمول';
+  }
+
+  return 'هاتف محمول';
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {

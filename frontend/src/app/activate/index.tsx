@@ -12,20 +12,34 @@ import {
   Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 
 export default function ActivateScreen(): React.JSX.Element {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { activate, deviceId, deviceName } = useAuth();
   const { width } = useWindowDimensions();
 
+  const defaultDeviceName = React.useMemo(() => {
+    if (Platform.OS !== 'web') {
+      return Platform.isTV ? 'شاشة التلفاز' : 'هاتف محمول';
+    }
+    return deviceName || 'متصفح ويب';
+  }, [deviceName]);
+
   const [code, setCode] = useState<string>('');
-  const [customDeviceName, setCustomDeviceName] = useState<string>(deviceName);
+  const [customDeviceName, setCustomDeviceName] = useState<string>(defaultDeviceName);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  // تحديث اسم الجهاز في حال تغير الاكتشاف
+  React.useEffect(() => {
+    setCustomDeviceName(defaultDeviceName);
+  }, [defaultDeviceName]);
 
   const isWide = width >= 768;
 
@@ -72,7 +86,13 @@ export default function ActivateScreen(): React.JSX.Element {
       <View style={styles.glowBlob2} />
 
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          {
+            paddingTop: Math.max(insets.top, 24),
+            paddingBottom: Math.max(insets.bottom, 24),
+          },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         <View style={[styles.card, isWide && styles.cardWide]}>

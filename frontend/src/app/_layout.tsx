@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, ActivityIndicator, Platform } from 'react-native';
 import { Slot, usePathname, useRouter, useSegments } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as Font from 'expo-font';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import { MainLayout } from '../components/layout/MainLayout';
@@ -213,6 +214,21 @@ function NavigationGuard(): React.JSX.Element {
   const isPublic = isSegmentPublic || isBrowserPathPublic || isExpoPathPublic;
 
   useEffect(() => {
+    // على التطبيقات الأصلية (أندرويد/تلفاز)، تجاوز صفحة الهبوط التسويقية والتوجه فوراً للمنصة
+    if (Platform.OS !== 'web') {
+      if (isLoading) return;
+      if (token) {
+        if (firstSegment === '' || firstSegment === 'activate' || rawExpoPath === '/' || rawExpoPath === '/activate') {
+          router.replace('/home');
+        }
+      } else {
+        if (firstSegment === '' || rawExpoPath === '/') {
+          router.replace('/activate');
+        }
+      }
+      return;
+    }
+
     // منع أي تحويل تلقائي للمسارات العامة لمنع التعليق
     if (isPublic) return;
 
@@ -221,7 +237,7 @@ function NavigationGuard(): React.JSX.Element {
     if (!token) {
       router.replace('/activate');
     }
-  }, [token, isLoading, router, isPublic]);
+  }, [token, isLoading, router, isPublic, firstSegment, rawExpoPath]);
 
   // توجيه المستخدم المشترك خارج صفحة التفعيل فقط إذا كان في /activate
   useEffect(() => {
@@ -290,10 +306,12 @@ export default function RootLayout(): React.JSX.Element {
   );
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <NavigationGuard />
-      </AuthProvider>
-    </QueryClientProvider>
+    <SafeAreaProvider>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <NavigationGuard />
+        </AuthProvider>
+      </QueryClientProvider>
+    </SafeAreaProvider>
   );
 }

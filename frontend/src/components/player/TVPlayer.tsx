@@ -464,17 +464,37 @@ const NativeVideoPlayer: React.FC<{
   }, [player, onError, onBuffering]);
 
   return (
-    <VideoView
-      style={[styles.container, style]}
-      player={player}
-      contentFit="contain"
-      nativeControls={false}
-    />
+    <View style={[styles.nativeContainer, style]}>
+      <VideoView
+        style={[StyleSheet.absoluteFill, styles.videoViewFill]}
+        player={player}
+        surfaceType="textureView"
+        contentFit="contain"
+        nativeControls={false}
+      />
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
+  nativeContainer: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#000000',
+    overflow: 'hidden',
+    position: 'relative',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  videoViewFill: {
+    width: '100%',
+    height: '100%',
+  },
   container: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
     backgroundColor: '#000000',
     overflow: 'hidden',
   },

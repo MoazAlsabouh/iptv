@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, Platform, Image } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuth } from '../../context/AuthContext';
@@ -31,9 +32,18 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const router = useRouter();
   const currentPath = usePathname();
   const isChildMode = useAppStore((state) => state.isChildMode);
+  const insets = useSafeAreaInsets();
 
   return (
-    <View style={styles.rootContainer}>
+    <View
+      style={[
+        styles.rootContainer,
+        {
+          paddingTop: Math.max(insets.top, 0),
+          paddingBottom: Math.max(insets.bottom, 0),
+        },
+      ]}
+    >
       {/* الشريط الجانبي (Sidebar) */}
       <View style={styles.sidebar}>
         <View>

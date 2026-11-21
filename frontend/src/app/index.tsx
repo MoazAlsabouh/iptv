@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   Image,
   Pressable,
+  ActivityIndicator,
   StyleSheet,
   ScrollView,
   useWindowDimensions,
@@ -30,6 +31,32 @@ export default function LandingPage(): React.JSX.Element {
 
   const { token } = useAuth();
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // تجاوز صفحة الهبوط فوراً في تطبيق الأندرويد/التلفاز الأصلي
+  useEffect(() => {
+    if (Platform.OS !== 'web') {
+      if (token) {
+        router.replace('/home');
+      } else {
+        router.replace('/activate');
+      }
+    }
+  }, [token, router]);
+
+  if (Platform.OS !== 'web') {
+    return (
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: '#0B1120',
+          justifyContent: 'center',
+          alignItems: 'center',
+        }}
+      >
+        <ActivityIndicator size="large" color="#0EA5E9" />
+      </View>
+    );
+  }
 
   // إظهار تنبيه لطيف للمستخدم
   const showToast = (message: string) => {

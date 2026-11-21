@@ -9,6 +9,7 @@ import {
   Platform,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSafeKeepAwake } from '../../hooks/useSafeKeepAwake';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../../store/useAppStore';
@@ -26,6 +27,7 @@ import { shouldAutoProxy, getProxyStreamUrl } from '../../utils/proxy';
  */
 export function PlayerScreen(): React.JSX.Element {
   useSafeKeepAwake();
+  const insets = useSafeAreaInsets();
 
   const router = useRouter();
   const params = useLocalSearchParams<{
@@ -404,15 +406,23 @@ export function PlayerScreen(): React.JSX.Element {
         <Pressable
           hasTVPreferredFocus
           onPress={resetOverlayTimer}
-          style={StyleSheet.absoluteFillObject}
+          style={[StyleSheet.absoluteFillObject, { backgroundColor: 'transparent' }]}
         >
-          <View style={StyleSheet.absoluteFillObject} />
+          <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'transparent' }]} />
         </Pressable>
       )}
 
-      {/* 3. عناصر التحكم العائمة العلوية */}
+      {/* 3. عناصر التحكم العائمة العلوية مع دعم المنطقة الآمنة للهاتف والتلفاز */}
       {showOverlay && !playbackError && (
-        <View style={styles.overlayBar}>
+        <View
+          style={[
+            styles.overlayBar,
+            {
+              paddingTop: Math.max(insets.top, 16) + (Platform.OS === 'android' ? 8 : 0),
+              paddingHorizontal: Math.max(insets.left, insets.right, 24),
+            },
+          ]}
+        >
           <View style={styles.controlsRow}>
             {/* زر الخروج */}
             <Pressable
@@ -944,9 +954,13 @@ export function PlayerScreen(): React.JSX.Element {
 const styles = StyleSheet.create({
   rootContainer: {
     flex: 1,
+    width: '100%',
+    height: '100%',
     backgroundColor: '#000000',
     justifyContent: 'center',
     alignItems: 'center',
+    position: 'relative',
+    overflow: 'hidden',
   },
   overlayBar: {
     position: 'absolute',
