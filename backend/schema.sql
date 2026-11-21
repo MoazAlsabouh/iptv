@@ -93,10 +93,13 @@ CREATE TABLE IF NOT EXISTS vod_source_overrides (
   archive_url TEXT,
   use_archive_primary INTEGER DEFAULT 0,
   notes TEXT,
+  review_status TEXT DEFAULT 'pending', -- 'pending' | 'verified' | 'hidden' | 'deleted'
+  approved_source_type TEXT,            -- 'default_servers' | 'archive' | 'youtube'
   updated_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_vod_source_overrides_updated ON vod_source_overrides(updated_at);
+CREATE INDEX IF NOT EXISTS idx_vod_source_review_status ON vod_source_overrides(review_status);
 
 -- جدول تخصيص سلاسل وباقات القنوات (Network Overrides)
 CREATE TABLE IF NOT EXISTS network_overrides (

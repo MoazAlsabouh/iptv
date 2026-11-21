@@ -930,7 +930,7 @@ async function handleVodCatalog(url: URL, env: Env): Promise<Response> {
     const data = (await res.json()) as any;
     const rawResults = data.results || [];
     const today = new Date().toISOString().split('T')[0];
-    const results: VodItem[] = rawResults.map((item: any) => {
+    let results: VodItem[] = rawResults.map((item: any) => {
       const isTv =
         item.media_type === 'tv' ||
         (!item.title && Boolean(item.name)) ||
@@ -964,6 +964,41 @@ async function handleVodCatalog(url: URL, env: Env): Promise<Response> {
         sources: buildVodSources(itemType, item.id),
       };
     });
+
+    // تصفية المحتوى العربي المخفي أو المحذوف من الكتالوج العام للمستخدمين (دون المساس بالمحتوى الأجنبي)
+    if (env.DB && results.length > 0) {
+      try {
+        const hiddenRows = await env.DB.prepare(
+          "SELECT tmdb_id, title FROM vod_source_overrides WHERE review_status IN ('hidden', 'deleted')"
+        ).all<any>();
+        if (hiddenRows.results && hiddenRows.results.length > 0) {
+          const hiddenIds = new Set(
+            hiddenRows.results.map((r: any) => String(r.tmdb_id || '').toLowerCase())
+          );
+          const hiddenTitles = new Set(
+            hiddenRows.results.map((r: any) => String(r.title || '').trim().toLowerCase())
+          );
+          results = results.filter((item) => {
+            const isArabicItem = item.originalLanguage === 'ar';
+            if (!isArabicItem) return true;
+            const rawId = item.id.replace(/^tmdb-(tv|movie)-/, '').toLowerCase();
+            if (
+              hiddenIds.has(item.id.toLowerCase()) ||
+              hiddenIds.has(rawId) ||
+              hiddenIds.has(`tmdb-${rawId}`)
+            ) {
+              return false;
+            }
+            if (item.title && hiddenTitles.has(item.title.trim().toLowerCase())) {
+              return false;
+            }
+            return true;
+          });
+        }
+      } catch (e) {
+        console.warn('[VOD] Catalog filter error:', e);
+      }
+    }
 
     return jsonResponse({
       page: data.page || page,
@@ -1000,7 +1035,7 @@ async function handleVodSearch(url: URL, env: Env): Promise<Response> {
     );
 
     const today = new Date().toISOString().split('T')[0];
-    const results: VodItem[] = rawResults.map((item: any) => {
+    let results: VodItem[] = rawResults.map((item: any) => {
       const itemType: 'movie' | 'tv' = item.media_type === 'tv' ? 'tv' : 'movie';
       const title = item.title || item.name || 'بدون عنوان';
       const poster = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : '';
@@ -1029,6 +1064,41 @@ async function handleVodSearch(url: URL, env: Env): Promise<Response> {
         sources: buildVodSources(itemType, item.id),
       };
     });
+
+    // تصفية المحتوى العربي المخفي أو المحذوف من الكتالوج العام للمستخدمين (دون المساس بالمحتوى الأجنبي)
+    if (env.DB && results.length > 0) {
+      try {
+        const hiddenRows = await env.DB.prepare(
+          "SELECT tmdb_id, title FROM vod_source_overrides WHERE review_status IN ('hidden', 'deleted')"
+        ).all<any>();
+        if (hiddenRows.results && hiddenRows.results.length > 0) {
+          const hiddenIds = new Set(
+            hiddenRows.results.map((r: any) => String(r.tmdb_id || '').toLowerCase())
+          );
+          const hiddenTitles = new Set(
+            hiddenRows.results.map((r: any) => String(r.title || '').trim().toLowerCase())
+          );
+          results = results.filter((item) => {
+            const isArabicItem = item.originalLanguage === 'ar';
+            if (!isArabicItem) return true;
+            const rawId = item.id.replace(/^tmdb-(tv|movie)-/, '').toLowerCase();
+            if (
+              hiddenIds.has(item.id.toLowerCase()) ||
+              hiddenIds.has(rawId) ||
+              hiddenIds.has(`tmdb-${rawId}`)
+            ) {
+              return false;
+            }
+            if (item.title && hiddenTitles.has(item.title.trim().toLowerCase())) {
+              return false;
+            }
+            return true;
+          });
+        }
+      } catch (e) {
+        console.warn('[VOD] Catalog filter error:', e);
+      }
+    }
 
     return jsonResponse({
       page: data.page || page,
@@ -3983,6 +4053,8 @@ async function handleAdminGetVodOverrides(request: Request, env: Env): Promise<R
       archiveUrl: r.archive_url,
       useArchivePrimary: Boolean(r.use_archive_primary),
       notes: r.notes,
+      reviewStatus: r.review_status || 'pending',
+      approvedSourceType: r.approved_source_type || null,
       updatedAt: r.updated_at,
     }));
     return jsonResponse({ overrides });
@@ -4015,12 +4087,15 @@ async function handleAdminSaveVodOverride(request: Request, env: Env): Promise<R
     const archiveUrl = body.archiveUrl ? String(body.archiveUrl).trim() : null;
     const useArchivePrimary = body.useArchivePrimary ? 1 : 0;
     const notes = body.notes ? String(body.notes).trim() : null;
+    const rawStatus = String(body.reviewStatus || body.review_status || 'pending').trim().toLowerCase();
+    const reviewStatus = ['pending', 'verified', 'hidden', 'deleted'].includes(rawStatus) ? rawStatus : 'pending';
+    const approvedSourceType = body.approvedSourceType ? String(body.approvedSourceType).trim() : null;
     const now = new Date().toISOString();
 
     await env.DB.prepare(
       `INSERT INTO vod_source_overrides (
-        tmdb_id, title, media_type, youtube_url, use_youtube_primary, archive_url, use_archive_primary, notes, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        tmdb_id, title, media_type, youtube_url, use_youtube_primary, archive_url, use_archive_primary, notes, review_status, approved_source_type, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(tmdb_id) DO UPDATE SET
         title = excluded.title,
         media_type = excluded.media_type,
@@ -4029,9 +4104,11 @@ async function handleAdminSaveVodOverride(request: Request, env: Env): Promise<R
         archive_url = excluded.archive_url,
         use_archive_primary = excluded.use_archive_primary,
         notes = excluded.notes,
+        review_status = excluded.review_status,
+        approved_source_type = excluded.approved_source_type,
         updated_at = excluded.updated_at`
     )
-      .bind(tmdbId, title, mediaType, youtubeUrl, useYoutubePrimary, archiveUrl, useArchivePrimary, notes, now)
+      .bind(tmdbId, title, mediaType, youtubeUrl, useYoutubePrimary, archiveUrl, useArchivePrimary, notes, reviewStatus, approvedSourceType, now)
       .run();
 
     return jsonResponse({ success: true, message: 'تم حفظ وتطبيق الاعتماد بنجاح' });
@@ -4244,6 +4321,8 @@ async function handleGetPublicVodOverride(request: Request, env: Env, tmdbId: st
         archiveUrl: r.archive_url,
         useArchivePrimary: Boolean(r.use_archive_primary),
         notes: r.notes,
+        reviewStatus: r.review_status || 'pending',
+        approvedSourceType: r.approved_source_type || null,
         updatedAt: r.updated_at,
       },
     });
@@ -4267,11 +4346,275 @@ async function handleGetPublicVodOverridesAll(request: Request, env: Env): Promi
       archiveUrl: r.archive_url,
       useArchivePrimary: Boolean(r.use_archive_primary),
       notes: r.notes,
+      reviewStatus: r.review_status || 'pending',
+      approvedSourceType: r.approved_source_type || null,
       updatedAt: r.updated_at,
     }));
     return jsonResponse({ overrides });
   } catch {
     return jsonResponse({ overrides: [] });
+  }
+}
+
+/**
+ * جلب الكتالوج العربي للأدمن مع حالات التدقيق والاعتماد والإحصائيات
+ */
+async function handleAdminGetArabicCatalog(request: Request, env: Env, url: URL): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  const apiKey = env.TMDB_API_KEY || '';
+  if (!apiKey) {
+    return jsonResponse({ error: 'مفتاح TMDB غير مهيأ', results: [], totalPages: 1 }, 500);
+  }
+
+  const rawType = (url.searchParams.get('type') || 'series').toLowerCase();
+  const isSeries = rawType === 'series' || rawType === 'tv';
+  const mediaType: 'movie' | 'tv' = isSeries ? 'tv' : 'movie';
+  const category = (url.searchParams.get('category') || 'all').toLowerCase();
+  const statusFilter = (url.searchParams.get('status') || 'all').toLowerCase();
+  const page = parseInt(url.searchParams.get('page') || '1', 10) || 1;
+  const q = (url.searchParams.get('q') || '').trim();
+
+  // التصنيفات المخصصة للمحتوى العربي
+  const tvGenres: Record<string, number> = {
+    drama: 18,
+    comedy: 35,
+    historical: 10768, // تاريخي وحربي
+    action: 10759,     // أكشن ومغامرات
+    crime: 80,         // جريمة وتشويق
+    family: 10751,     // عائلي
+  };
+
+  const movieGenres: Record<string, number> = {
+    comedy: 35,
+    drama: 18,
+    action: 28,
+    romance: 10749,
+    history: 36,
+    horror: 27,
+  };
+
+  let tmdbUrl = '';
+  if (q) {
+    tmdbUrl = `https://api.themoviedb.org/3/search/${mediaType}?api_key=${apiKey}&language=ar-SA&query=${encodeURIComponent(q)}&page=${page}`;
+  } else {
+    let genreParam = '';
+    if (category !== 'all') {
+      const gId = isSeries ? tvGenres[category] : movieGenres[category];
+      if (gId) {
+        genreParam = `&with_genres=${gId}`;
+      }
+    }
+    tmdbUrl = `https://api.themoviedb.org/3/discover/${mediaType}?api_key=${apiKey}&with_original_language=ar&sort_by=popularity.desc&page=${page}&language=ar-SA${genreParam}`;
+  }
+
+  try {
+    const res = await fetch(tmdbUrl, { headers: { Accept: 'application/json' } });
+    if (!res.ok) {
+      return jsonResponse({ error: 'فشل استعلام TMDB', results: [], totalPages: 1 }, 502);
+    }
+
+    const data = (await res.json()) as any;
+    const rawResults = (data.results || []).filter((item: any) => {
+      if (q && item.original_language && item.original_language !== 'ar') {
+        return false;
+      }
+      return true;
+    });
+
+    // جلب سجل الاعتمادات والتخصيصات من D1
+    const overridesMap = new Map<string, any>();
+    const overridesTitleMap = new Map<string, any>();
+    let allOverrides: any[] = [];
+    if (env.DB) {
+      try {
+        const rows = await env.DB.prepare('SELECT * FROM vod_source_overrides').all<any>();
+        allOverrides = rows.results || [];
+        for (const row of allOverrides) {
+          if (row.tmdb_id) {
+            overridesMap.set(String(row.tmdb_id).toLowerCase(), row);
+          }
+          if (row.title) {
+            overridesTitleMap.set(String(row.title).trim().toLowerCase(), row);
+          }
+        }
+      } catch (e) {
+        console.warn('[Admin] Failed to load overrides for catalog:', e);
+      }
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    const items = rawResults.map((item: any) => {
+      const title = item.title || item.name || 'بدون عنوان';
+      const poster = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : '';
+      const backdrop = item.backdrop_path ? `https://image.tmdb.org/t/p/w780${item.backdrop_path}` : undefined;
+      const rating = item.vote_average ? Number(Number(item.vote_average).toFixed(1)) : 0;
+      const releaseDate = item.release_date || item.first_air_date || '';
+      const year = releaseDate ? releaseDate.substring(0, 4) : '';
+      const isUnreleased = Boolean(releaseDate && releaseDate > today);
+      const overview = item.overview || '';
+      const idKey = `tmdb-${mediaType}-${item.id}`.toLowerCase();
+      const rawIdKey = String(item.id).toLowerCase();
+
+      // البحث عن التخصيص المطابق
+      const ov =
+        overridesMap.get(idKey) ||
+        overridesMap.get(rawIdKey) ||
+        overridesTitleMap.get(title.trim().toLowerCase()) ||
+        null;
+
+      const reviewStatus = ov ? (ov.review_status || 'pending') : 'pending';
+      const approvedSourceType = ov ? (ov.approved_source_type || null) : null;
+
+      return {
+        id: `tmdb-${mediaType}-${item.id}`,
+        tmdbId: item.id,
+        title,
+        type: mediaType,
+        poster,
+        backdrop,
+        rating,
+        year,
+        overview,
+        releaseDate,
+        isUnreleased,
+        originalLanguage: item.original_language || 'ar',
+        reviewStatus,
+        approvedSourceType,
+        override: ov
+          ? {
+              tmdbId: ov.tmdb_id,
+              title: ov.title,
+              mediaType: ov.media_type || mediaType,
+              youtubeUrl: ov.youtube_url,
+              useYoutubePrimary: Boolean(ov.use_youtube_primary),
+              archiveUrl: ov.archive_url,
+              useArchivePrimary: Boolean(ov.use_archive_primary),
+              notes: ov.notes,
+              reviewStatus: ov.review_status || 'pending',
+              approvedSourceType: ov.approved_source_type || null,
+              updatedAt: ov.updated_at,
+            }
+          : null,
+      };
+    });
+
+    // إحصائيات الحالات في نتائج هذه الصفحة
+    const statusCounts = {
+      all: items.length,
+      pending: items.filter((i: any) => i.reviewStatus === 'pending').length,
+      verified: items.filter((i: any) => i.reviewStatus === 'verified').length,
+      hidden: items.filter((i: any) => i.reviewStatus === 'hidden').length,
+      deleted: items.filter((i: any) => i.reviewStatus === 'deleted').length,
+    };
+
+    // التصفية بحسب الحالة إن طلبت
+    let filteredResults = items;
+    if (statusFilter && statusFilter !== 'all') {
+      filteredResults = items.filter((i: any) => i.reviewStatus === statusFilter);
+    }
+
+    return jsonResponse({
+      page: data.page || page,
+      totalPages: data.total_pages || 1,
+      totalResults: data.total_results || items.length,
+      statusCounts,
+      results: filteredResults,
+    });
+  } catch (err: any) {
+    return jsonResponse(
+      { error: 'خطأ أثناء جلب الكتالوج العربي: ' + (err?.message || ''), results: [], totalPages: 1 },
+      500
+    );
+  }
+}
+
+/**
+ * مسار الفحص التلقائي لروابط YouTube للمحتوى العربي
+ */
+async function handleAdminAutoYoutube(request: Request, env: Env, url: URL): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  const title = (url.searchParams.get('title') || '').trim();
+  if (!title) {
+    return jsonResponse({ error: 'عنوان العمل مطلوب', results: [] }, 400);
+  }
+
+  const rawType = (url.searchParams.get('type') || 'tv').toLowerCase();
+  const type: 'movie' | 'tv' = rawType === 'movie' ? 'movie' : 'tv';
+  const season = parseInt(url.searchParams.get('season') || '1', 10) || 1;
+  const episode = parseInt(url.searchParams.get('episode') || '1', 10) || 1;
+
+  try {
+    const directResults = await searchYouTubeProvider(title, season, episode, type);
+
+    const candidates: Array<{
+      id: string;
+      title: string;
+      url: string;
+      embedUrl: string;
+      label: string;
+    }> = [];
+
+    for (const r of directResults) {
+      const match = r.url.match(/embed\/([a-zA-Z0-9_-]{11})/);
+      const videoId = match ? match[1] : '';
+      if (videoId) {
+        candidates.push({
+          id: videoId,
+          title: r.label.replace(/^يوتيوب\s*-\s*/, '') || title,
+          url: `https://www.youtube.com/watch?v=${videoId}`,
+          embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}`,
+          label: r.label,
+        });
+      }
+    }
+
+    // إذا لم يجد مقترحات، تجربة استعلام بحث إضافي
+    if (candidates.length === 0) {
+      const extraQuery =
+        type === 'movie'
+          ? `${title} فيلم كامل عربي`
+          : season > 1
+          ? `${title} الجزء ${season} الحلقة ${episode}`
+          : `${title} الحلقة ${episode}`;
+      const searchRes = await searchYouTubeDirect(extraQuery, type === 'movie', title, episode);
+      for (const r of searchRes) {
+        const match = r.url.match(/embed\/([a-zA-Z0-9_-]{11})/);
+        const videoId = match ? match[1] : '';
+        if (videoId && !candidates.some((c) => c.id === videoId)) {
+          candidates.push({
+            id: videoId,
+            title: r.label.replace(/^يوتيوب\s*-\s*/, '') || title,
+            url: `https://www.youtube.com/watch?v=${videoId}`,
+            embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}`,
+            label: r.label,
+          });
+        }
+      }
+    }
+
+    return jsonResponse({
+      title,
+      type,
+      season,
+      episode,
+      results: candidates,
+    });
+  } catch (err: any) {
+    return jsonResponse(
+      {
+        error: 'فشل جلب مقترحات اليوتيوب: ' + (err?.message || ''),
+        results: [],
+      },
+      500
+    );
   }
 }
 
@@ -5036,6 +5379,12 @@ export default {
     // ==========================================
     // مسارات تخصيص مصادر الأفلام والمسلسلات العربية (VOD Source Overrides)
     // ==========================================
+    if (url.pathname === '/api/admin/vod/arabic-catalog' && request.method === 'GET') {
+      return handleAdminGetArabicCatalog(request, env, url);
+    }
+    if (url.pathname === '/api/admin/vod/auto-youtube' && request.method === 'GET') {
+      return handleAdminAutoYoutube(request, env, url);
+    }
     if (url.pathname === '/api/admin/vod/overrides' && request.method === 'GET') {
       return handleAdminGetVodOverrides(request, env);
     }

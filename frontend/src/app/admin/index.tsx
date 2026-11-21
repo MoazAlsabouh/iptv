@@ -38,6 +38,8 @@ export interface VodOverrideItem {
   archiveUrl: string | null;
   useArchivePrimary: boolean;
   notes: string | null;
+  reviewStatus?: 'pending' | 'verified' | 'hidden' | 'deleted';
+  approvedSourceType?: 'default_servers' | 'archive' | 'youtube' | null;
   updatedAt?: string;
 }
 
@@ -165,6 +167,26 @@ const DEFAULT_VOD_SETTINGS: VodSettings = {
   ],
 };
 
+const ARABIC_SERIES_CATEGORIES = [
+  { id: 'all', label: 'الكل' },
+  { id: 'drama', label: 'دراما' },
+  { id: 'comedy', label: 'كوميديا' },
+  { id: 'historical', label: 'تاريخي وحربي' },
+  { id: 'action', label: 'أكشن ومغامرات' },
+  { id: 'crime', label: 'جريمة وتشويق' },
+  { id: 'family', label: 'عائلي' },
+];
+
+const ARABIC_MOVIES_CATEGORIES = [
+  { id: 'all', label: 'الكل' },
+  { id: 'comedy', label: 'كوميديا' },
+  { id: 'drama', label: 'دراما' },
+  { id: 'action', label: 'أكشن ومغامرات' },
+  { id: 'romance', label: 'رومانسي' },
+  { id: 'history', label: 'تاريخي' },
+  { id: 'horror', label: 'رعب وإثارة' },
+];
+
 const ADMIN_TOKEN_KEY = 'iptv_admin_token';
 const ADMIN_STORAGE_KEY = 'iptv_admin_key';
 
@@ -212,7 +234,37 @@ export default function AdminScreen(): React.JSX.Element {
   const [vodArchiveUrl, setVodArchiveUrl] = useState<string>('');
   const [vodArchivePrimary, setVodArchivePrimary] = useState<boolean>(false);
   const [vodNotes, setVodNotes] = useState<string>('');
+  const [vodReviewStatus, setVodReviewStatus] = useState<'pending' | 'verified' | 'hidden' | 'deleted'>('pending');
+  const [vodApprovedSourceType, setVodApprovedSourceType] = useState<'default_servers' | 'archive' | 'youtube' | null>(null);
   const [vodOverrideSaving, setVodOverrideSaving] = useState<boolean>(false);
+
+  // كتالوج المحتوى العربي المباشر ونظام التدقيق
+  const [arabicCatalogType, setArabicCatalogType] = useState<'series' | 'movies'>('series');
+  const [arabicCatalogCategory, setArabicCatalogCategory] = useState<string>('all');
+  const [arabicStatusFilter, setArabicStatusFilter] = useState<'all' | 'pending' | 'verified' | 'hidden' | 'deleted'>('all');
+  const [arabicStatusCounts, setArabicStatusCounts] = useState<{
+    all: number;
+    pending: number;
+    verified: number;
+    hidden: number;
+    deleted: number;
+  }>({ all: 0, pending: 0, verified: 0, hidden: 0, deleted: 0 });
+  const [arabicCatalogItems, setArabicCatalogItems] = useState<any[]>([]);
+  const [arabicCatalogLoading, setArabicCatalogLoading] = useState<boolean>(false);
+  const [arabicCatalogPage, setArabicCatalogPage] = useState<number>(1);
+  const [arabicCatalogTotalPages, setArabicCatalogTotalPages] = useState<number>(1);
+
+  // جلب مقترحات اليوتيوب التلقائية
+  const [autoYoutubeLoading, setAutoYoutubeLoading] = useState<boolean>(false);
+  const [autoYoutubeResults, setAutoYoutubeResults] = useState<
+    Array<{
+      id: string;
+      title: string;
+      url: string;
+      embedUrl: string;
+      label: string;
+    }>
+  >([]);
 
   // نافذة معاينة مشغلات VOD السريعة (VidLink / VidSrc / YouTube / Archive)
   const [vodPreviewModalVisible, setVodPreviewModalVisible] = useState<boolean>(false);
@@ -860,12 +912,16 @@ export default function AdminScreen(): React.JSX.Element {
       setVodArchiveUrl(existing.archiveUrl || '');
       setVodArchivePrimary(existing.useArchivePrimary);
       setVodNotes(existing.notes || '');
+      setVodReviewStatus(existing.reviewStatus || 'pending');
+      setVodApprovedSourceType(existing.approvedSourceType || null);
     } else {
       setVodYoutubeUrl('');
       setVodYoutubePrimary(false);
       setVodArchiveUrl('');
       setVodArchivePrimary(false);
       setVodNotes('');
+      setVodReviewStatus('pending');
+      setVodApprovedSourceType(null);
     }
   };
 
@@ -960,7 +1016,93 @@ export default function AdminScreen(): React.JSX.Element {
     handleCheckArchive(query);
   };
 
-  const handleSaveVodOverride = async (options?: { forceArchivePrimary?: boolean; forceYoutubePrimary?: boolean }) => {
+  const fetchArabicCatalog = useCallback(
+    async (
+      page: number = 1,
+      type: 'series' | 'movies' = arabicCatalogType,
+      category: string = arabicCatalogCategory,
+      status: string = arabicStatusFilter,
+      query: string = searchVodQuery
+    ) => {
+      setArabicCatalogLoading(true);
+      try {
+        const url = new URL(`${BACKEND_BASE_URL}/api/admin/vod/arabic-catalog`);
+        url.searchParams.set('type', type);
+        url.searchParams.set('category', category);
+        url.searchParams.set('status', status);
+        url.searchParams.set('page', String(page));
+        if (query.trim()) {
+          url.searchParams.set('q', query.trim());
+        }
+        const res = await fetch(url.toString(), {
+          headers: getAuthHeaders(),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setArabicCatalogItems(Array.isArray(data.results) ? data.results : []);
+          setArabicCatalogPage(data.page || 1);
+          setArabicCatalogTotalPages(data.totalPages || 1);
+          if (data.statusCounts) {
+            setArabicStatusCounts(data.statusCounts);
+          }
+        }
+      } catch (err) {
+        console.warn('[Admin] Failed to fetch arabic catalog:', err);
+      } finally {
+        setArabicCatalogLoading(false);
+      }
+    },
+    [getAuthHeaders, arabicCatalogType, arabicCatalogCategory, arabicStatusFilter, searchVodQuery]
+  );
+
+  const handleAutoFetchYoutube = async () => {
+    if (!selectedVodItem) return;
+    setAutoYoutubeLoading(true);
+    setAutoYoutubeResults([]);
+    try {
+      const isTv =
+        selectedVodItem.media_type === 'tv' ||
+        String(selectedVodItem.id).startsWith('tmdb-tv-') ||
+        String(selectedVodItem.id).includes('-s');
+      const title = selectedVodItem.title || selectedVodItem.name || '';
+      const season = selectedSeason || 1;
+      const episode = selectedEpisode || 1;
+      const url = new URL(`${BACKEND_BASE_URL}/api/admin/vod/auto-youtube`);
+      url.searchParams.set('title', title);
+      url.searchParams.set('type', isTv ? 'tv' : 'movie');
+      if (isTv) {
+        url.searchParams.set('season', String(season));
+        url.searchParams.set('episode', String(episode));
+      }
+      const res = await fetch(url.toString(), {
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const results = Array.isArray(data.results) ? data.results : [];
+        setAutoYoutubeResults(results);
+        if (results.length === 0) {
+          setStatusMessage('لم يُعثر على مقترحات يوتيوب تلقائية، يمكنك إدخال الرابط يدوياً');
+        } else {
+          setStatusMessage(`تم العثور على ${results.length} مقترح من يوتيوب`);
+        }
+      } else {
+        setStatusMessage('تعذر جلب مقترحات اليوتيوب');
+      }
+    } catch {
+      setStatusMessage('تعذر الاتصال بخدمة فحص اليوتيوب');
+    } finally {
+      setAutoYoutubeLoading(false);
+    }
+  };
+
+  const handleSaveVodOverride = async (options?: {
+    forceArchivePrimary?: boolean;
+    forceYoutubePrimary?: boolean;
+    customReviewStatus?: 'pending' | 'verified' | 'hidden' | 'deleted';
+    customApprovedSourceType?: 'default_servers' | 'archive' | 'youtube' | null;
+    customYoutubeUrl?: string;
+  }) => {
     if (!selectedVodItem) return;
     setVodOverrideSaving(true);
     try {
@@ -978,6 +1120,16 @@ export default function AdminScreen(): React.JSX.Element {
         setVodArchivePrimary(false);
       }
 
+      const reviewStatus = options?.customReviewStatus || vodReviewStatus || 'pending';
+      const approvedSourceType =
+        options?.customApprovedSourceType !== undefined
+          ? options.customApprovedSourceType
+          : vodApprovedSourceType;
+      const effectiveYoutubeUrl =
+        options?.customYoutubeUrl !== undefined
+          ? options.customYoutubeUrl
+          : vodYoutubeUrl.trim() || null;
+
       const targetKey = getTargetOverrideKey(selectedVodItem, selectedSeason, selectedEpisode);
       const targetTitle = getTargetScopeTitle(selectedVodItem, selectedSeason, selectedEpisode);
       const isTv =
@@ -989,11 +1141,13 @@ export default function AdminScreen(): React.JSX.Element {
         tmdbId: targetKey,
         title: targetTitle,
         mediaType: isTv ? 'tv' : 'movie',
-        youtubeUrl: vodYoutubeUrl.trim() || null,
+        youtubeUrl: effectiveYoutubeUrl,
         useYoutubePrimary: ytPrimary,
         archiveUrl: vodArchiveUrl.trim() || null,
         useArchivePrimary: arPrimary,
         notes: vodNotes.trim() || null,
+        reviewStatus,
+        approvedSourceType,
       };
 
       const res = await fetch(`${BACKEND_BASE_URL}/api/admin/vod/overrides`, {
@@ -1003,8 +1157,11 @@ export default function AdminScreen(): React.JSX.Element {
       });
 
       if (res.ok) {
+        setVodReviewStatus(reviewStatus);
+        setVodApprovedSourceType(approvedSourceType);
         setStatusMessage(`تم حفظ استثناء "${payload.title}" وتطبيقه بنجاح`);
         fetchVodOverrides();
+        fetchArabicCatalog(arabicCatalogPage);
       } else {
         const data = await res.json();
         setStatusMessage(data.error || 'فشل حفظ الاعتماد');
@@ -1014,6 +1171,41 @@ export default function AdminScreen(): React.JSX.Element {
     } finally {
       setVodOverrideSaving(false);
     }
+  };
+
+  const handleApproveDefaultServers = async () => {
+    await handleSaveVodOverride({
+      customReviewStatus: 'verified',
+      customApprovedSourceType: 'default_servers',
+      forceYoutubePrimary: false,
+      forceArchivePrimary: false,
+    });
+  };
+
+  const handleApproveYoutubeCandidate = async (candidateUrl: string) => {
+    setVodYoutubeUrl(candidateUrl);
+    setVodYoutubePrimary(true);
+    setVodArchivePrimary(false);
+    await handleSaveVodOverride({
+      customYoutubeUrl: candidateUrl,
+      forceYoutubePrimary: true,
+      customReviewStatus: 'verified',
+      customApprovedSourceType: 'youtube',
+    });
+  };
+
+  const handleToggleHide = async () => {
+    const newStatus = vodReviewStatus === 'hidden' ? 'pending' : 'hidden';
+    await handleSaveVodOverride({
+      customReviewStatus: newStatus,
+    });
+  };
+
+  const handleToggleDelete = async () => {
+    const newStatus = vodReviewStatus === 'deleted' ? 'pending' : 'deleted';
+    await handleSaveVodOverride({
+      customReviewStatus: newStatus,
+    });
   };
 
   const handleDeleteVodOverride = async (targetKey: string) => {
@@ -1316,6 +1508,7 @@ export default function AdminScreen(): React.JSX.Element {
         fetchVodSettings();
       } else if (activeTab === 'arabic_vod') {
         fetchVodOverrides();
+        fetchArabicCatalog(1);
       } else if (activeTab === 'networks') {
         fetchAdminNetworks();
       } else if (activeTab === 'channels') {
@@ -1329,6 +1522,7 @@ export default function AdminScreen(): React.JSX.Element {
     fetchResellers,
     fetchVodSettings,
     fetchVodOverrides,
+    fetchArabicCatalog,
     fetchAdminNetworks,
     fetchChannelOverrides,
   ]);
@@ -1756,7 +1950,10 @@ export default function AdminScreen(): React.JSX.Element {
               if (activeTab === 'codes') fetchCodes();
               else if (activeTab === 'resellers') fetchResellers();
               else if (activeTab === 'vod') fetchVodSettings();
-              else if (activeTab === 'arabic_vod') fetchVodOverrides();
+              else if (activeTab === 'arabic_vod') {
+                fetchVodOverrides();
+                fetchArabicCatalog(arabicCatalogPage);
+              }
               else if (activeTab === 'networks') fetchAdminNetworks();
               else if (activeTab === 'channels') fetchChannelOverrides();
             }}
@@ -2811,38 +3008,155 @@ export default function AdminScreen(): React.JSX.Element {
           </View>
         ) : activeTab === 'arabic_vod' ? (
           /* ==========================================
-             تبويب المحتوى العربي (VOD) وفحص Archive.org
+             تبويب المحتوى العربي (VOD) ونظام التدقيق
              ========================================== */
           <View style={styles.vodTabContainer}>
             <View style={styles.resellersHeaderRow}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.sectionHeaderTitle}>المحتوى العربي (VOD) وفحص Archive.org</Text>
+                <Text style={styles.sectionHeaderTitle}>نظام تدقيق وإدارة المحتوى العربي (VOD)</Text>
                 <Text style={styles.sectionHeaderSub}>
-                  إدارة وتخصيص مصادر الأفلام والمسلسلات العربية فقط. المصادر الافتراضية تعتمد سيرفرات المشاهدة المدمجة وArchive.org، مع إمكانية فحص واعتماد الأرشيف أو إضافة رابط يوتيوب يدوي وتعيين المشغل الأساسي (بينما تم إيقاف يوتيوب نهائياً عن المحتوى غير العربي).
+                  استعراض وتدقيق مسلسلات وأفلام الكتالوج العربي، فحص السيرفرات المدمجة، الاعتماد التلقائي من YouTube عند التعذر، وإدارة حالات الظهور للمستخدمين (دون المساس بالمحتوى غير العربي).
                 </Text>
               </View>
             </View>
 
-            {/* بطاقة البحث عن فيلم أو مسلسل عربي */}
+            {/* شريط التحكم الرئيسي في استعراض الكتالوج العربي */}
             <View style={[styles.vodSettingsCard, { marginBottom: 20 }]}>
-              <Text style={styles.cardHeaderTitle}>البحث في مكتبة الأفلام والمسلسلات العربية</Text>
-              <Text style={styles.cardHeaderSub}>ابحث باسم الفيلم أو المسلسل أو بمعرّف TMDB لفحص توفره على الأرشيف والسيرفرات</Text>
+              {/* التبديل الأساسي: مسلسلات عربية / أفلام عربية */}
+              <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
+                <Pressable
+                  style={[
+                    styles.primaryActionBtn,
+                    {
+                      flex: 1,
+                      backgroundColor: arabicCatalogType === 'series' ? '#a855f7' : '#1e293b',
+                      borderColor: arabicCatalogType === 'series' ? '#c084fc' : '#334155',
+                      borderWidth: 1,
+                    },
+                  ]}
+                  onPress={() => {
+                    setArabicCatalogType('series');
+                    setArabicCatalogCategory('all');
+                    fetchArabicCatalog(1, 'series', 'all', arabicStatusFilter, searchVodQuery);
+                  }}
+                >
+                  <MaterialIcons name="tv" size={20} color={arabicCatalogType === 'series' ? '#ffffff' : '#94a3b8'} />
+                  <Text style={[styles.primaryActionBtnText, { color: arabicCatalogType === 'series' ? '#ffffff' : '#94a3b8' }]}>
+                    المسلسلات العربية
+                  </Text>
+                </Pressable>
 
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                <Pressable
+                  style={[
+                    styles.primaryActionBtn,
+                    {
+                      flex: 1,
+                      backgroundColor: arabicCatalogType === 'movies' ? '#06b6d4' : '#1e293b',
+                      borderColor: arabicCatalogType === 'movies' ? '#38bdf8' : '#334155',
+                      borderWidth: 1,
+                    },
+                  ]}
+                  onPress={() => {
+                    setArabicCatalogType('movies');
+                    setArabicCatalogCategory('all');
+                    fetchArabicCatalog(1, 'movies', 'all', arabicStatusFilter, searchVodQuery);
+                  }}
+                >
+                  <MaterialIcons name="movie" size={20} color={arabicCatalogType === 'movies' ? '#ffffff' : '#94a3b8'} />
+                  <Text style={[styles.primaryActionBtnText, { color: arabicCatalogType === 'movies' ? '#ffffff' : '#94a3b8' }]}>
+                    الأفلام العربية
+                  </Text>
+                </Pressable>
+              </View>
+
+              {/* شريط التصنيفات (دراما، كوميديا، تاريخي...) */}
+              <View style={{ marginBottom: 14 }}>
+                <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 6, fontWeight: '600' }}>
+                  التصنيف:
+                </Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    {(arabicCatalogType === 'series' ? ARABIC_SERIES_CATEGORIES : ARABIC_MOVIES_CATEGORIES).map((cat) => {
+                      const isActive = arabicCatalogCategory === cat.id;
+                      return (
+                        <Pressable
+                          key={cat.id}
+                          style={[
+                            styles.smallActionBtn,
+                            isActive
+                              ? { backgroundColor: '#06b6d4', borderColor: '#06b6d4' }
+                              : { backgroundColor: '#1e293b', borderColor: '#334155' },
+                          ]}
+                          onPress={() => {
+                            setArabicCatalogCategory(cat.id);
+                            fetchArabicCatalog(1, arabicCatalogType, cat.id, arabicStatusFilter, searchVodQuery);
+                          }}
+                        >
+                          <Text style={[styles.smallActionBtnText, { color: isActive ? '#ffffff' : '#cbd5e1' }]}>
+                            {cat.label}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </ScrollView>
+              </View>
+
+              {/* شريط حالات التدقيق مع العدادات */}
+              <View style={{ marginBottom: 14 }}>
+                <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 6, fontWeight: '600' }}>
+                  تصفية بحسب حالة التدقيق:
+                </Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    {[
+                      { id: 'all', label: 'الكل', count: arabicStatusCounts.all, color: '#38bdf8' },
+                      { id: 'pending', label: 'قيد المراجعة', count: arabicStatusCounts.pending, color: '#f59e0b' },
+                      { id: 'verified', label: 'المدقّق / المعتمد', count: arabicStatusCounts.verified, color: '#10b981' },
+                      { id: 'hidden', label: 'المخفي مؤقتاً', count: arabicStatusCounts.hidden, color: '#a855f7' },
+                      { id: 'deleted', label: 'المحذوف', count: arabicStatusCounts.deleted, color: '#ef4444' },
+                    ].map((st) => {
+                      const isActive = arabicStatusFilter === st.id;
+                      return (
+                        <Pressable
+                          key={st.id}
+                          style={[
+                            styles.smallActionBtn,
+                            isActive
+                              ? { backgroundColor: st.color, borderColor: st.color }
+                              : { backgroundColor: '#1e293b', borderColor: '#334155' },
+                          ]}
+                          onPress={() => {
+                            setArabicStatusFilter(st.id as any);
+                            fetchArabicCatalog(1, arabicCatalogType, arabicCatalogCategory, st.id, searchVodQuery);
+                          }}
+                        >
+                          <Text style={[styles.smallActionBtnText, { color: isActive ? '#070b14' : '#f1f5f9', fontWeight: '700' }]}>
+                            {st.label} ({st.count})
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </ScrollView>
+              </View>
+
+              {/* شريط البحث المباشر في الكتالوج */}
+              <View style={{ flexDirection: 'row', gap: 10 }}>
                 <TextInput
                   style={[styles.modalInput, { flex: 1, marginBottom: 0 }]}
-                  placeholder="اكتب اسم الفيلم أو المسلسل العربي..."
+                  placeholder="ابحث بالاسم داخل الكتالوج العربي..."
                   placeholderTextColor="#64748b"
                   value={searchVodQuery}
                   onChangeText={setSearchVodQuery}
-                  onSubmitEditing={handleSearchVod}
+                  onSubmitEditing={() => fetchArabicCatalog(1, arabicCatalogType, arabicCatalogCategory, arabicStatusFilter, searchVodQuery)}
                 />
                 <Pressable
                   style={[styles.primaryActionBtn, { backgroundColor: '#06b6d4', paddingHorizontal: 20 }]}
-                  onPress={handleSearchVod}
-                  disabled={searchVodLoading}
+                  onPress={() => fetchArabicCatalog(1, arabicCatalogType, arabicCatalogCategory, arabicStatusFilter, searchVodQuery)}
+                  disabled={arabicCatalogLoading}
                 >
-                  {searchVodLoading ? (
+                  {arabicCatalogLoading ? (
                     <ActivityIndicator size="small" color="#ffffff" />
                   ) : (
                     <>
@@ -2851,66 +3165,30 @@ export default function AdminScreen(): React.JSX.Element {
                     </>
                   )}
                 </Pressable>
+                {searchVodQuery.trim().length > 0 && (
+                  <Pressable
+                    style={[styles.smallActionBtn, { borderColor: '#64748b', paddingHorizontal: 12 }]}
+                    onPress={() => {
+                      setSearchVodQuery('');
+                      fetchArabicCatalog(1, arabicCatalogType, arabicCatalogCategory, arabicStatusFilter, '');
+                    }}
+                  >
+                    <MaterialIcons name="close" size={18} color="#94a3b8" />
+                  </Pressable>
+                )}
               </View>
-
-              {/* نتائج البحث */}
-              {searchVodResults.length > 0 && (
-                <View style={{ marginTop: 16 }}>
-                  <Text style={{ color: '#94a3b8', fontSize: 13, marginBottom: 8 }}>
-                    نتائج البحث ({searchVodResults.length}): اضغط على عمل لتحديده وفحصه
-                  </Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexDirection: 'row' }}>
-                    <View style={{ flexDirection: 'row', gap: 12 }}>
-                      {searchVodResults.map((item) => {
-                        const isSelected = selectedVodItem?.id === item.id;
-                        return (
-                          <Pressable
-                            key={item.id}
-                            style={[
-                              styles.vodSearchItemCard,
-                              isSelected && styles.vodSearchItemCardActive,
-                            ]}
-                            onPress={() => handleSelectVodItem(item)}
-                          >
-                            {item.poster ? (
-                              <Image source={{ uri: item.poster }} style={styles.vodSearchPoster} resizeMode="cover" />
-                            ) : (
-                              <View style={[styles.vodSearchPoster, styles.vodSearchPosterFallback]}>
-                                <MaterialIcons name="movie" size={32} color="#475569" />
-                              </View>
-                            )}
-                            <View style={{ padding: 8 }}>
-                              <Text style={styles.vodSearchItemTitle} numberOfLines={2}>
-                                {item.title || item.name}
-                              </Text>
-                              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
-                                <Text style={styles.vodSearchItemYear}>{item.year || ''}</Text>
-                                <View style={[styles.statusBadge, { backgroundColor: item.media_type === 'tv' ? '#a855f720' : '#38bdf820', paddingHorizontal: 6, paddingVertical: 2 }]}>
-                                  <Text style={[styles.statusBadgeText, { color: item.media_type === 'tv' ? '#c084fc' : '#38bdf8', fontSize: 10 }]}>
-                                    {item.media_type === 'tv' ? 'مسلسل' : 'فيلم'}
-                                  </Text>
-                                </View>
-                              </View>
-                            </View>
-                          </Pressable>
-                        );
-                      })}
-                    </View>
-                  </ScrollView>
-                </View>
-              )}
             </View>
 
-            {/* لوحة تفاصيل واعتماد العمل المختار */}
+            {/* لوحة تفاصيل وتدقيق العمل المختار (تظهر عند اختيار أي عمل) */}
             {selectedVodItem && (
-              <View style={[styles.vodSettingsCard, { borderColor: '#06b6d4', borderWidth: 1.5, marginBottom: 24 }]}>
+              <View style={[styles.vodSettingsCard, { borderColor: '#06b6d4', borderWidth: 2, marginBottom: 24, backgroundColor: '#0b1329' }]}>
                 {/* رأس بطاقة العمل المختار */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: '#1e293b' }}>
                   {selectedVodItem.poster ? (
-                    <Image source={{ uri: selectedVodItem.poster }} style={{ width: 60, height: 90, borderRadius: 8 }} resizeMode="cover" />
+                    <Image source={{ uri: selectedVodItem.poster }} style={{ width: 70, height: 105, borderRadius: 8 }} resizeMode="cover" />
                   ) : (
-                    <View style={{ width: 60, height: 90, borderRadius: 8, backgroundColor: '#1e293b', justifyContent: 'center', alignItems: 'center' }}>
-                      <MaterialIcons name="movie" size={30} color="#64748b" />
+                    <View style={{ width: 70, height: 105, borderRadius: 8, backgroundColor: '#1e293b', justifyContent: 'center', alignItems: 'center' }}>
+                      <MaterialIcons name="movie" size={34} color="#64748b" />
                     </View>
                   )}
                   <View style={{ flex: 1 }}>
@@ -2920,7 +3198,7 @@ export default function AdminScreen(): React.JSX.Element {
                         String(selectedVodItem.id).startsWith('tmdb-tv-') ||
                         String(selectedVodItem.id).includes('-s');
                       return (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                           <Text style={[styles.cardHeaderTitle, { fontSize: 18, color: '#f8fafc' }]}>
                             {selectedVodItem.title || selectedVodItem.name}
                           </Text>
@@ -2929,6 +3207,54 @@ export default function AdminScreen(): React.JSX.Element {
                               {isTv ? 'مسلسل عربي' : 'فيلم عربي'}
                             </Text>
                           </View>
+                          {/* شارة حالة التدقيق الحالية */}
+                          <View
+                            style={[
+                              styles.statusBadge,
+                              {
+                                backgroundColor:
+                                  vodReviewStatus === 'verified'
+                                    ? '#10b98125'
+                                    : vodReviewStatus === 'hidden'
+                                    ? '#a855f725'
+                                    : vodReviewStatus === 'deleted'
+                                    ? '#ef444425'
+                                    : '#f59e0b25',
+                              },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.statusBadgeText,
+                                {
+                                  color:
+                                    vodReviewStatus === 'verified'
+                                      ? '#10b981'
+                                      : vodReviewStatus === 'hidden'
+                                      ? '#c084fc'
+                                      : vodReviewStatus === 'deleted'
+                                      ? '#ef4444'
+                                      : '#f59e0b',
+                                  fontWeight: '700',
+                                },
+                              ]}
+                            >
+                              {vodReviewStatus === 'verified'
+                                ? '✓ مدقّق ومعتمد'
+                                : vodReviewStatus === 'hidden'
+                                ? 'مخفي مؤقتاً'
+                                : vodReviewStatus === 'deleted'
+                                ? 'محذوف من القائمة'
+                                : 'قيد المراجعة'}
+                            </Text>
+                          </View>
+                          {vodApprovedSourceType && (
+                            <View style={[styles.statusBadge, { backgroundColor: '#38bdf820' }]}>
+                              <Text style={[styles.statusBadgeText, { color: '#38bdf8', fontSize: 11 }]}>
+                                المصدر المعتمد: {vodApprovedSourceType === 'default_servers' ? 'سيرفرات مدمجة' : vodApprovedSourceType === 'youtube' ? 'يوتيوب' : 'أرشيف'}
+                              </Text>
+                            </View>
+                          )}
                         </View>
                       );
                     })()}
@@ -2941,6 +3267,14 @@ export default function AdminScreen(): React.JSX.Element {
                       </Text>
                     ) : null}
                   </View>
+
+                  <Pressable
+                    style={[styles.smallActionBtn, { borderColor: '#64748b', alignSelf: 'flex-start' }]}
+                    onPress={() => setSelectedVodItem(null)}
+                  >
+                    <MaterialIcons name="close" size={16} color="#94a3b8" />
+                    <Text style={[styles.smallActionBtnText, { color: '#94a3b8' }]}>إغلاق لوحة التدقيق</Text>
+                  </Pressable>
                 </View>
 
                 {/* واجهة اختيار وتحديد الموسم والحلقة للمسلسلات */}
@@ -2954,7 +3288,7 @@ export default function AdminScreen(): React.JSX.Element {
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                         <MaterialIcons name="subscriptions" size={20} color="#a855f7" />
                         <Text style={{ color: '#f8fafc', fontSize: 14, fontWeight: '700' }}>
-                          نطاق التخصيص للمسلسل:
+                          نطاق التدقيق والتخصيص للمسلسل:
                         </Text>
                       </View>
                       <View style={[styles.statusBadge, { backgroundColor: '#a855f720', borderColor: '#a855f7', borderWidth: 1, paddingHorizontal: 10, paddingVertical: 4 }]}>
@@ -2966,7 +3300,7 @@ export default function AdminScreen(): React.JSX.Element {
 
                     {/* شريط اختيار الموسم */}
                     <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 6, fontWeight: '600' }}>
-                      1. اختر الموسم (أو اختر "المسلسل كاملاً" لتطبيق التخصيص على جميع الحلقات):
+                      1. اختر الموسم (أو اختر "المسلسل كاملاً" لتطبيق القرار على كافة الحلقات):
                     </Text>
                     {tvSeasonsLoading ? (
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
@@ -3023,11 +3357,11 @@ export default function AdminScreen(): React.JSX.Element {
                       </ScrollView>
                     )}
 
-                    {/* شريط اختيار الحلقة إذا تم اختيار موسم */}
+                    {/* شريط اختيار الحلقة */}
                     {selectedSeason !== null && (
                       <View style={{ marginTop: 4, paddingTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' }}>
                         <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 6, fontWeight: '600' }}>
-                          2. اختر الحلقة المحددة من الموسم {selectedSeason} (الحلقات ذات العلامة الخضراء مخصصة مسبقاً):
+                          2. اختر الحلقة المحددة من الموسم {selectedSeason} (الحلقات ذات العلامة الخضراء مدققة/مخصصة مسبقاً):
                         </Text>
                         {tvEpisodesLoading ? (
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
@@ -3088,13 +3422,212 @@ export default function AdminScreen(): React.JSX.Element {
                   </View>
                 )}
 
-                {/* 1. فحص وتخصيص Archive.org */}
-                <View style={{ marginTop: 16 }}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                {/* الخطوة 1: فحص السيرفرات الافتراضية واعتمادها */}
+                <View style={{ marginTop: 20, padding: 14, backgroundColor: '#070b14', borderRadius: 10, borderWidth: 1, borderColor: '#1e293b' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <MaterialIcons name="check-circle" size={20} color="#10b981" />
+                    <Text style={[styles.modalLabel, { fontSize: 15, color: '#10b981', marginBottom: 0 }]}>
+                      الخطوة 1: فحص سيرفرات المشاهدة المدمجة والأرشيف
+                    </Text>
+                  </View>
+                  <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 12 }}>
+                    تأكد من تشغيل العمل عبر أحد السيرفرات المدمجة (VidLink / VidSrc) أو Archive.org. إذا كان يعمل بشكل سليم، اعتمده مباشرة لنقله إلى «المدقّق»:
+                  </Text>
+
+                  {/* أزرار التجربة السريعة */}
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                    <Pressable
+                      style={[styles.smallActionBtn, { backgroundColor: '#38bdf820', borderColor: '#38bdf8' }]}
+                      onPress={() => handlePreviewVodServer('vidlink')}
+                    >
+                      <MaterialIcons name="play-arrow" size={16} color="#38bdf8" />
+                      <Text style={[styles.smallActionBtnText, { color: '#38bdf8', fontWeight: '700' }]}>تجربة سيرفر VidLink</Text>
+                    </Pressable>
+
+                    <Pressable
+                      style={[styles.smallActionBtn, { backgroundColor: '#a855f720', borderColor: '#a855f7' }]}
+                      onPress={() => handlePreviewVodServer('vidsrc')}
+                    >
+                      <MaterialIcons name="play-arrow" size={16} color="#c084fc" />
+                      <Text style={[styles.smallActionBtnText, { color: '#c084fc', fontWeight: '700' }]}>تجربة سيرفر VidSrc CC</Text>
+                    </Pressable>
+
+                    {vodArchiveUrl.trim().length > 0 && (
+                      <Pressable
+                        style={[styles.smallActionBtn, { backgroundColor: '#10b98120', borderColor: '#10b981' }]}
+                        onPress={() => handlePreviewVodServer('archive')}
+                      >
+                        <MaterialIcons name="play-arrow" size={16} color="#10b981" />
+                        <Text style={[styles.smallActionBtnText, { color: '#10b981', fontWeight: '700' }]}>تجربة رابط الأرشيف</Text>
+                      </Pressable>
+                    )}
+                  </View>
+
+                  {/* زر الاعتماد البارز */}
+                  <Pressable
+                    style={[
+                      styles.primaryActionBtn,
+                      { backgroundColor: '#10b981', paddingVertical: 12, justifyContent: 'center' },
+                      vodOverrideSaving && { opacity: 0.7 },
+                    ]}
+                    onPress={handleApproveDefaultServers}
+                    disabled={vodOverrideSaving}
+                  >
+                    <MaterialIcons name="verified" size={20} color="#070b14" />
+                    <Text style={[styles.primaryActionBtnText, { color: '#070b14', fontWeight: '800', fontSize: 14 }]}>
+                      اعتماد السيرفرات الافتراضية (نقل إلى المدقّق والمعتمد)
+                    </Text>
+                  </Pressable>
+                </View>
+
+                {/* الخطوة 2: في حال تعذر السيرفرات المدمجة - الفحص التلقائي من YouTube */}
+                <View style={{ marginTop: 16, padding: 14, backgroundColor: '#070b14', borderRadius: 10, borderWidth: 1, borderColor: '#ef444430' }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <MaterialIcons name="smart-display" size={20} color="#ef4444" />
+                      <Text style={[styles.modalLabel, { fontSize: 15, color: '#ef4444', marginBottom: 0 }]}>
+                        الخطوة 2: في حال عدم عمل السيرفرات — جلب تلقائي من YouTube
+                      </Text>
+                    </View>
+                    <Pressable
+                      style={[styles.smallActionBtn, { backgroundColor: '#ef444420', borderColor: '#ef4444' }]}
+                      onPress={handleAutoFetchYoutube}
+                      disabled={autoYoutubeLoading}
+                    >
+                      {autoYoutubeLoading ? (
+                        <ActivityIndicator size="small" color="#ef4444" />
+                      ) : (
+                        <>
+                          <MaterialIcons name="auto-fix-high" size={16} color="#ef4444" />
+                          <Text style={[styles.smallActionBtnText, { color: '#ef4444', fontWeight: '700' }]}>
+                            جلب مقترحات اليوتيوب تلقائياً
+                          </Text>
+                        </>
+                      )}
+                    </Pressable>
+                  </View>
+
+                  <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 12 }}>
+                    يفحص نظام الذكاء تلقائياً حلقات المسلسل أو الفيلم على YouTube الرسمية مع التحقق من صلاحية التضمين:
+                  </Text>
+
+                  {/* نتائج الجلب التلقائي لليوتيوب */}
+                  {autoYoutubeLoading ? (
+                    <View style={{ padding: 14, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 10 }}>
+                      <ActivityIndicator size="small" color="#ef4444" />
+                      <Text style={{ color: '#ef4444', fontSize: 13 }}>جارٍ البحث عن أفضل روابط YouTube المتطابقة...</Text>
+                    </View>
+                  ) : autoYoutubeResults.length > 0 ? (
+                    <View style={{ gap: 8, marginBottom: 14 }}>
+                      <Text style={{ color: '#ef4444', fontSize: 13, fontWeight: '700' }}>
+                        المقترحات المتطابقة من YouTube ({autoYoutubeResults.length}):
+                      </Text>
+                      {autoYoutubeResults.map((yt, idx) => (
+                        <View
+                          key={idx}
+                          style={{
+                            backgroundColor: '#0f172a',
+                            padding: 10,
+                            borderRadius: 8,
+                            borderWidth: 1,
+                            borderColor: '#ef444440',
+                            flexDirection: 'row',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            flexWrap: 'wrap',
+                            gap: 8,
+                          }}
+                        >
+                          <View style={{ flex: 1, minWidth: 220 }}>
+                            <Text style={{ color: '#f8fafc', fontSize: 13, fontWeight: '600' }}>{yt.title}</Text>
+                            <Text style={{ color: '#64748b', fontSize: 11, marginTop: 2 }} numberOfLines={1}>
+                              {yt.url}
+                            </Text>
+                          </View>
+                          <View style={{ flexDirection: 'row', gap: 6 }}>
+                            <Pressable
+                              style={[styles.smallActionBtn, { borderColor: '#ef4444' }]}
+                              onPress={() => {
+                                setVodPreviewTitle(`YouTube: ${yt.title}`);
+                                setVodPreviewUrl(yt.embedUrl);
+                                setVodPreviewModalVisible(true);
+                              }}
+                            >
+                              <MaterialIcons name="play-arrow" size={14} color="#ef4444" />
+                              <Text style={[styles.smallActionBtnText, { color: '#ef4444' }]}>معاينة</Text>
+                            </Pressable>
+                            <Pressable
+                              style={[styles.smallActionBtn, { backgroundColor: '#ef4444', borderColor: '#ef4444' }]}
+                              onPress={() => handleApproveYoutubeCandidate(yt.url)}
+                            >
+                              <MaterialIcons name="done" size={14} color="#ffffff" />
+                              <Text style={[styles.smallActionBtnText, { color: '#ffffff', fontWeight: '700' }]}>
+                                اعتماد هذا الرابط (نقل للمدقّق)
+                              </Text>
+                            </Pressable>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+
+                  {/* إدخال رابط يوتيوب يدوي */}
+                  <View style={{ marginTop: 4 }}>
+                    <Text style={[styles.modalLabel, { fontSize: 12 }]}>أو أدخل رابط YouTube مخصص يدوياً:</Text>
+                    <TextInput
+                      style={styles.modalInput}
+                      placeholder="https://www.youtube.com/watch?v=..."
+                      placeholderTextColor="#64748b"
+                      value={vodYoutubeUrl}
+                      onChangeText={setVodYoutubeUrl}
+                    />
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                      <Pressable
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+                        onPress={() => {
+                          setVodYoutubePrimary(!vodYoutubePrimary);
+                          if (!vodYoutubePrimary) setVodArchivePrimary(false);
+                        }}
+                      >
+                        <MaterialIcons
+                          name={vodYoutubePrimary ? 'check-box' : 'check-box-outline-blank'}
+                          size={18}
+                          color={vodYoutubePrimary ? '#ef4444' : '#64748b'}
+                        />
+                        <Text style={{ color: vodYoutubePrimary ? '#ef4444' : '#94a3b8', fontSize: 12, fontWeight: '600' }}>
+                          تعيين YouTube كالمشغل الأساسي الأول لهذا النطاق
+                        </Text>
+                      </Pressable>
+
+                      {vodYoutubeUrl.trim().length > 0 && (
+                        <Pressable
+                          style={[styles.smallActionBtn, { backgroundColor: '#ef4444', borderColor: '#ef4444' }]}
+                          onPress={() =>
+                            handleSaveVodOverride({
+                              forceYoutubePrimary: true,
+                              customReviewStatus: 'verified',
+                              customApprovedSourceType: 'youtube',
+                            })
+                          }
+                          disabled={vodOverrideSaving}
+                        >
+                          <MaterialIcons name="done-all" size={14} color="#ffffff" />
+                          <Text style={[styles.smallActionBtnText, { color: '#ffffff', fontWeight: '700' }]}>
+                            اعتماد الرابط اليدوي (نقل للمدقّق)
+                          </Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  </View>
+                </View>
+
+                {/* فحص وإدخال رابط Archive.org اليدوي */}
+                <View style={{ marginTop: 16, padding: 14, backgroundColor: '#070b14', borderRadius: 10, borderWidth: 1, borderColor: '#10b98130' }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                       <MaterialIcons name="archive" size={20} color="#10b981" />
-                      <Text style={[styles.modalLabel, { fontSize: 15, color: '#10b981', marginBottom: 0 }]}>
-                        فحص الأرشيف الرقمي (Archive.org)
+                      <Text style={[styles.modalLabel, { fontSize: 14, color: '#10b981', marginBottom: 0 }]}>
+                        فحص ورابط Archive.org الرقمي
                       </Text>
                     </View>
                     <Pressable
@@ -3107,85 +3640,23 @@ export default function AdminScreen(): React.JSX.Element {
                       ) : (
                         <>
                           <MaterialIcons name="sync" size={14} color="#10b981" />
-                          <Text style={[styles.smallActionBtnText, { color: '#10b981' }]}>إعادة فحص الأرشيف</Text>
+                          <Text style={[styles.smallActionBtnText, { color: '#10b981' }]}>فحص توفره في الأرشيف</Text>
                         </>
                       )}
                     </Pressable>
                   </View>
 
-                  {/* نتائج الفحص التلقائي */}
-                  {archiveChecking ? (
-                    <View style={{ padding: 14, backgroundColor: '#070b14', borderRadius: 8, marginTop: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                      <ActivityIndicator size="small" color="#10b981" />
-                      <Text style={{ color: '#94a3b8', fontSize: 13 }}>جارٍ فحص توفر العمل وروابطه على Archive.org...</Text>
-                    </View>
-                  ) : archiveResults.length > 0 ? (
-                    <View style={{ marginTop: 10, gap: 8 }}>
-                      <Text style={{ color: '#10b981', fontSize: 13, fontWeight: '600' }}>
-                        تم العثور على {archiveResults.length} نتيجة متطابقة على Archive.org:
-                      </Text>
-                      {archiveResults.map((ar, idx) => (
-                        <View key={idx} style={{ backgroundColor: '#070b14', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#10b98130', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-                          <View style={{ flex: 1, minWidth: 200 }}>
-                            <Text style={{ color: '#f1f5f9', fontSize: 14, fontWeight: '600' }}>{ar.title}</Text>
-                            <Text style={{ color: '#64748b', fontSize: 12, marginTop: 2 }}>
-                              المعرف: {ar.identifier} {ar.year ? `| سنة: ${ar.year}` : ''} {ar.downloads ? `| التحميلات: ${ar.downloads}` : ''}
-                            </Text>
-                            <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }} numberOfLines={1}>
-                              الرابط: {ar.recommendedUrl || ar.directUrl || ar.embedUrl}
-                            </Text>
-                          </View>
-                          <View style={{ flexDirection: 'row', gap: 8 }}>
-                            <Pressable
-                              style={[styles.smallActionBtn, { backgroundColor: '#10b981', borderColor: '#10b981' }]}
-                              onPress={() => {
-                                const targetUrl = ar.recommendedUrl || ar.directUrl || ar.embedUrl || '';
-                                setVodArchiveUrl(targetUrl);
-                                setVodArchivePrimary(true);
-                                setVodYoutubePrimary(false);
-                                handleSaveVodOverride({ forceArchivePrimary: true });
-                              }}
-                            >
-                              <MaterialIcons name="check-circle" size={14} color="#070b14" />
-                              <Text style={[styles.smallActionBtnText, { color: '#070b14', fontWeight: '700' }]}>اعتماد رابط الأرشيف كافتراضي أول</Text>
-                            </Pressable>
-                            {(ar.recommendedUrl || ar.embedUrl) && (
-                              <Pressable
-                                style={[styles.smallActionBtn, { borderColor: '#38bdf8' }]}
-                                onPress={() => {
-                                  setVodPreviewTitle(`Archive.org: ${ar.title}`);
-                                  setVodPreviewUrl(ar.recommendedUrl || ar.embedUrl || '');
-                                  setVodPreviewModalVisible(true);
-                                }}
-                              >
-                                <MaterialIcons name="play-circle-outline" size={14} color="#38bdf8" />
-                                <Text style={[styles.smallActionBtnText, { color: '#38bdf8' }]}>معاينة المشغل</Text>
-                              </Pressable>
-                            )}
-                          </View>
-                        </View>
-                      ))}
-                    </View>
-                  ) : (
-                    archiveCheckMessage && (
-                      <View style={{ padding: 10, backgroundColor: '#070b14', borderRadius: 8, marginTop: 10 }}>
-                        <Text style={{ color: '#f59e0b', fontSize: 13 }}>{archiveCheckMessage}</Text>
-                      </View>
-                    )
-                  )}
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="https://archive.org/download/... أو https://archive.org/embed/..."
+                    placeholderTextColor="#64748b"
+                    value={vodArchiveUrl}
+                    onChangeText={setVodArchiveUrl}
+                  />
 
-                  {/* إدخال رابط الأرشيف اليدوي والتبديل */}
-                  <View style={{ marginTop: 10 }}>
-                    <Text style={styles.modalLabel}>رابط Archive.org المعتمد (مباشر MP4 أو Embed):</Text>
-                    <TextInput
-                      style={styles.modalInput}
-                      placeholder="https://archive.org/download/... أو https://archive.org/embed/..."
-                      placeholderTextColor="#64748b"
-                      value={vodArchiveUrl}
-                      onChangeText={setVodArchiveUrl}
-                    />
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                     <Pressable
-                      style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
                       onPress={() => {
                         setVodArchivePrimary(!vodArchivePrimary);
                         if (!vodArchivePrimary) setVodYoutubePrimary(false);
@@ -3193,118 +3664,108 @@ export default function AdminScreen(): React.JSX.Element {
                     >
                       <MaterialIcons
                         name={vodArchivePrimary ? 'check-box' : 'check-box-outline-blank'}
-                        size={20}
+                        size={18}
                         color={vodArchivePrimary ? '#10b981' : '#64748b'}
                       />
-                      <Text style={{ color: vodArchivePrimary ? '#10b981' : '#94a3b8', fontSize: 13, fontWeight: '600' }}>
-                        جعل مشغل الأرشيف (Archive.org) هو المشغل الافتراضي الأول لهذا العمل
-                      </Text>
-                    </Pressable>
-                  </View>
-                </View>
-
-                {/* 2. فحص سيرفرات المشاهدة المدمجة السريعة (VidLink / VidSrc) */}
-                <View style={{ marginTop: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#1e293b' }}>
-                  <Text style={[styles.modalLabel, { fontSize: 15, color: '#38bdf8', marginBottom: 6 }]}>
-                    فحص سيرفرات المشاهدة المدمجة (Embed Servers)
-                  </Text>
-                  <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 12 }}>
-                    تعتمد المنصة سيرفرات المشاهدة تلقائياً كافتراضي (سيرفر VidLink بالمرتبة الأولى يليه VidSrc). اضغط على السيرفر لتجربته والتأكد مما إذا كان العمل العربي متوفراً عليه:
-                  </Text>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-                    <Pressable
-                      style={[styles.smallActionBtn, { backgroundColor: '#38bdf820', borderColor: '#38bdf8', paddingVertical: 8, paddingHorizontal: 12 }]}
-                      onPress={() => handlePreviewVodServer('vidlink')}
-                    >
-                      <MaterialIcons name="play-arrow" size={18} color="#38bdf8" />
-                      <Text style={[styles.smallActionBtnText, { color: '#38bdf8', fontWeight: '700' }]}>
-                        تجربة سيرفر VidLink (#1 الافتراضي)
+                      <Text style={{ color: vodArchivePrimary ? '#10b981' : '#94a3b8', fontSize: 12, fontWeight: '600' }}>
+                        تعيين الأرشيف كالمشغل الأساسي الأول
                       </Text>
                     </Pressable>
 
-                    <Pressable
-                      style={[styles.smallActionBtn, { backgroundColor: '#a855f720', borderColor: '#a855f7', paddingVertical: 8, paddingHorizontal: 12 }]}
-                      onPress={() => handlePreviewVodServer('vidsrc')}
-                    >
-                      <MaterialIcons name="play-arrow" size={18} color="#c084fc" />
-                      <Text style={[styles.smallActionBtnText, { color: '#c084fc', fontWeight: '700' }]}>
-                        تجربة سيرفر VidSrc CC (#2)
-                      </Text>
-                    </Pressable>
-                  </View>
-                </View>
-
-                {/* 3. اعتماد رابط يوتيوب يدوي مخصص */}
-                <View style={{ marginTop: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#1e293b' }}>
-                  <Text style={[styles.modalLabel, { fontSize: 15, color: '#ef4444', marginBottom: 6 }]}>
-                    اعتماد رابط يوتيوب يدوي مخصص (YouTube)
-                  </Text>
-                  <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 8 }}>
-                    لن يظهر يوتيوب تلقائياً لأي فيلم أو مسلسل عربي لمنع المحتوى غير المرتبط. إذا كان العمل متوفراً رسمياً على يوتيوب، أدخل رابطه هنا لاعتماده:
-                  </Text>
-
-                  <TextInput
-                    style={styles.modalInput}
-                    placeholder="https://www.youtube.com/watch?v=... أو قائمة تشغيل"
-                    placeholderTextColor="#64748b"
-                    value={vodYoutubeUrl}
-                    onChangeText={setVodYoutubeUrl}
-                  />
-
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-                    <Pressable
-                      style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
-                      onPress={() => {
-                        setVodYoutubePrimary(!vodYoutubePrimary);
-                        if (!vodYoutubePrimary) setVodArchivePrimary(false);
-                      }}
-                    >
-                      <MaterialIcons
-                        name={vodYoutubePrimary ? 'check-box' : 'check-box-outline-blank'}
-                        size={20}
-                        color={vodYoutubePrimary ? '#ef4444' : '#64748b'}
-                      />
-                      <Text style={{ color: vodYoutubePrimary ? '#ef4444' : '#94a3b8', fontSize: 13, fontWeight: '600' }}>
-                        جعل يوتيوب هو المشغل الافتراضي الأول لهذا العمل
-                      </Text>
-                    </Pressable>
-
-                    <View style={{ flexDirection: 'row', gap: 8 }}>
-                      {vodYoutubeUrl.trim().length > 0 && (
-                        <Pressable
-                          style={[styles.smallActionBtn, { borderColor: '#ef4444' }]}
-                          onPress={() => handlePreviewVodServer('youtube')}
-                        >
-                          <MaterialIcons name="smart-display" size={14} color="#ef4444" />
-                          <Text style={[styles.smallActionBtnText, { color: '#ef4444' }]}>معاينة يوتيوب</Text>
-                        </Pressable>
-                      )}
+                    {vodArchiveUrl.trim().length > 0 && (
                       <Pressable
-                        style={[styles.smallActionBtn, { backgroundColor: '#ef4444', borderColor: '#ef4444' }]}
-                        onPress={() => handleSaveVodOverride({ forceYoutubePrimary: true })}
-                        disabled={vodOverrideSaving || !vodYoutubeUrl.trim()}
+                        style={[styles.smallActionBtn, { backgroundColor: '#10b981', borderColor: '#10b981' }]}
+                        onPress={() =>
+                          handleSaveVodOverride({
+                            forceArchivePrimary: true,
+                            customReviewStatus: 'verified',
+                            customApprovedSourceType: 'archive',
+                          })
+                        }
+                        disabled={vodOverrideSaving}
                       >
-                        <MaterialIcons name="done" size={14} color="#ffffff" />
-                        <Text style={[styles.smallActionBtnText, { color: '#ffffff', fontWeight: '700' }]}>اعتماد يوتيوب لهذا العمل</Text>
+                        <MaterialIcons name="done-all" size={14} color="#070b14" />
+                        <Text style={[styles.smallActionBtnText, { color: '#070b14', fontWeight: '700' }]}>
+                          اعتماد رابط الأرشيف (نقل للمدقّق)
+                        </Text>
                       </Pressable>
-                    </View>
+                    )}
                   </View>
                 </View>
 
-                {/* 4. ملاحظات وحفظ وإلغاء الاعتماد */}
+                {/* إجراءات الحالة العامة وحفظ النطاق الحالي */}
                 <View style={{ marginTop: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#1e293b' }}>
-                  <Text style={styles.modalLabel}>ملاحظات الأدمن (اختياري):</Text>
+                  <Text style={styles.modalLabel}>ملاحظات التدقيق (اختياري):</Text>
                   <TextInput
                     style={styles.modalInput}
-                    placeholder="مثال: متوفر نسخة أصلية على الأرشيف / متوفر على يوتيوب بدقة 1080p..."
+                    placeholder="ملاحظات حول جودة المصدر أو الدقة..."
                     placeholderTextColor="#64748b"
                     value={vodNotes}
                     onChangeText={setVodNotes}
                   />
 
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, flexWrap: 'wrap', gap: 10 }}>
+                  {/* أزرار الإجراءات السريعة (إخفاء مؤقت / حذف / حفظ) */}
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, flexWrap: 'wrap', gap: 10 }}>
+                    <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                      <Pressable
+                        style={[
+                          styles.smallActionBtn,
+                          {
+                            backgroundColor: vodReviewStatus === 'hidden' ? '#a855f7' : '#a855f720',
+                            borderColor: '#a855f7',
+                            paddingVertical: 10,
+                            paddingHorizontal: 14,
+                          },
+                        ]}
+                        onPress={handleToggleHide}
+                        disabled={vodOverrideSaving}
+                      >
+                        <MaterialIcons
+                          name={vodReviewStatus === 'hidden' ? 'visibility' : 'visibility-off'}
+                          size={16}
+                          color={vodReviewStatus === 'hidden' ? '#ffffff' : '#c084fc'}
+                        />
+                        <Text
+                          style={[
+                            styles.smallActionBtnText,
+                            { color: vodReviewStatus === 'hidden' ? '#ffffff' : '#c084fc', fontWeight: '700' },
+                          ]}
+                        >
+                          {vodReviewStatus === 'hidden' ? 'إعادة الإظهار للمستخدمين' : 'إخفاء مؤقت عن المستخدمين'}
+                        </Text>
+                      </Pressable>
+
+                      <Pressable
+                        style={[
+                          styles.smallActionBtn,
+                          {
+                            backgroundColor: vodReviewStatus === 'deleted' ? '#ef4444' : '#ef444420',
+                            borderColor: '#ef4444',
+                            paddingVertical: 10,
+                            paddingHorizontal: 14,
+                          },
+                        ]}
+                        onPress={handleToggleDelete}
+                        disabled={vodOverrideSaving}
+                      >
+                        <MaterialIcons
+                          name={vodReviewStatus === 'deleted' ? 'restore' : 'delete'}
+                          size={16}
+                          color={vodReviewStatus === 'deleted' ? '#ffffff' : '#ef4444'}
+                        />
+                        <Text
+                          style={[
+                            styles.smallActionBtnText,
+                            { color: vodReviewStatus === 'deleted' ? '#ffffff' : '#ef4444', fontWeight: '700' },
+                          ]}
+                        >
+                          {vodReviewStatus === 'deleted' ? 'استعادة إلى القائمة' : 'حذف من القائمة'}
+                        </Text>
+                      </Pressable>
+                    </View>
+
                     <Pressable
-                      style={[styles.primaryActionBtn, { backgroundColor: '#06b6d4', paddingHorizontal: 24 }]}
+                      style={[styles.primaryActionBtn, { backgroundColor: '#06b6d4', paddingHorizontal: 24, paddingVertical: 10 }]}
                       onPress={() => handleSaveVodOverride()}
                       disabled={vodOverrideSaving}
                     >
@@ -3314,37 +3775,166 @@ export default function AdminScreen(): React.JSX.Element {
                         <>
                           <MaterialIcons name="save" size={18} color="#ffffff" />
                           <Text style={styles.primaryActionBtnText}>
-                            حفظ واعتماد: {getTargetScopeTitle(selectedVodItem, selectedSeason, selectedEpisode)}
+                            حفظ واعتماد التعديلات
                           </Text>
                         </>
                       )}
                     </Pressable>
-
-                    {(() => {
-                      const currentKey = getTargetOverrideKey(selectedVodItem, selectedSeason, selectedEpisode);
-                      const hasCurrentOverride = vodOverrides.some(
-                        (o) =>
-                          o.tmdbId.toLowerCase() === currentKey.toLowerCase() ||
-                          o.tmdbId.toLowerCase().replace(/^tmdb-tv-/, '') === currentKey.toLowerCase().replace(/^tmdb-tv-/, '')
-                      );
-                      if (!hasCurrentOverride) return null;
-
-                      return (
-                        <Pressable
-                          style={[styles.resellerActionBtnSecondary, { borderColor: '#ef4444' }]}
-                          onPress={() => handleDeleteVodOverride(currentKey)}
-                        >
-                          <MaterialIcons name="delete" size={16} color="#ef4444" />
-                          <Text style={[styles.resellerActionBtnSecondaryText, { color: '#ef4444' }]}>
-                            إلغاء الاعتماد لهذا النطاق
-                          </Text>
-                        </Pressable>
-                      );
-                    })()}
                   </View>
                 </View>
               </View>
             )}
+
+            {/* شبكة استعراض الكتالوج العربي المباشر */}
+            <View style={{ marginBottom: 24 }}>
+              <View style={[styles.resellersHeaderRow, { marginBottom: 12 }]}>
+                <View>
+                  <Text style={styles.sectionHeaderTitle}>
+                    {arabicCatalogType === 'series' ? 'قائمة المسلسلات العربية' : 'قائمة الأفلام العربية'} ({arabicCatalogItems.length})
+                  </Text>
+                  <Text style={styles.sectionHeaderSub}>
+                    اضغط على أي بطاقة لبدء فحص السيرفرات وتدقيقها واعتمادها
+                  </Text>
+                </View>
+              </View>
+
+              {arabicCatalogLoading ? (
+                <View style={{ padding: 40, alignItems: 'center' }}>
+                  <ActivityIndicator size="large" color="#06b6d4" />
+                  <Text style={{ color: '#94a3b8', fontSize: 13, marginTop: 12 }}>جارٍ جلب الكتالوج العربي وحالات التدقيق...</Text>
+                </View>
+              ) : arabicCatalogItems.length === 0 ? (
+                <View style={{ padding: 30, backgroundColor: '#0f172a', borderRadius: 12, alignItems: 'center' }}>
+                  <MaterialIcons name="movie-filter" size={48} color="#334155" />
+                  <Text style={{ color: '#94a3b8', fontSize: 15, marginTop: 12, fontWeight: '600' }}>
+                    لا توجد أعمال مطابقة للفلاتر المحددة
+                  </Text>
+                </View>
+              ) : (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 14 }}>
+                  {arabicCatalogItems.map((item) => {
+                    const isSelected = selectedVodItem?.id === item.id;
+                    const stColor =
+                      item.reviewStatus === 'verified'
+                        ? '#10b981'
+                        : item.reviewStatus === 'hidden'
+                        ? '#a855f7'
+                        : item.reviewStatus === 'deleted'
+                        ? '#ef4444'
+                        : '#f59e0b';
+                    const stLabel =
+                      item.reviewStatus === 'verified'
+                        ? 'مدقّق'
+                        : item.reviewStatus === 'hidden'
+                        ? 'مخفي'
+                        : item.reviewStatus === 'deleted'
+                        ? 'محذوف'
+                        : 'قيد المراجعة';
+
+                    return (
+                      <Pressable
+                        key={item.id}
+                        style={[
+                          {
+                            width: isWide ? '23.5%' : '47%',
+                            backgroundColor: '#0f172a',
+                            borderRadius: 12,
+                            borderWidth: 1.5,
+                            borderColor: isSelected ? '#06b6d4' : '#1e293b',
+                            overflow: 'hidden',
+                          },
+                          isSelected && { borderColor: '#06b6d4', shadowColor: '#06b6d4', shadowOpacity: 0.3, shadowRadius: 8 },
+                        ]}
+                        onPress={() => handleSelectVodItem(item)}
+                      >
+                        <View style={{ height: 210, width: '100%', position: 'relative', backgroundColor: '#1e293b' }}>
+                          {item.poster ? (
+                            <Image source={{ uri: item.poster }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                          ) : (
+                            <View style={{ width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center' }}>
+                              <MaterialIcons name="movie" size={40} color="#475569" />
+                            </View>
+                          )}
+                          {/* شارة حالة التدقيق */}
+                          <View
+                            style={{
+                              position: 'absolute',
+                              top: 8,
+                              right: 8,
+                              backgroundColor: stColor + 'dd',
+                              paddingHorizontal: 8,
+                              paddingVertical: 3,
+                              borderRadius: 6,
+                            }}
+                          >
+                            <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: '700' }}>{stLabel}</Text>
+                          </View>
+                          {/* شارة المصدر المعتمد إن وجد */}
+                          {item.approvedSourceType && (
+                            <View
+                              style={{
+                                position: 'absolute',
+                                top: 8,
+                                left: 8,
+                                backgroundColor: 'rgba(15, 23, 42, 0.85)',
+                                paddingHorizontal: 6,
+                                paddingVertical: 2,
+                                borderRadius: 6,
+                                borderWidth: 1,
+                                borderColor: '#38bdf8',
+                              }}
+                            >
+                              <Text style={{ color: '#38bdf8', fontSize: 10, fontWeight: '600' }}>
+                                {item.approvedSourceType === 'default_servers' ? 'سيرفرات' : item.approvedSourceType === 'youtube' ? 'يوتيوب' : 'أرشيف'}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+
+                        <View style={{ padding: 10 }}>
+                          <Text style={{ color: '#f8fafc', fontSize: 14, fontWeight: '700' }} numberOfLines={1}>
+                            {item.title}
+                          </Text>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                            <Text style={{ color: '#64748b', fontSize: 12 }}>{item.year || ''}</Text>
+                            <Text style={{ color: '#06b6d4', fontSize: 11, fontWeight: '600' }}>
+                              {isSelected ? 'قيد التدقيق الآن' : 'اضغط للتدقيق ←'}
+                            </Text>
+                          </View>
+                        </View>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              )}
+
+              {/* عناصر التنقل بين الصفحات */}
+              {arabicCatalogTotalPages > 1 && (
+                <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 14, marginTop: 20 }}>
+                  <Pressable
+                    style={[styles.smallActionBtn, { paddingHorizontal: 16 }, arabicCatalogPage <= 1 && { opacity: 0.5 }]}
+                    disabled={arabicCatalogPage <= 1 || arabicCatalogLoading}
+                    onPress={() => fetchArabicCatalog(arabicCatalogPage - 1, arabicCatalogType, arabicCatalogCategory, arabicStatusFilter, searchVodQuery)}
+                  >
+                    <MaterialIcons name="chevron-right" size={20} color="#06b6d4" />
+                    <Text style={[styles.smallActionBtnText, { color: '#06b6d4', fontWeight: '700' }]}>السابق</Text>
+                  </Pressable>
+
+                  <Text style={{ color: '#94a3b8', fontSize: 13, fontWeight: '600' }}>
+                    صفحة {arabicCatalogPage} من {arabicCatalogTotalPages}
+                  </Text>
+
+                  <Pressable
+                    style={[styles.smallActionBtn, { paddingHorizontal: 16 }, arabicCatalogPage >= arabicCatalogTotalPages && { opacity: 0.5 }]}
+                    disabled={arabicCatalogPage >= arabicCatalogTotalPages || arabicCatalogLoading}
+                    onPress={() => fetchArabicCatalog(arabicCatalogPage + 1, arabicCatalogType, arabicCatalogCategory, arabicStatusFilter, searchVodQuery)}
+                  >
+                    <Text style={[styles.smallActionBtnText, { color: '#06b6d4', fontWeight: '700' }]}>التالي</Text>
+                    <MaterialIcons name="chevron-left" size={20} color="#06b6d4" />
+                  </Pressable>
+                </View>
+              )}
+            </View>
 
             {/* قائمة جميع الاستثناءات المعتمدة */}
             <View style={{ marginTop: 10 }}>
