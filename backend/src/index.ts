@@ -4302,6 +4302,18 @@ export default {
       });
     }
 
+    // إعادة توجيه مباشر لتحميل ملف APK (للتلفاز والهواتف وتطبيق Downloader)
+    if (
+      (url.pathname === '/apk' ||
+        url.pathname === '/telfazi.apk' ||
+        url.pathname === '/api/apk' ||
+        url.pathname === '/api/download') &&
+      (request.method === 'GET' || request.method === 'HEAD')
+    ) {
+      const downloadUrl = env.APP_DOWNLOAD_URL || DEFAULT_APP_VERSION.downloadUrl;
+      return Response.redirect(downloadUrl, 302);
+    }
+
     // نقطة نهاية فحص إصدار التطبيق (Android / Android TV)
     if (url.pathname === '/api/app-version' && request.method === 'GET') {
       return handleAppVersion(env);

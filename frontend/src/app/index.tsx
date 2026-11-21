@@ -89,22 +89,11 @@ export default function LandingPage(): React.JSX.Element {
     }
   };
 
-  // معالجة تحميل ملف APK المباشر (للشاشات والموبايل)
+  // معالجة تحميل ملف APK المباشر (توجيه مباشر في نفس الصفحة لمتصفحات التلفاز)
   const handleDownloadApk = () => {
     const targetUrl = downloadUrl || DEFAULT_DOWNLOAD_URL;
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      try {
-        const link = document.createElement('a');
-        link.href = targetUrl;
-        link.setAttribute('download', 'telfazi.apk');
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      } catch {
-        window.open(targetUrl, '_blank');
-      }
+      window.location.href = targetUrl;
     } else {
       Linking.openURL(targetUrl);
     }
@@ -297,6 +286,8 @@ export default function LandingPage(): React.JSX.Element {
               </View>
 
               <Pressable
+                accessibilityRole="link"
+                href={downloadUrl || DEFAULT_DOWNLOAD_URL}
                 style={({ focused, pressed }) => [
                   styles.downloadBtn,
                   focused && styles.downloadBtnFocused,
@@ -326,6 +317,13 @@ export default function LandingPage(): React.JSX.Element {
                 )}
               </Pressable>
               <Text style={styles.downloadSubMeta}>ملف APK مباشر • v{versionName} • متوافق مع الريموت</Text>
+              <View style={styles.directUrlBox}>
+                <MaterialIcons name="link" size={14} color="#38bdf8" />
+                <Text style={styles.directUrlText}>
+                  أو عبر الرابط المباشر:{' '}
+                  <Text style={styles.directUrlHighlight}>tv.moazns.sy/apk</Text>
+                </Text>
+              </View>
             </View>
 
             {/* بطاقة الهواتف الذكية */}
@@ -359,6 +357,8 @@ export default function LandingPage(): React.JSX.Element {
               </View>
 
               <Pressable
+                accessibilityRole="link"
+                href={downloadUrl || DEFAULT_DOWNLOAD_URL}
                 style={({ focused, pressed }) => [
                   styles.downloadBtn,
                   { borderColor: '#818cf8', backgroundColor: 'rgba(129, 140, 248, 0.1)' },
@@ -390,6 +390,13 @@ export default function LandingPage(): React.JSX.Element {
                 )}
               </Pressable>
               <Text style={styles.downloadSubMeta}>ملف APK مباشر • v{versionName} • أندرويد 6.0 وما فوق</Text>
+              <View style={styles.directUrlBox}>
+                <MaterialIcons name="link" size={14} color="#818cf8" />
+                <Text style={styles.directUrlText}>
+                  أو عبر الرابط المباشر:{' '}
+                  <Text style={[styles.directUrlHighlight, { color: '#a5b4fc' }]}>tv.moazns.sy/apk</Text>
+                </Text>
+              </View>
             </View>
           </View>
         </View>
@@ -885,6 +892,28 @@ const styles = StyleSheet.create({
     color: '#94a3b8',
     textAlign: 'center',
     marginTop: 8,
+  },
+  directUrlBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  directUrlText: {
+    color: '#94a3b8',
+    fontSize: 12,
+  },
+  directUrlHighlight: {
+    color: '#38bdf8',
+    fontWeight: '700',
+    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
   },
 
   // قسم المميزات
