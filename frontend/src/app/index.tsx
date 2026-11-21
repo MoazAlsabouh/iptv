@@ -137,33 +137,29 @@ export default function LandingPage(): React.JSX.Element {
           </View>
         </View>
 
-        <Pressable
-          hasTVPreferredFocus
-          style={({ focused, pressed }) => [
-            styles.navCtaBtn,
-            focused && styles.navCtaBtnFocused,
-            pressed && { opacity: 0.85 },
-          ]}
-          onPress={handleEnterPlatform}
+        <a
+          href="/home"
+          style={{
+            textDecoration: 'none',
+            display: 'flex',
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
+            backgroundColor: 'rgba(14, 165, 233, 0.15)',
+            borderWidth: 1,
+            borderStyle: 'solid',
+            borderColor: '#0EA5E9',
+            paddingLeft: 18,
+            paddingRight: 18,
+            paddingTop: 10,
+            paddingBottom: 10,
+            borderRadius: 12,
+            cursor: 'pointer',
+          }}
         >
-          {({ focused }) => (
-            <>
-              <MaterialIcons
-                name="login"
-                size={18}
-                color={focused ? '#070b14' : '#ffffff'}
-              />
-              <Text
-                style={[
-                  styles.navCtaBtnText,
-                  focused && styles.navCtaBtnTextFocused,
-                ]}
-              >
-                الدخول للمنصة
-              </Text>
-            </>
-          )}
-        </Pressable>
+          <MaterialIcons name="login" size={18} color="#ffffff" />
+          <Text style={styles.navCtaBtnText}>الدخول للمنصة</Text>
+        </a>
       </View>
 
       <ScrollView
@@ -194,32 +190,31 @@ export default function LandingPage(): React.JSX.Element {
 
           {/* زر الدعوة الأساسي */}
           <View style={styles.heroCtaWrapper}>
-            <Pressable
-              style={({ focused, pressed }) => [
-                styles.primaryCtaBtn,
-                focused && styles.primaryCtaBtnFocused,
-                pressed && { opacity: 0.85 },
-              ]}
-              onPress={handleEnterPlatform}
+            <a
+              href="/home"
+              style={{
+                textDecoration: 'none',
+                display: 'flex',
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 10,
+                backgroundColor: '#38bdf8',
+                paddingLeft: 32,
+                paddingRight: 32,
+                paddingTop: 16,
+                paddingBottom: 16,
+                borderRadius: 14,
+                cursor: 'pointer',
+                boxShadow: '0 8px 16px rgba(56, 189, 248, 0.4)',
+              }}
             >
-              {({ focused }) => (
-                <>
-                  <Text
-                    style={[
-                      styles.primaryCtaBtnText,
-                      focused && styles.primaryCtaBtnTextFocused,
-                    ]}
-                  >
-                    ابدأ المشاهدة الآن
-                  </Text>
-                  <MaterialIcons
-                    name="play-circle-filled"
-                    size={24}
-                    color={focused ? '#ffffff' : '#070b14'}
-                  />
-                </>
-              )}
-            </Pressable>
+              <Text style={styles.primaryCtaBtnText}>ابدأ المشاهدة الآن</Text>
+              <MaterialIcons
+                name="play-circle-filled"
+                size={24}
+                color="#070b14"
+              />
+            </a>
           </View>
 
           {/* مؤشرات سريعة */}
@@ -285,37 +280,42 @@ export default function LandingPage(): React.JSX.Element {
                 </View>
               </View>
 
-              <Pressable
-                accessibilityRole="link"
+              <a
                 href={downloadUrl || DEFAULT_DOWNLOAD_URL}
-                style={({ focused, pressed }) => [
-                  styles.downloadBtn,
-                  focused && styles.downloadBtnFocused,
-                  pressed && { opacity: 0.85 },
-                ]}
-                onPress={handleDownloadSmartTV}
+                style={{
+                  textDecoration: 'none',
+                  display: 'flex',
+                  flexDirection: 'row',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  gap: 8,
+                  backgroundColor: 'rgba(14, 165, 233, 0.1)',
+                  borderWidth: 1,
+                  borderStyle: 'solid',
+                  borderColor: '#0EA5E9',
+                  paddingTop: 14,
+                  paddingBottom: 14,
+                  paddingLeft: 16,
+                  paddingRight: 16,
+                  borderRadius: 12,
+                  cursor: 'pointer',
+                }}
               >
-                {({ focused }) => (
-                  <>
-                    <MaterialIcons
-                      name="android"
-                      size={20}
-                      color={focused ? '#070b14' : '#38bdf8'}
-                    />
-                    <Text
-                      style={[
-                        styles.downloadBtnText,
-                        focused && styles.downloadBtnTextFocused,
-                      ]}
-                    >
-                      تحميل نسخة الشاشات (APK)
-                    </Text>
-                    <View style={[styles.btnVersionTag, { backgroundColor: 'rgba(56, 189, 248, 0.15)' }, focused && { backgroundColor: 'rgba(11, 17, 32, 0.2)' }]}>
-                      <Text style={[styles.btnVersionText, { color: '#38bdf8' }, focused && { color: '#070b14' }]}>v{versionName}</Text>
-                    </View>
-                  </>
-                )}
-              </Pressable>
+                <MaterialIcons name="android" size={20} color="#38bdf8" />
+                <Text style={styles.downloadBtnText}>
+                  تحميل نسخة الشاشات (APK)
+                </Text>
+                <View
+                  style={[
+                    styles.btnVersionTag,
+                    { backgroundColor: 'rgba(56, 189, 248, 0.15)' },
+                  ]}
+                >
+                  <Text style={[styles.btnVersionText, { color: '#38bdf8' }]}>
+                    v{versionName}
+                  </Text>
+                </View>
+              </a>
               <Text style={styles.downloadSubMeta}>ملف APK مباشر • v{versionName} • متوافق مع الريموت</Text>
               <View style={styles.directUrlBox}>
                 <MaterialIcons name="link" size={14} color="#38bdf8" />
@@ -356,39 +356,35 @@ export default function LandingPage(): React.JSX.Element {
                 </View>
               </View>
 
-              <Pressable
-                accessibilityRole="link"
+              <a
                 href={downloadUrl || DEFAULT_DOWNLOAD_URL}
-                style={({ focused, pressed }) => [
-                  styles.downloadBtn,
-                  { borderColor: '#818cf8', backgroundColor: 'rgba(129, 140, 248, 0.1)' },
-                  focused && [styles.downloadBtnFocused, { backgroundColor: '#818cf8' }],
-                  pressed && { opacity: 0.85 },
-                ]}
-                onPress={handleDownloadMobile}
+                style={{
+                  textDecoration: 'none',
+                  display: 'flex',
+                  flexDirection: 'row',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  gap: 8,
+                  backgroundColor: 'rgba(129, 140, 248, 0.1)',
+                  borderWidth: 1,
+                  borderStyle: 'solid',
+                  borderColor: '#818cf8',
+                  paddingTop: 14,
+                  paddingBottom: 14,
+                  paddingLeft: 16,
+                  paddingRight: 16,
+                  borderRadius: 12,
+                  cursor: 'pointer',
+                }}
               >
-                {({ focused }) => (
-                  <>
-                    <MaterialIcons
-                      name="android"
-                      size={20}
-                      color={focused ? '#070b14' : '#818cf8'}
-                    />
-                    <Text
-                      style={[
-                        styles.downloadBtnText,
-                        { color: '#818cf8' },
-                        focused && styles.downloadBtnTextFocused,
-                      ]}
-                    >
-                      تحميل نسخة المحمول (APK)
-                    </Text>
-                    <View style={[styles.btnVersionTag, focused && { backgroundColor: 'rgba(11, 17, 32, 0.2)' }]}>
-                      <Text style={[styles.btnVersionText, focused && { color: '#070b14' }]}>v{versionName}</Text>
-                    </View>
-                  </>
-                )}
-              </Pressable>
+                <MaterialIcons name="android" size={20} color="#818cf8" />
+                <Text style={[styles.downloadBtnText, { color: '#818cf8' }]}>
+                  تحميل نسخة المحمول (APK)
+                </Text>
+                <View style={styles.btnVersionTag}>
+                  <Text style={styles.btnVersionText}>v{versionName}</Text>
+                </View>
+              </a>
               <Text style={styles.downloadSubMeta}>ملف APK مباشر • v{versionName} • أندرويد 6.0 وما فوق</Text>
               <View style={styles.directUrlBox}>
                 <MaterialIcons name="link" size={14} color="#818cf8" />
@@ -462,32 +458,31 @@ export default function LandingPage(): React.JSX.Element {
           <Text style={styles.bottomBannerSub}>
             أدخل كود الاشتراك الخاص بك وابدأ البث المباشر على الفور
           </Text>
-          <Pressable
-            style={({ focused, pressed }) => [
-              styles.primaryCtaBtn,
-              focused && styles.primaryCtaBtnFocused,
-              pressed && { opacity: 0.85 },
-            ]}
-            onPress={handleEnterPlatform}
+          <a
+            href="/home"
+            style={{
+              textDecoration: 'none',
+              display: 'flex',
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 10,
+              backgroundColor: '#38bdf8',
+              paddingLeft: 32,
+              paddingRight: 32,
+              paddingTop: 16,
+              paddingBottom: 16,
+              borderRadius: 14,
+              cursor: 'pointer',
+              boxShadow: '0 8px 16px rgba(56, 189, 248, 0.4)',
+            }}
           >
-            {({ focused }) => (
-              <>
-                <Text
-                  style={[
-                    styles.primaryCtaBtnText,
-                    focused && styles.primaryCtaBtnTextFocused,
-                  ]}
-                >
-                  الدخول للمنصة الآن
-                </Text>
-                <MaterialIcons
-                  name="arrow-back"
-                  size={20}
-                  color={focused ? '#ffffff' : '#070b14'}
-                />
-              </>
-            )}
-          </Pressable>
+            <Text style={styles.primaryCtaBtnText}>الدخول للمنصة الآن</Text>
+            <MaterialIcons
+              name="arrow-back"
+              size={20}
+              color="#070b14"
+            />
+          </a>
         </View>
 
         {/* ==========================================
