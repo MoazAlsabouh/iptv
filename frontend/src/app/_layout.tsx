@@ -185,7 +185,7 @@ function NavigationGuard(): React.JSX.Element {
   // 1. فحص المقاطع عبر useSegments() من expo-router (يعمل بكفاءة عالية أثناء البناء الثابت والعميل)
   const firstSegment = segments && segments.length > 0 ? segments[0] : '';
   const isSegmentPublic =
-    segments.length === 0 || // الصفحة الرئيسية الجذرية /
+    (segments as any[]).length === 0 || // الصفحة الرئيسية الجذرية /
     firstSegment === 'admin' ||
     firstSegment === 'reseller' ||
     firstSegment === 'activate';

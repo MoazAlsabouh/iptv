@@ -824,7 +824,7 @@ export default function ResellerPortalScreen(): React.JSX.Element {
                       onPress={() => handleUpdateCode(item.code, { resetDevices: true })}
                       disabled={actionLoading === item.code}
                     >
-                      <MaterialIcons name="device-reset" size={14} color="#f59e0b" />
+                      <MaterialIcons name={"restart-alt" as any} size={14} color="#f59e0b" />
                       <Text style={[styles.actionBtnSmallText, { color: '#f59e0b' }]}>
                         تصفير الأجهزة
                       </Text>

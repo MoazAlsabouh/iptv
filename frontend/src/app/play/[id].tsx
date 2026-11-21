@@ -431,8 +431,8 @@ export function PlayerScreen(): React.JSX.Element {
   const [focusedDrawerChannelIndex, setFocusedDrawerChannelIndex] = useState<number>(0);
   const [focusedDrawerCategoryIndex, setFocusedDrawerCategoryIndex] = useState<number>(0);
 
-  const drawerChannelsScrollRef = useRef<ScrollView | null>(null);
-  const drawerCategoriesScrollRef = useRef<ScrollView | null>(null);
+  const drawerChannelsScrollRef = useRef<any>(null);
+  const drawerCategoriesScrollRef = useRef<any>(null);
 
   // مصادر البث المتعددة للقناة أو العمل
   const channelSources: StreamSource[] = useMemo(() => {

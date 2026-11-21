@@ -27,7 +27,8 @@ import {
   formatRemainingDaysArabic,
   formatDateStandard,
 } from '../../utils/dateFormat';
-import { MediaItem, fetchBackendPlaylist } from '../../utils/m3uParser';
+import { fetchBackendPlaylist } from '../../utils/m3uParser';
+import { MediaItem } from '../../types/media';
 import { toYouTubeEmbedUrl } from '../../components/player/TVPlayer';
 
 export interface VodOverrideItem {
@@ -2581,7 +2582,7 @@ export default function AdminScreen(): React.JSX.Element {
                           onPress={() => handleUpdateCode(item.code, { resetDevices: true })}
                           disabled={actionLoading === item.code}
                         >
-                          <MaterialIcons name="device-reset" size={14} color="#f59e0b" />
+                          <MaterialIcons name={"restart-alt" as any} size={14} color="#f59e0b" />
                           <Text style={[styles.actionBtnSmallText, { color: '#f59e0b' }]}>
                             تصفير الأجهزة
                           </Text>
@@ -6531,6 +6532,26 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#1e293b',
     padding: 20,
+  },
+  vodSettingsCard: {
+    backgroundColor: '#0f172a',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#1e293b',
+    padding: 20,
+  },
+  primaryActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+  },
+  primaryActionBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
   },
   vodCardHeader: {
     flexDirection: 'row',

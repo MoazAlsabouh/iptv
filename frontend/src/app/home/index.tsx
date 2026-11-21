@@ -92,8 +92,8 @@ export default function DashboardScreen(): React.JSX.Element {
   }, [activePane, focusedSidebarIndex, setIsSidebarFocused, setStoreSidebarIndex]);
 
   // مراجع القوائم للتمرير التلقائي بالريموت
-  const categoriesScrollViewRef = useRef<ScrollView | null>(null);
-  const channelsFlatListRef = useRef<FlatList<MediaItem> | null>(null);
+  const categoriesScrollViewRef = useRef<any>(null);
+  const channelsFlatListRef = useRef<any>(null);
 
   // 1. تجميع قائمة المجموعات والأقسام في العمود الأيمن
   const navGroups = useMemo<NavGroupItem[]>(() => {

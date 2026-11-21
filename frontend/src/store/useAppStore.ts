@@ -184,6 +184,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const rawFavs = get().favoriteIds;
     const favoriteIds = Array.isArray(rawFavs) ? rawFavs : [];
+    const vodFavorites = Array.isArray(get().vodFavorites) ? get().vodFavorites : [];
+    const channelFavorites = Array.isArray(get().channelFavorites) ? get().channelFavorites : [];
     const isCurrentlyFav = favoriteIds.includes(itemId);
 
     let itemType: 'channel' | 'vod' = 'channel';

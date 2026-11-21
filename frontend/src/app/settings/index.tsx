@@ -93,29 +93,37 @@ export default function SettingsScreen(): React.JSX.Element {
             </View>
           </View>
 
-          <View
-            style={[
-              styles.subStatusPill,
-              subscription?.isExpired ? styles.subStatusExpired : styles.subStatusActive,
-            ]}
-          >
-            <View
-              style={[
-                styles.subStatusDot,
-                subscription?.isExpired
-                  ? { backgroundColor: '#ef4444' }
-                  : { backgroundColor: '#10b981' },
-              ]}
-            />
-            <Text
-              style={[
-                styles.subStatusPillText,
-                subscription?.isExpired ? { color: '#ef4444' } : { color: '#10b981' },
-              ]}
-            >
-              {subscription ? (subscription.isExpired ? 'منتهي الصلاحية' : 'اشتراك نشط') : 'غير مفعل'}
-            </Text>
-          </View>
+          {(() => {
+            const isSubExpired = Boolean(
+              subscription &&
+                (subscription.status === 'expired' || (subscription.remainingDays !== undefined && subscription.remainingDays <= 0))
+            );
+            return (
+              <View
+                style={[
+                  styles.subStatusPill,
+                  isSubExpired ? styles.subStatusExpired : styles.subStatusActive,
+                ]}
+              >
+                <View
+                  style={[
+                    styles.subStatusDot,
+                    isSubExpired
+                      ? { backgroundColor: '#ef4444' }
+                      : { backgroundColor: '#10b981' },
+                  ]}
+                />
+                <Text
+                  style={[
+                    styles.subStatusPillText,
+                    isSubExpired ? { color: '#ef4444' } : { color: '#10b981' },
+                  ]}
+                >
+                  {subscription ? (isSubExpired ? 'منتهي الصلاحية' : 'اشتراك نشط') : 'غير مفعل'}
+                </Text>
+              </View>
+            );
+          })()}
         </View>
 
         <View style={styles.subDetailsRow}>

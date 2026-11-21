@@ -231,7 +231,7 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
     }
 
     let playbackStarted = false;
-    let timeoutId: NodeJS.Timeout | null = null;
+    let timeoutId: any = null;
     let hasTriedProxy = shouldAutoProxy(streamUrl);
 
     const clearPlaybackTimeout = () => {
