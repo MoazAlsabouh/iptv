@@ -7,6 +7,7 @@ import { MediaItem } from '../types/media';
 import {
   DEFAULT_NETWORKS,
   ChannelNetwork,
+  fetchNetworks,
   getStoredCustomNetworks,
   matchChannelToNetwork,
 } from '../config/networks';
@@ -290,13 +291,13 @@ export function useMediaData() {
     return allCountries.filter((c) => c.name !== 'أفلام عالمية');
   }, [filteredLiveChannels]);
 
-  const [customNetworks, setCustomNetworks] = useState<ChannelNetwork[]>([]);
+  const [networkDefinitions, setNetworkDefinitions] = useState<ChannelNetwork[]>(DEFAULT_NETWORKS);
 
   useEffect(() => {
     let isMounted = true;
-    getStoredCustomNetworks().then((loaded) => {
+    fetchNetworks().then((loaded) => {
       if (isMounted && loaded && loaded.length > 0) {
-        setCustomNetworks(loaded);
+        setNetworkDefinitions(loaded);
       }
     });
     return () => {
@@ -304,15 +305,10 @@ export function useMediaData() {
     };
   }, []);
 
-  // دمج الباقات الافتراضية مع الباقات المخصصة المعرفة من الإدارة
-  const allNetworkDefinitions = useMemo(() => {
-    return [...DEFAULT_NETWORKS, ...customNetworks];
-  }, [customNetworks]);
-
   // تجميع قنوات التلفزيون حسب سلاسل وشبكات القنوات
   const networks = useMemo(() => {
-    return groupChannelsByNetwork(filteredLiveChannels, allNetworkDefinitions);
-  }, [filteredLiveChannels, allNetworkDefinitions]);
+    return groupChannelsByNetwork(filteredLiveChannels, networkDefinitions);
+  }, [filteredLiveChannels, networkDefinitions]);
 
   return {
     ...query,

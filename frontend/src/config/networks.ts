@@ -11,6 +11,10 @@ export interface ChannelNetwork {
   description?: string;
   icon?: string;
   isCustom?: boolean;
+  isHidden?: boolean;
+  isDeleted?: boolean;
+  sortOrder?: number;
+  updatedAt?: string | null;
 }
 
 /**
@@ -211,4 +215,26 @@ export async function getStoredCustomNetworks(): Promise<ChannelNetwork[]> {
     console.warn('[Networks] Failed to read custom networks:', err);
     return [];
   }
+}
+
+const BACKEND_BASE_URL = 'https://iptv-backend.moaznsm.workers.dev';
+
+/**
+ * جلب باقات وسلاسل القنوات الفعالة من السيرفر (مع مراعاة إخفاء وحذف الباقات وتخصيصاتها)
+ */
+export async function fetchNetworks(): Promise<ChannelNetwork[]> {
+  try {
+    const res = await fetch(`${BACKEND_BASE_URL}/api/networks`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && Array.isArray(data.networks) && data.networks.length > 0) {
+        return data.networks;
+      }
+    }
+  } catch (err) {
+    console.warn('[Networks] Failed to fetch remote networks, using fallback:', err);
+  }
+  return DEFAULT_NETWORKS;
 }

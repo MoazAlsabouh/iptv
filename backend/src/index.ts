@@ -2023,44 +2023,88 @@ async function handleVodSources(request: Request, url: URL, env: Env): Promise<R
     type: s.type,
   }));
 
+  // فحص سجل الاعتمادات والتخصيصات للمحتوى العربي (vod_source_overrides)
+  let vodOverride: any = null;
+  if (env.DB && (tmdbId || title)) {
+    try {
+      if (tmdbId) {
+        vodOverride = await env.DB.prepare('SELECT * FROM vod_source_overrides WHERE tmdb_id = ?').bind(tmdbId).first<any>();
+      }
+      if (!vodOverride && title) {
+        vodOverride = await env.DB.prepare('SELECT * FROM vod_source_overrides WHERE title = ?').bind(title).first<any>();
+      }
+    } catch (e) {
+      console.warn('[VOD] Failed to check vod_source_overrides:', e);
+    }
+  }
+
   let finalSources: { label: string; url: string; type: 'embed' | 'direct' }[] = [];
 
   // ==========================================
-  // 1. معالجة المحتوى العربي: استعادة منطق الأمس وتخطي الفحص اللحظي تماماً
+  // 1. معالجة المحتوى العربي: السيرفرات المدمجة + الأرشيف فقط افتراضياً، وبدون يوتيوب تلقائياً
+  // مع تطبيق اعتماد الأدمن المخصص إن وُجد (يوتيوب أو أرشيف كأساس أول)
   // ==========================================
   if (isArabic) {
-    let dmQuery = '';
-    if (type === 'movie') {
-      dmQuery = `${title} فيلم كامل`;
-    } else {
-      dmQuery =
-        season > 1
-          ? `${title} الجزء ${season} الحلقة ${episode}`
-          : `${title} الحلقة ${episode}`;
-    }
-
-    const [ytRes, dmRes, archiveRes] = await Promise.allSettled([
-      title && vodSettings.youtube_policy !== 'disabled'
-        ? searchYouTubeProvider(title, season, episode, type)
-        : Promise.resolve([]),
-      title ? searchDailymotionProvider(dmQuery, type === 'movie', title, episode) : Promise.resolve([]),
+    const [archiveRes] = await Promise.allSettled([
       title && type === 'movie' ? searchArchiveProvider(title) : Promise.resolve([]),
     ]);
+    const autoArchiveSources = archiveRes.status === 'fulfilled' ? archiveRes.value : [];
 
-    const ytSources = ytRes.status === 'fulfilled' ? ytRes.value : [];
-    const dmSources = dmRes.status === 'fulfilled' ? dmRes.value : [];
-    const archiveSources = archiveRes.status === 'fulfilled' ? archiveRes.value : [];
+    const overrideSources: { label: string; url: string; type: 'embed' | 'direct' }[] = [];
 
-    // دمج المصادر: يوتيوب وديلي موشن والأرشيف أولاً، ثم جميع سيرفرات الـ Embed كاملة دون استبعاد
+    if (vodOverride) {
+      if (vodOverride.use_youtube_primary && vodOverride.youtube_url) {
+        overrideSources.push({
+          label: 'يوتيوب (معتمد)',
+          url: vodOverride.youtube_url,
+          type: 'embed',
+        });
+        if (vodOverride.archive_url) {
+          overrideSources.push({
+            label: 'أرشيف معتمد (Archive)',
+            url: vodOverride.archive_url,
+            type: 'direct',
+          });
+        }
+      } else if (vodOverride.use_archive_primary && vodOverride.archive_url) {
+        overrideSources.push({
+          label: 'أرشيف معتمد (Archive)',
+          url: vodOverride.archive_url,
+          type: 'direct',
+        });
+        if (vodOverride.youtube_url) {
+          overrideSources.push({
+            label: 'يوتيوب (معتمد)',
+            url: vodOverride.youtube_url,
+            type: 'embed',
+          });
+        }
+      } else {
+        if (vodOverride.archive_url) {
+          overrideSources.push({
+            label: 'أرشيف معتمد (Archive)',
+            url: vodOverride.archive_url,
+            type: 'direct',
+          });
+        }
+        if (vodOverride.youtube_url) {
+          overrideSources.push({
+            label: 'يوتيوب (معتمد)',
+            url: vodOverride.youtube_url,
+            type: 'embed',
+          });
+        }
+      }
+    }
+
     finalSources = [
-      ...ytSources,
-      ...dmSources,
-      ...archiveSources,
+      ...overrideSources,
       ...allEmbedSources,
+      ...autoArchiveSources,
     ];
   } else {
     // ==========================================
-    // 2. معالجة المحتوى الأجنبي: الفحص اللحظي للسيرفرات الأساسية
+    // 2. معالجة المحتوى الأجنبي: استبعاد يوتيوب تماماً والاعتماد حصرياً على السيرفرات المدمجة مع تصدر VidLink
     // ==========================================
     const confirmedEmbedSources: EmbedSourceDef[] = [];
     const unverifiedEmbedSources: EmbedSourceDef[] = [];
@@ -2096,34 +2140,6 @@ async function handleVodSources(request: Request, url: URL, env: Env): Promise<R
       url: s.url,
       type: s.type,
     }));
-
-    // فولباك للمحتوى الأجنبي في حال عدم توفر أي سيرفر مدمج
-    if (finalSources.length === 0 && vodSettings.youtube_policy !== 'disabled' && title) {
-      let dmQuery = '';
-      if (type === 'movie') {
-        dmQuery = `${title} full movie`;
-      } else {
-        dmQuery = `${title} season ${season} episode ${episode}`;
-      }
-
-      try {
-        const [ytRes, dmRes, archiveRes] = await Promise.allSettled([
-          searchYouTubeProvider(title, season, episode, type),
-          searchDailymotionProvider(dmQuery, type === 'movie', title, episode),
-          type === 'movie' ? searchArchiveProvider(title) : Promise.resolve([]),
-        ]);
-
-        const ytSources = ytRes.status === 'fulfilled' ? ytRes.value : [];
-        const dmSources = dmRes.status === 'fulfilled' ? dmRes.value : [];
-        const archiveSources = archiveRes.status === 'fulfilled' ? archiveRes.value : [];
-
-        finalSources = [
-          ...ytSources.map((s, i) => ({ ...s, label: `يوتيوب (بديل ${i + 1})` })),
-          ...dmSources.map((s, i) => ({ ...s, label: `ديلي موشن (بديل ${i + 1})` })),
-          ...archiveSources.map((s, i) => ({ ...s, label: `أرشيف (بديل ${i + 1})` })),
-        ];
-      } catch {}
-    }
   }
 
   // الرد مع الترويسات الصحيحة الكاملة ودعم CORS
@@ -3913,6 +3929,495 @@ async function handleGetPublicChannelOverrides(request: Request, env: Env): Prom
   }
 }
 
+// ==========================================
+// وظائف تخصيص مصادر الأفلام والمسلسلات العربية (VOD Source Overrides)
+// ==========================================
+
+async function handleAdminGetVodOverrides(request: Request, env: Env): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  try {
+    const res = await env.DB.prepare('SELECT * FROM vod_source_overrides ORDER BY updated_at DESC').all<any>();
+    const overrides = (res.results || []).map((r) => ({
+      tmdbId: r.tmdb_id,
+      title: r.title,
+      mediaType: r.media_type || 'movie',
+      youtubeUrl: r.youtube_url,
+      useYoutubePrimary: Boolean(r.use_youtube_primary),
+      archiveUrl: r.archive_url,
+      useArchivePrimary: Boolean(r.use_archive_primary),
+      notes: r.notes,
+      updatedAt: r.updated_at,
+    }));
+    return jsonResponse({ overrides });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل جلب اعتمادات VOD: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminSaveVodOverride(request: Request, env: Env): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  try {
+    const body = (await request.json()) as any;
+    const tmdbId = String(body.tmdbId || '').trim();
+    const title = String(body.title || '').trim();
+    if (!tmdbId || !title) {
+      return jsonResponse({ error: 'معرّف TMDB وعنوان العمل مطلوبان' }, 400);
+    }
+
+    const mediaType = body.mediaType === 'tv' ? 'tv' : 'movie';
+    const youtubeUrl = body.youtubeUrl ? String(body.youtubeUrl).trim() : null;
+    const useYoutubePrimary = body.useYoutubePrimary ? 1 : 0;
+    const archiveUrl = body.archiveUrl ? String(body.archiveUrl).trim() : null;
+    const useArchivePrimary = body.useArchivePrimary ? 1 : 0;
+    const notes = body.notes ? String(body.notes).trim() : null;
+    const now = new Date().toISOString();
+
+    await env.DB.prepare(
+      `INSERT INTO vod_source_overrides (
+        tmdb_id, title, media_type, youtube_url, use_youtube_primary, archive_url, use_archive_primary, notes, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(tmdb_id) DO UPDATE SET
+        title = excluded.title,
+        media_type = excluded.media_type,
+        youtube_url = excluded.youtube_url,
+        use_youtube_primary = excluded.use_youtube_primary,
+        archive_url = excluded.archive_url,
+        use_archive_primary = excluded.use_archive_primary,
+        notes = excluded.notes,
+        updated_at = excluded.updated_at`
+    )
+      .bind(tmdbId, title, mediaType, youtubeUrl, useYoutubePrimary, archiveUrl, useArchivePrimary, notes, now)
+      .run();
+
+    return jsonResponse({ success: true, message: 'تم حفظ وتطبيق الاعتماد بنجاح' });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل حفظ الاعتماد: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminDeleteVodOverride(request: Request, env: Env, tmdbId: string): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  try {
+    await env.DB.prepare('DELETE FROM vod_source_overrides WHERE tmdb_id = ?').bind(tmdbId).run();
+    return jsonResponse({ success: true, message: 'تم إلغاء الاعتماد واستعادة الوضع الافتراضي' });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل حذف الاعتماد: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminCheckArchive(request: Request, env: Env, url: URL): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  const title = (url.searchParams.get('title') || '').trim();
+  if (!title) {
+    return jsonResponse({ error: 'العنوان مطلوب للفحص', results: [] }, 400);
+  }
+
+  try {
+    const cleanTitle = title.replace(/[^\p{L}\p{N}\s]/gu, ' ').trim();
+    const searchUrl = `https://archive.org/advancedsearch.php?q=title:(${encodeURIComponent(cleanTitle)}) AND mediatype:(movies)&fl[]=identifier,title,year,description,downloads&rows=8&output=json`;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch(searchUrl, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) {
+      return jsonResponse({ results: [], message: 'تعذر الاتصال بـ Archive.org' });
+    }
+
+    const data = (await res.json()) as any;
+    const docs = data.response?.docs || [];
+
+    const results = await Promise.all(
+      docs.slice(0, 5).map(async (doc: any) => {
+        const id = doc.identifier;
+        let directUrl: string | null = null;
+        try {
+          const mCtrl = new AbortController();
+          const mT = setTimeout(() => mCtrl.abort(), 3500);
+          const mRes = await fetch(`https://archive.org/metadata/${id}`, {
+            headers: { Accept: 'application/json' },
+            signal: mCtrl.signal,
+          });
+          clearTimeout(mT);
+          if (mRes.ok) {
+            const mData = (await mRes.json()) as any;
+            const files = mData.files || [];
+            const mp4 = files.find(
+              (f: any) =>
+                (f.name && f.name.toLowerCase().endsWith('.mp4')) ||
+                f.format === 'h.264' ||
+                f.format === '512Kb MPEG4'
+            );
+            if (mp4 && mp4.name) {
+              directUrl = `https://archive.org/download/${id}/${encodeURIComponent(mp4.name)}`;
+            }
+          }
+        } catch {}
+
+        const embedUrl = `https://archive.org/embed/${id}`;
+        return {
+          identifier: id,
+          title: doc.title || id,
+          year: doc.year || '',
+          downloads: doc.downloads || 0,
+          directUrl,
+          embedUrl,
+          recommendedUrl: directUrl || embedUrl,
+        };
+      })
+    );
+
+    return jsonResponse({ results });
+  } catch (err: any) {
+    return jsonResponse({ error: 'خطأ أثناء فحص Archive.org: ' + (err?.message || ''), results: [] });
+  }
+}
+
+async function handleGetPublicVodOverride(request: Request, env: Env, tmdbId: string): Promise<Response> {
+  if (!env.DB) {
+    return jsonResponse({ override: null });
+  }
+  try {
+    const r = await env.DB.prepare('SELECT * FROM vod_source_overrides WHERE tmdb_id = ?').bind(tmdbId).first<any>();
+    if (!r) {
+      return jsonResponse({ override: null });
+    }
+    return jsonResponse({
+      override: {
+        tmdbId: r.tmdb_id,
+        title: r.title,
+        mediaType: r.media_type || 'movie',
+        youtubeUrl: r.youtube_url,
+        useYoutubePrimary: Boolean(r.use_youtube_primary),
+        archiveUrl: r.archive_url,
+        useArchivePrimary: Boolean(r.use_archive_primary),
+        notes: r.notes,
+        updatedAt: r.updated_at,
+      },
+    });
+  } catch {
+    return jsonResponse({ override: null });
+  }
+}
+
+async function handleGetPublicVodOverridesAll(request: Request, env: Env): Promise<Response> {
+  if (!env.DB) {
+    return jsonResponse({ overrides: [] });
+  }
+  try {
+    const res = await env.DB.prepare('SELECT * FROM vod_source_overrides ORDER BY updated_at DESC').all<any>();
+    const overrides = (res.results || []).map((r) => ({
+      tmdbId: r.tmdb_id,
+      title: r.title,
+      mediaType: r.media_type || 'movie',
+      youtubeUrl: r.youtube_url,
+      useYoutubePrimary: Boolean(r.use_youtube_primary),
+      archiveUrl: r.archive_url,
+      useArchivePrimary: Boolean(r.use_archive_primary),
+      notes: r.notes,
+      updatedAt: r.updated_at,
+    }));
+    return jsonResponse({ overrides });
+  } catch {
+    return jsonResponse({ overrides: [] });
+  }
+}
+
+// ==========================================
+// وظائف التحكم في سلاسل وباقات القنوات (Networks Overrides)
+// ==========================================
+
+const DEFAULT_BACKEND_NETWORKS = [
+  { id: 'mbc', name: 'باقة MBC', keywords: ['mbc', 'ام بي سي', 'إم بي سي', 'شاهد'], description: 'قنوات مركز تلفزيون الشرق الأوسط (MBC 1, 2, 3, 4, Action, Drama, Masr...)', icon: 'tv' },
+  { id: 'rotana', name: 'باقة روتانا', keywords: ['rotana', 'روتانا', 'رسالة', 'lbc sat'], description: 'قنوات شبكة روتانا الفضائية (سينما، دراما، كلاسيك، كليب، خليجية، كوميدي)', icon: 'movie' },
+  { id: 'bein', name: 'شبكة beIN', keywords: ['bein', 'be in', 'بي ان', 'بي إن'], description: 'قنوات beIN الإخبارية والرياضية المفتوحة والترفيهية', icon: 'sports' },
+  { id: 'aljazeera', name: 'شبكة الجزيرة', keywords: ['al jazeera', 'aljazeera', 'الجزيرة'], description: 'قنوات الجزيرة الإخبارية، مباشر، الوثائقية، والإنجليزية', icon: 'language' },
+  { id: 'alarabiya', name: 'شبكة العربية والحدث', keywords: ['alarabiya', 'al arabiya', 'العربية', 'الحدث'], description: 'قنوات العربية والحدث الإخبارية والتحليلية', icon: 'feed' },
+  { id: 'abudhabi', name: 'باقة أبوظبي', keywords: ['abu dhabi', 'abudhabi', 'أبوظبي', 'ابوظبي', 'ad sports', 'ad tv'], description: 'قنوات أبوظبي الأولى، الإمارات، وقنوات أبوظبي الرياضية', icon: 'live-tv' },
+  { id: 'dubai', name: 'باقة دبي', keywords: ['dubai', 'دبي', 'sama dubai', 'سما دبي'], description: 'مؤسسة دبي للإعلام (دبي، سما دبي، دبي زمان، دبي الرياضية)', icon: 'live-tv' },
+  { id: 'ssc', name: 'قنوات SSC الرياضية', keywords: ['ssc', 'شركة الرياضة السعودية'], description: 'قنوات الرياضة السعودية SSC المفتوحة', icon: 'sports-soccer' },
+  { id: 'osn', name: 'قنوات OSN', keywords: ['osn', 'اوربت', 'شوتايم'], description: 'شبكة قنوات OSN للسينما والترفيه', icon: 'video-library' },
+  { id: 'kids', name: 'باقة قنوات الأطفال', keywords: ['spacetoon', 'space toon', 'سبيستون', 'سبيس تون', 'طيور الجنة', 'toyor', 'كرتون', 'cartoon', 'ماجد', 'majid', 'براعم', 'baraem', 'jeem', 'جيم', 'كوجي', 'cn arabic'], description: 'أفضل قنوات الكرتون والرسوم المتحركة للأطفال والناشئة', icon: 'child-care' },
+  { id: 'islamic', name: 'باقة القنوات الإسلامية والقرآن', keywords: ['قرآن', 'quran', 'سنة', 'sunnah', 'مكة', 'makkah', 'مدينة', 'madinah', 'المجد', 'almajd', 'اقرأ', 'iqraa', 'رسالة'], description: 'قنوات القرآن الكريم المباشر من الحرمين الشريفين والبرامج الدينية', icon: 'menu-book' },
+  { id: 'news', name: 'باقة الأخبار الدولية', keywords: ['bbc arabic', 'فرانس 24', 'france 24', 'سكاي نيوز', 'sky news arabia', 'روسيا اليوم', 'rt arabic', 'الحرة', 'alhurra', 'dw arabic', 'trt عربي', 'تلفزيون العربي', 'alaraby'], description: 'أبرز القنوات الإخبارية الدولية الناطقة بالعربية', icon: 'public' },
+];
+
+async function handleAdminGetNetworks(request: Request, env: Env): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  let dbOverrides: any[] = [];
+  if (env.DB) {
+    try {
+      const res = await env.DB.prepare('SELECT * FROM network_overrides ORDER BY CASE WHEN sort_order IS NOT NULL THEN sort_order ELSE 99999 END ASC, updated_at DESC').all<any>();
+      dbOverrides = res.results || [];
+    } catch (e) {
+      console.warn('[Networks] Failed to read network_overrides:', e);
+    }
+  }
+
+  const overrideMap = new Map<string, any>();
+  for (const row of dbOverrides) {
+    overrideMap.set(row.id.toLowerCase(), row);
+  }
+
+  const networks: any[] = [];
+
+  for (let i = 0; i < DEFAULT_BACKEND_NETWORKS.length; i++) {
+    const def = DEFAULT_BACKEND_NETWORKS[i];
+    const ov = overrideMap.get(def.id.toLowerCase());
+    if (ov) {
+      let kw = def.keywords;
+      if (ov.keywords) {
+        try { kw = JSON.parse(ov.keywords); } catch { kw = ov.keywords.split(',').map((k: string) => k.trim()); }
+      }
+      networks.push({
+        id: def.id,
+        name: ov.name || def.name,
+        description: ov.description !== null && ov.description !== undefined ? ov.description : def.description,
+        icon: ov.icon || def.icon,
+        keywords: kw,
+        sortOrder: ov.sort_order !== null && ov.sort_order !== undefined ? ov.sort_order : (i + 1) * 10,
+        isHidden: Boolean(ov.is_hidden),
+        isDeleted: Boolean(ov.is_deleted),
+        isCustom: false,
+        updatedAt: ov.updated_at,
+      });
+      overrideMap.delete(def.id.toLowerCase());
+    } else {
+      networks.push({
+        id: def.id,
+        name: def.name,
+        description: def.description,
+        icon: def.icon,
+        keywords: def.keywords,
+        sortOrder: (i + 1) * 10,
+        isHidden: false,
+        isDeleted: false,
+        isCustom: false,
+        updatedAt: null,
+      });
+    }
+  }
+
+  for (const [_, ov] of overrideMap.entries()) {
+    let kw: string[] = [];
+    if (ov.keywords) {
+      try { kw = JSON.parse(ov.keywords); } catch { kw = ov.keywords.split(',').map((k: string) => k.trim()); }
+    }
+    networks.push({
+      id: ov.id,
+      name: ov.name,
+      description: ov.description || '',
+      icon: ov.icon || 'hub',
+      keywords: kw,
+      sortOrder: ov.sort_order !== null && ov.sort_order !== undefined ? ov.sort_order : 9999,
+      isHidden: Boolean(ov.is_hidden),
+      isDeleted: Boolean(ov.is_deleted),
+      isCustom: Boolean(ov.is_custom),
+      updatedAt: ov.updated_at,
+    });
+  }
+
+  networks.sort((a, b) => (a.sortOrder || 9999) - (b.sortOrder || 9999));
+
+  return jsonResponse({ networks });
+}
+
+async function handleAdminSaveNetwork(request: Request, env: Env, networkIdParam?: string): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  try {
+    const body = (await request.json()) as any;
+    const id = String(networkIdParam || body.id || '').trim();
+    if (!id) {
+      return jsonResponse({ error: 'معرّف السلسلة مطلوب' }, 400);
+    }
+
+    const name = String(body.name || '').trim();
+    if (!name) {
+      return jsonResponse({ error: 'اسم السلسلة مطلوب' }, 400);
+    }
+
+    const description = body.description !== undefined && body.description !== null ? String(body.description).trim() : null;
+    const icon = body.icon ? String(body.icon).trim() : 'hub';
+    let keywordsStr = '[]';
+    if (Array.isArray(body.keywords)) {
+      keywordsStr = JSON.stringify(body.keywords);
+    } else if (typeof body.keywords === 'string') {
+      keywordsStr = JSON.stringify(body.keywords.split(',').map((k: string) => k.trim()).filter(Boolean));
+    }
+
+    const sortOrder = body.sortOrder !== undefined && body.sortOrder !== null ? Number(body.sortOrder) : null;
+    const isHidden = body.isHidden ? 1 : 0;
+    const isDeleted = body.isDeleted ? 1 : 0;
+    const isCustom = body.isCustom ? 1 : 0;
+    const now = new Date().toISOString();
+
+    await env.DB.prepare(
+      `INSERT INTO network_overrides (
+        id, name, description, icon, keywords, sort_order, is_hidden, is_deleted, is_custom, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        description = excluded.description,
+        icon = excluded.icon,
+        keywords = excluded.keywords,
+        sort_order = excluded.sort_order,
+        is_hidden = excluded.is_hidden,
+        is_deleted = excluded.is_deleted,
+        is_custom = excluded.is_custom,
+        updated_at = excluded.updated_at`
+    )
+      .bind(id, name, description, icon, keywordsStr, sortOrder, isHidden, isDeleted, isCustom, now)
+      .run();
+
+    return jsonResponse({ success: true, message: 'تم حفظ وتحديث السلسلة بنجاح' });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل حفظ السلسلة: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminDeleteNetwork(request: Request, env: Env, id: string): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  try {
+    const isDefault = DEFAULT_BACKEND_NETWORKS.some((d) => d.id.toLowerCase() === id.toLowerCase());
+
+    if (isDefault) {
+      const now = new Date().toISOString();
+      const def = DEFAULT_BACKEND_NETWORKS.find((d) => d.id.toLowerCase() === id.toLowerCase())!;
+      await env.DB.prepare(
+        `INSERT INTO network_overrides (id, name, is_deleted, updated_at) VALUES (?, ?, 1, ?)
+        ON CONFLICT(id) DO UPDATE SET is_deleted = 1, updated_at = excluded.updated_at`
+      ).bind(id, def.name, now).run();
+      return jsonResponse({ success: true, message: 'تم حذف السلسلة وإخفاؤها من المنصة' });
+    } else {
+      await env.DB.prepare('DELETE FROM network_overrides WHERE id = ?').bind(id).run();
+      return jsonResponse({ success: true, message: 'تم حذف السلسلة المخصصة بنجاح' });
+    }
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل حذف السلسلة: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleGetPublicNetworks(env: Env): Promise<Response> {
+  let dbOverrides: any[] = [];
+  if (env.DB) {
+    try {
+      const res = await env.DB.prepare('SELECT * FROM network_overrides').all<any>();
+      dbOverrides = res.results || [];
+    } catch {}
+  }
+
+  const overrideMap = new Map<string, any>();
+  for (const row of dbOverrides) {
+    overrideMap.set(row.id.toLowerCase(), row);
+  }
+
+  const activeNetworks: any[] = [];
+
+  for (let i = 0; i < DEFAULT_BACKEND_NETWORKS.length; i++) {
+    const def = DEFAULT_BACKEND_NETWORKS[i];
+    const ov = overrideMap.get(def.id.toLowerCase());
+    if (ov) {
+      if (ov.is_hidden || ov.is_deleted) continue;
+      let kw = def.keywords;
+      if (ov.keywords) {
+        try { kw = JSON.parse(ov.keywords); } catch { kw = ov.keywords.split(',').map((k: string) => k.trim()); }
+      }
+      activeNetworks.push({
+        id: def.id,
+        name: ov.name || def.name,
+        description: ov.description !== null && ov.description !== undefined ? ov.description : def.description,
+        icon: ov.icon || def.icon,
+        keywords: kw,
+        sortOrder: ov.sort_order !== null && ov.sort_order !== undefined ? ov.sort_order : (i + 1) * 10,
+      });
+      overrideMap.delete(def.id.toLowerCase());
+    } else {
+      activeNetworks.push({
+        id: def.id,
+        name: def.name,
+        description: def.description,
+        icon: def.icon,
+        keywords: def.keywords,
+        sortOrder: (i + 1) * 10,
+      });
+    }
+  }
+
+  for (const [_, ov] of overrideMap.entries()) {
+    if (ov.is_hidden || ov.is_deleted) continue;
+    let kw: string[] = [];
+    if (ov.keywords) {
+      try { kw = JSON.parse(ov.keywords); } catch { kw = ov.keywords.split(',').map((k: string) => k.trim()); }
+    }
+    activeNetworks.push({
+      id: ov.id,
+      name: ov.name,
+      description: ov.description || '',
+      icon: ov.icon || 'hub',
+      keywords: kw,
+      sortOrder: ov.sort_order !== null && ov.sort_order !== undefined ? ov.sort_order : 9999,
+    });
+  }
+
+  activeNetworks.sort((a, b) => (a.sortOrder || 9999) - (b.sortOrder || 9999));
+
+  return jsonResponse({ networks: activeNetworks }, 200, {
+    'Cache-Control': 'public, max-age=300',
+  });
+}
+
 /**
  * 5. نظام HLS Stream Proxy
  * يقوم بإعادة كتابة روابط ملفات .m3u8 ومقاطع .ts/.m4s وحذف ترويسة Origin وتعيين Referer مناسب
@@ -4406,6 +4911,52 @@ export default {
     // نقطة نهاية عامة لجلب تخصيصات القنوات للتطبيق
     if (url.pathname === '/api/channels/overrides' && request.method === 'GET') {
       return handleGetPublicChannelOverrides(request, env);
+    }
+
+    // ==========================================
+    // مسارات تخصيص مصادر الأفلام والمسلسلات العربية (VOD Source Overrides)
+    // ==========================================
+    if (url.pathname === '/api/admin/vod/overrides' && request.method === 'GET') {
+      return handleAdminGetVodOverrides(request, env);
+    }
+    if (url.pathname === '/api/admin/vod/overrides' && request.method === 'POST') {
+      return handleAdminSaveVodOverride(request, env);
+    }
+    if (url.pathname.startsWith('/api/admin/vod/overrides/') && request.method === 'DELETE') {
+      const tmdbId = decodeURIComponent(url.pathname.substring('/api/admin/vod/overrides/'.length));
+      return handleAdminDeleteVodOverride(request, env, tmdbId);
+    }
+    if (url.pathname === '/api/admin/vod/check-archive' && request.method === 'GET') {
+      return handleAdminCheckArchive(request, env, url);
+    }
+    if (url.pathname.startsWith('/api/vod/overrides/') && request.method === 'GET') {
+      const tmdbId = decodeURIComponent(url.pathname.substring('/api/vod/overrides/'.length));
+      return handleGetPublicVodOverride(request, env, tmdbId);
+    }
+    if (url.pathname === '/api/vod/overrides' && request.method === 'GET') {
+      return handleGetPublicVodOverridesAll(request, env);
+    }
+
+    // ==========================================
+    // مسارات سلاسل وباقات القنوات (Networks)
+    // ==========================================
+    if (url.pathname === '/api/admin/networks' && request.method === 'GET') {
+      return handleAdminGetNetworks(request, env);
+    }
+    if (url.pathname === '/api/admin/networks' && request.method === 'POST') {
+      return handleAdminSaveNetwork(request, env);
+    }
+    if (url.pathname.startsWith('/api/admin/networks/')) {
+      const idParam = decodeURIComponent(url.pathname.substring('/api/admin/networks/'.length));
+      if (request.method === 'PUT' || request.method === 'POST') {
+        return handleAdminSaveNetwork(request, env, idParam);
+      }
+      if (request.method === 'DELETE') {
+        return handleAdminDeleteNetwork(request, env, idParam);
+      }
+    }
+    if (url.pathname === '/api/networks' && request.method === 'GET') {
+      return handleGetPublicNetworks(env);
     }
 
     // 3. نقاط نهاية بوابة الموزعين (Reseller Portal)

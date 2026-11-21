@@ -82,3 +82,34 @@ CREATE TABLE IF NOT EXISTS channel_overrides (
 );
 
 CREATE INDEX IF NOT EXISTS idx_channel_overrides_sort ON channel_overrides(sort_order);
+
+-- جدول تخصيص مصادر الأفلام والمسلسلات العربية (VOD Source Overrides)
+CREATE TABLE IF NOT EXISTS vod_source_overrides (
+  tmdb_id TEXT PRIMARY KEY,
+  title TEXT,
+  media_type TEXT DEFAULT 'movie',
+  youtube_url TEXT,
+  use_youtube_primary INTEGER DEFAULT 0,
+  archive_url TEXT,
+  use_archive_primary INTEGER DEFAULT 0,
+  notes TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_vod_source_overrides_updated ON vod_source_overrides(updated_at);
+
+-- جدول تخصيص سلاسل وباقات القنوات (Network Overrides)
+CREATE TABLE IF NOT EXISTS network_overrides (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  icon TEXT,
+  keywords TEXT,
+  sort_order INTEGER,
+  is_hidden INTEGER DEFAULT 0,
+  is_deleted INTEGER DEFAULT 0,
+  is_custom INTEGER DEFAULT 0,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_network_overrides_sort ON network_overrides(sort_order);

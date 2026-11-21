@@ -18,6 +18,7 @@ import { BACKEND_BASE_URL } from '../../context/AuthContext';
 import {
   DEFAULT_NETWORKS,
   ChannelNetwork,
+  matchChannelToNetwork,
   getStoredCustomNetworks,
   saveCustomNetworks,
 } from '../../config/networks';
@@ -27,6 +28,41 @@ import {
   formatDateStandard,
 } from '../../utils/dateFormat';
 import { MediaItem, fetchBackendPlaylist } from '../../utils/m3uParser';
+
+export interface VodOverrideItem {
+  tmdbId: string;
+  title: string;
+  mediaType: 'movie' | 'tv';
+  youtubeUrl: string | null;
+  useYoutubePrimary: boolean;
+  archiveUrl: string | null;
+  useArchivePrimary: boolean;
+  notes: string | null;
+  updatedAt?: string;
+}
+
+export interface VodSearchResult {
+  id: string | number;
+  title?: string;
+  name?: string;
+  media_type?: string;
+  poster?: string;
+  poster_path?: string;
+  year?: string;
+  release_date?: string;
+  first_air_date?: string;
+  overview?: string;
+}
+
+export interface ArchiveCheckResult {
+  identifier: string;
+  title: string;
+  year?: string;
+  downloads?: number;
+  directUrl?: string | null;
+  embedUrl?: string;
+  recommendedUrl?: string;
+}
 
 export interface ChannelOverrideItem {
   id: string;
@@ -131,12 +167,34 @@ export default function AdminScreen(): React.JSX.Element {
   const [authLoading, setAuthLoading] = useState<boolean>(false);
 
   // التنقل بين التبويبات الرئيسية
-  const [activeTab, setActiveTab] = useState<'codes' | 'resellers' | 'vod' | 'networks' | 'channels'>('codes');
+  const [activeTab, setActiveTab] = useState<'codes' | 'resellers' | 'vod' | 'arabic_vod' | 'networks' | 'channels'>('codes');
 
   // إعدادات وسيرفرات الأفلام والمسلسلات
   const [vodSettings, setVodSettings] = useState<VodSettings>(DEFAULT_VOD_SETTINGS);
   const [vodLoading, setVodLoading] = useState<boolean>(false);
   const [vodSaving, setVodSaving] = useState<boolean>(false);
+
+  // إدارة تخصيص المحتوى العربي VOD وربط Archive و YouTube
+  const [vodOverrides, setVodOverrides] = useState<VodOverrideItem[]>([]);
+  const [vodOverridesLoading, setVodOverridesLoading] = useState<boolean>(false);
+  const [searchVodQuery, setSearchVodQuery] = useState<string>('');
+  const [searchVodLoading, setSearchVodLoading] = useState<boolean>(false);
+  const [searchVodResults, setSearchVodResults] = useState<VodSearchResult[]>([]);
+  const [selectedVodItem, setSelectedVodItem] = useState<VodSearchResult | null>(null);
+  const [archiveChecking, setArchiveChecking] = useState<boolean>(false);
+  const [archiveResults, setArchiveResults] = useState<ArchiveCheckResult[]>([]);
+  const [archiveCheckMessage, setArchiveCheckMessage] = useState<string | null>(null);
+  const [vodYoutubeUrl, setVodYoutubeUrl] = useState<string>('');
+  const [vodYoutubePrimary, setVodYoutubePrimary] = useState<boolean>(false);
+  const [vodArchiveUrl, setVodArchiveUrl] = useState<string>('');
+  const [vodArchivePrimary, setVodArchivePrimary] = useState<boolean>(false);
+  const [vodNotes, setVodNotes] = useState<string>('');
+  const [vodOverrideSaving, setVodOverrideSaving] = useState<boolean>(false);
+
+  // نافذة معاينة مشغلات VOD السريعة (VidLink / VidSrc / YouTube / Archive)
+  const [vodPreviewModalVisible, setVodPreviewModalVisible] = useState<boolean>(false);
+  const [vodPreviewUrl, setVodPreviewUrl] = useState<string>('');
+  const [vodPreviewTitle, setVodPreviewTitle] = useState<string>('');
 
   // إدارة تخصيص القنوات المختارة والقنوات المضافة يدوياً
   const [channelOverrides, setChannelOverrides] = useState<ChannelOverrideItem[]>([]);
@@ -174,7 +232,23 @@ export default function AdminScreen(): React.JSX.Element {
     sortOrder: '',
   });
 
-  // إدارة سلاسل وباقات القنوات المخصصة
+  // إدارة سلاسل وباقات القنوات (Networks) عبر الـ Backend و D1
+  const [adminNetworks, setAdminNetworks] = useState<ChannelNetwork[]>([]);
+  const [adminNetworksLoading, setAdminNetworksLoading] = useState<boolean>(false);
+  const [selectedNetworkForChannels, setSelectedNetworkForChannels] = useState<ChannelNetwork | null>(null);
+  const [showNetworkChannelsModal, setShowNetworkChannelsModal] = useState<boolean>(false);
+  const [editingNetwork, setEditingNetwork] = useState<{
+    id: string;
+    name: string;
+    keywords: string;
+    description: string;
+    icon: string;
+    sortOrder: string;
+    isCustom: boolean;
+  } | null>(null);
+  const [showEditNetworkModal, setShowEditNetworkModal] = useState<boolean>(false);
+  const [savingNetwork, setSavingNetwork] = useState<boolean>(false);
+
   const [customNetworks, setCustomNetworks] = useState<ChannelNetwork[]>([]);
   const [showAddNetworkModal, setShowAddNetworkModal] = useState<boolean>(false);
   const [newNetworkName, setNewNetworkName] = useState<string>('');
@@ -389,12 +463,28 @@ export default function AdminScreen(): React.JSX.Element {
     });
   };
 
-  // تحديث البيانات عند تسجيل الدخول أو تغيير التبويب
-  useEffect(() => {
-    getStoredCustomNetworks().then((nets) => {
-      if (nets) setCustomNetworks(nets);
-    });
-  }, []);
+  // ==========================================
+  // وظائف إدارة سلاسل وباقات القنوات (Networks)
+  // ==========================================
+
+  const fetchAdminNetworks = useCallback(async () => {
+    setAdminNetworksLoading(true);
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/networks`, {
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.networks)) {
+          setAdminNetworks(data.networks);
+        }
+      }
+    } catch (err) {
+      console.warn('[Admin] Failed to fetch admin networks:', err);
+    } finally {
+      setAdminNetworksLoading(false);
+    }
+  }, [getAuthHeaders]);
 
   const handleCreateCustomNetwork = async () => {
     if (!newNetworkName.trim() || !newNetworkKeywords.trim()) {
@@ -406,8 +496,7 @@ export default function AdminScreen(): React.JSX.Element {
       .map((k) => k.trim())
       .filter((k) => k.length > 0);
 
-    const newNet: ChannelNetwork = {
-      id: `custom-${Date.now()}`,
+    const payload = {
       name: newNetworkName.trim(),
       keywords,
       description: newNetworkDesc.trim() || 'باقة مخصصة مضافة من لوحة الإدارة',
@@ -415,22 +504,311 @@ export default function AdminScreen(): React.JSX.Element {
       isCustom: true,
     };
 
-    const updated = [...customNetworks, newNet];
-    setCustomNetworks(updated);
-    await saveCustomNetworks(updated);
-
-    setNewNetworkName('');
-    setNewNetworkKeywords('');
-    setNewNetworkDesc('');
-    setShowAddNetworkModal(false);
-    setStatusMessage(`تمت إضافة "${newNet.name}" بنجاح!`);
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/networks`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setNewNetworkName('');
+        setNewNetworkKeywords('');
+        setNewNetworkDesc('');
+        setShowAddNetworkModal(false);
+        setStatusMessage(`تمت إضافة "${payload.name}" بنجاح`);
+        fetchAdminNetworks();
+      } else {
+        setStatusMessage(data.error || 'فشل حفظ الباقة المخصصة');
+      }
+    } catch {
+      setStatusMessage('حدث خطأ أثناء حفظ الباقة');
+    }
   };
 
-  const handleDeleteCustomNetwork = async (id: string) => {
-    const updated = customNetworks.filter((n) => n.id !== id);
-    setCustomNetworks(updated);
-    await saveCustomNetworks(updated);
-    setStatusMessage('تم حذف الباقة بنجاح');
+  const handleToggleNetworkHidden = async (net: ChannelNetwork) => {
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/networks/${encodeURIComponent(net.id)}`, {
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ isHidden: !net.isHidden }),
+      });
+      if (res.ok) {
+        setStatusMessage(!net.isHidden ? `تم إخفاء باقة "${net.name}" عن المستخدمين` : `تم إظهار باقة "${net.name}" للمستخدمين`);
+        fetchAdminNetworks();
+      }
+    } catch {
+      setStatusMessage('فشل تعديل حالة إخفاء الباقة');
+    }
+  };
+
+  const handleDeleteNetwork = async (net: ChannelNetwork) => {
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/networks/${encodeURIComponent(net.id)}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        setStatusMessage(`تم حذف باقة "${net.name}" بنجاح`);
+        fetchAdminNetworks();
+      }
+    } catch {
+      setStatusMessage('فشل حذف الباقة');
+    }
+  };
+
+  const handleSaveEditedNetwork = async () => {
+    if (!editingNetwork) return;
+    if (!editingNetwork.name.trim() || !editingNetwork.keywords.trim()) {
+      setStatusMessage('يرجى إدخال اسم الباقة والكلمات المفتاحية');
+      return;
+    }
+    setSavingNetwork(true);
+    try {
+      const keywords = editingNetwork.keywords
+        .split(',')
+        .map((k) => k.trim())
+        .filter((k) => k.length > 0);
+
+      const payload = {
+        name: editingNetwork.name.trim(),
+        keywords,
+        description: editingNetwork.description.trim() || undefined,
+        icon: editingNetwork.icon.trim() || 'hub',
+        sortOrder: editingNetwork.sortOrder.trim() ? Number(editingNetwork.sortOrder.trim()) : undefined,
+        isCustom: editingNetwork.isCustom,
+      };
+
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/networks/${encodeURIComponent(editingNetwork.id)}`, {
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) {
+        setShowEditNetworkModal(false);
+        setEditingNetwork(null);
+        setStatusMessage('تم تعديل الباقة بنجاح');
+        fetchAdminNetworks();
+      } else {
+        const d = await res.json();
+        setStatusMessage(d.error || 'فشل تعديل الباقة');
+      }
+    } catch {
+      setStatusMessage('حدث خطأ أثناء تعديل الباقة');
+    } finally {
+      setSavingNetwork(false);
+    }
+  };
+
+  const handleOpenNetworkChannels = (net: ChannelNetwork) => {
+    setSelectedNetworkForChannels(net);
+    loadAllM3uChannels();
+    setShowNetworkChannelsModal(true);
+  };
+
+  // ==========================================
+  // وظائف إدارة المحتوى العربي VOD وربط Archive و YouTube
+  // ==========================================
+
+  const fetchVodOverrides = useCallback(async () => {
+    setVodOverridesLoading(true);
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/vod/overrides`, {
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setVodOverrides(Array.isArray(data.overrides) ? data.overrides : []);
+      }
+    } catch (err) {
+      console.warn('[Admin] Failed to fetch VOD overrides:', err);
+    } finally {
+      setVodOverridesLoading(false);
+    }
+  }, [getAuthHeaders]);
+
+  const handleSearchVod = async () => {
+    const q = searchVodQuery.trim();
+    if (!q) return;
+    setSearchVodLoading(true);
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/vod/search?q=${encodeURIComponent(q)}`);
+      if (res.ok) {
+        const data = await res.json();
+        const results = (data.results || []).map((item: any) => ({
+          id: item.id,
+          title: item.title || item.name,
+          media_type: item.media_type || (item.first_air_date ? 'tv' : 'movie'),
+          poster: item.poster || (item.poster_path ? `https://image.tmdb.org/t/p/w300${item.poster_path}` : undefined),
+          year: item.year || (item.release_date || item.first_air_date || '').substring(0, 4),
+          overview: item.overview,
+        }));
+        setSearchVodResults(results);
+      }
+    } catch (err) {
+      console.warn('[Admin] Failed to search VOD:', err);
+    } finally {
+      setSearchVodLoading(false);
+    }
+  };
+
+  const handleCheckArchive = async (title: string) => {
+    if (!title.trim()) return;
+    setArchiveChecking(true);
+    setArchiveResults([]);
+    setArchiveCheckMessage(null);
+    try {
+      const res = await fetch(
+        `${BACKEND_BASE_URL}/api/admin/vod/check-archive?title=${encodeURIComponent(title.trim())}`,
+        { headers: getAuthHeaders() }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        const list: ArchiveCheckResult[] = Array.isArray(data.results) ? data.results : [];
+        setArchiveResults(list);
+        if (list.length === 0) {
+          setArchiveCheckMessage('لم يتم العثور على نتائج مطابقة مباشرة في Archive.org');
+        } else {
+          const recommended = list[0].recommendedUrl || list[0].directUrl || list[0].embedUrl;
+          if (recommended && !vodArchiveUrl) {
+            setVodArchiveUrl(recommended);
+          }
+        }
+      } else {
+        setArchiveCheckMessage('تعذر فحص Archive.org حالياً');
+      }
+    } catch {
+      setArchiveCheckMessage('تعذر فحص Archive.org حالياً');
+    } finally {
+      setArchiveChecking(false);
+    }
+  };
+
+  const handleSelectVodItem = (item: VodSearchResult) => {
+    setSelectedVodItem(item);
+    const existing = vodOverrides.find((o) => String(o.tmdbId) === String(item.id));
+    if (existing) {
+      setVodYoutubeUrl(existing.youtubeUrl || '');
+      setVodYoutubePrimary(existing.useYoutubePrimary);
+      setVodArchiveUrl(existing.archiveUrl || '');
+      setVodArchivePrimary(existing.useArchivePrimary);
+      setVodNotes(existing.notes || '');
+    } else {
+      setVodYoutubeUrl('');
+      setVodYoutubePrimary(false);
+      setVodArchiveUrl('');
+      setVodArchivePrimary(false);
+      setVodNotes('');
+    }
+    handleCheckArchive(item.title || item.name || '');
+  };
+
+  const handleSaveVodOverride = async (options?: { forceArchivePrimary?: boolean; forceYoutubePrimary?: boolean }) => {
+    if (!selectedVodItem) return;
+    setVodOverrideSaving(true);
+    try {
+      let ytPrimary = vodYoutubePrimary;
+      let arPrimary = vodArchivePrimary;
+      if (options?.forceArchivePrimary) {
+        arPrimary = true;
+        ytPrimary = false;
+        setVodArchivePrimary(true);
+        setVodYoutubePrimary(false);
+      } else if (options?.forceYoutubePrimary) {
+        ytPrimary = true;
+        arPrimary = false;
+        setVodYoutubePrimary(true);
+        setVodArchivePrimary(false);
+      }
+
+      const payload = {
+        tmdbId: String(selectedVodItem.id),
+        title: selectedVodItem.title || selectedVodItem.name || '',
+        mediaType: selectedVodItem.media_type === 'tv' ? 'tv' : 'movie',
+        youtubeUrl: vodYoutubeUrl.trim() || null,
+        useYoutubePrimary: ytPrimary,
+        archiveUrl: vodArchiveUrl.trim() || null,
+        useArchivePrimary: arPrimary,
+        notes: vodNotes.trim() || null,
+      };
+
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/vod/overrides`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) {
+        setStatusMessage(`تم حفظ استثناء "${payload.title}" وتطبيقه بنجاح`);
+        fetchVodOverrides();
+      } else {
+        const data = await res.json();
+        setStatusMessage(data.error || 'فشل حفظ الاعتماد');
+      }
+    } catch {
+      setStatusMessage('حدث خطأ أثناء حفظ الاعتماد');
+    } finally {
+      setVodOverrideSaving(false);
+    }
+  };
+
+  const handleDeleteVodOverride = async (tmdbId: string) => {
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/vod/overrides/${encodeURIComponent(tmdbId)}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        setStatusMessage('تم إلغاء الاستثناء واستعادة المصادر الافتراضية بنجاح');
+        if (selectedVodItem && String(selectedVodItem.id) === String(tmdbId)) {
+          setVodYoutubeUrl('');
+          setVodYoutubePrimary(false);
+          setVodArchiveUrl('');
+          setVodArchivePrimary(false);
+          setVodNotes('');
+        }
+        fetchVodOverrides();
+      } else {
+        setStatusMessage('فشل إلغاء الاعتماد');
+      }
+    } catch {
+      setStatusMessage('فشل إلغاء الاعتماد');
+    }
+  };
+
+  const handlePreviewVodServer = (server: 'vidlink' | 'vidsrc' | 'youtube' | 'archive') => {
+    if (!selectedVodItem) return;
+    const isTv = selectedVodItem.media_type === 'tv';
+    let url = '';
+    let name = '';
+
+    if (server === 'vidlink') {
+      name = 'VidLink';
+      url = isTv
+        ? `https://api.vidlink.pro/tv/${selectedVodItem.id}/1/1`
+        : `https://api.vidlink.pro/movie/${selectedVodItem.id}`;
+    } else if (server === 'vidsrc') {
+      name = 'VidSrc CC';
+      url = isTv
+        ? `https://vidsrc.cc/v2/embed/tv/${selectedVodItem.id}/1/1`
+        : `https://vidsrc.cc/v2/embed/movie/${selectedVodItem.id}`;
+    } else if (server === 'youtube') {
+      name = 'YouTube';
+      url = vodYoutubeUrl;
+    } else if (server === 'archive') {
+      name = 'Archive.org';
+      url = vodArchiveUrl;
+    }
+
+    if (!url) {
+      setStatusMessage('لا يوجد رابط متاح للمعاينة');
+      return;
+    }
+
+    setVodPreviewTitle(`${name}: ${selectedVodItem.title || selectedVodItem.name}`);
+    setVodPreviewUrl(url);
+    setVodPreviewModalVisible(true);
   };
 
   // ==========================================
@@ -662,11 +1040,24 @@ export default function AdminScreen(): React.JSX.Element {
         fetchResellers();
       } else if (activeTab === 'vod') {
         fetchVodSettings();
+      } else if (activeTab === 'arabic_vod') {
+        fetchVodOverrides();
+      } else if (activeTab === 'networks') {
+        fetchAdminNetworks();
       } else if (activeTab === 'channels') {
         fetchChannelOverrides();
       }
     }
-  }, [isAuthenticated, activeTab, fetchCodes, fetchResellers, fetchVodSettings, fetchChannelOverrides]);
+  }, [
+    isAuthenticated,
+    activeTab,
+    fetchCodes,
+    fetchResellers,
+    fetchVodSettings,
+    fetchVodOverrides,
+    fetchAdminNetworks,
+    fetchChannelOverrides,
+  ]);
 
   // تسجيل الدخول للإدارة
   const handleLoginSubmit = async () => {
@@ -1091,6 +1482,8 @@ export default function AdminScreen(): React.JSX.Element {
               if (activeTab === 'codes') fetchCodes();
               else if (activeTab === 'resellers') fetchResellers();
               else if (activeTab === 'vod') fetchVodSettings();
+              else if (activeTab === 'arabic_vod') fetchVodOverrides();
+              else if (activeTab === 'networks') fetchAdminNetworks();
               else if (activeTab === 'channels') fetchChannelOverrides();
             }}
           >
@@ -1162,6 +1555,25 @@ export default function AdminScreen(): React.JSX.Element {
         </Pressable>
 
         <Pressable
+          style={[styles.mainNavTab, activeTab === 'arabic_vod' && styles.mainNavTabActive]}
+          onPress={() => setActiveTab('arabic_vod')}
+        >
+          <MaterialIcons
+            name="movie-filter"
+            size={20}
+            color={activeTab === 'arabic_vod' ? '#06b6d4' : '#94a3b8'}
+          />
+          <Text
+            style={[
+              styles.mainNavTabText,
+              activeTab === 'arabic_vod' && styles.mainNavTabTextActive,
+            ]}
+          >
+            المحتوى العربي (VOD) ({vodOverrides.length})
+          </Text>
+        </Pressable>
+
+        <Pressable
           style={[styles.mainNavTab, activeTab === 'networks' && styles.mainNavTabActive]}
           onPress={() => setActiveTab('networks')}
         >
@@ -1176,7 +1588,7 @@ export default function AdminScreen(): React.JSX.Element {
               activeTab === 'networks' && styles.mainNavTabTextActive,
             ]}
           >
-            سلاسل وباقات القنوات ({DEFAULT_NETWORKS.length + customNetworks.length})
+            سلاسل وباقات القنوات ({adminNetworks.length > 0 ? adminNetworks.length : DEFAULT_NETWORKS.length})
           </Text>
         </Pressable>
 
@@ -2123,6 +2535,486 @@ export default function AdminScreen(): React.JSX.Element {
               </View>
             )}
           </View>
+        ) : activeTab === 'arabic_vod' ? (
+          /* ==========================================
+             تبويب المحتوى العربي (VOD) وفحص Archive.org
+             ========================================== */
+          <View style={styles.vodTabContainer}>
+            <View style={styles.resellersHeaderRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sectionHeaderTitle}>المحتوى العربي (VOD) وفحص Archive.org</Text>
+                <Text style={styles.sectionHeaderSub}>
+                  إدارة وتخصيص مصادر الأفلام والمسلسلات العربية فقط. المصادر الافتراضية تعتمد سيرفرات المشاهدة المدمجة وArchive.org، مع إمكانية فحص واعتماد الأرشيف أو إضافة رابط يوتيوب يدوي وتعيين المشغل الأساسي (بينما تم إيقاف يوتيوب نهائياً عن المحتوى غير العربي).
+                </Text>
+              </View>
+            </View>
+
+            {/* بطاقة البحث عن فيلم أو مسلسل عربي */}
+            <View style={[styles.vodSettingsCard, { marginBottom: 20 }]}>
+              <Text style={styles.cardHeaderTitle}>البحث في مكتبة الأفلام والمسلسلات العربية</Text>
+              <Text style={styles.cardHeaderSub}>ابحث باسم الفيلم أو المسلسل أو بمعرّف TMDB لفحص توفره على الأرشيف والسيرفرات</Text>
+
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                <TextInput
+                  style={[styles.modalInput, { flex: 1, marginBottom: 0 }]}
+                  placeholder="اكتب اسم الفيلم أو المسلسل العربي..."
+                  placeholderTextColor="#64748b"
+                  value={searchVodQuery}
+                  onChangeText={setSearchVodQuery}
+                  onSubmitEditing={handleSearchVod}
+                />
+                <Pressable
+                  style={[styles.primaryActionBtn, { backgroundColor: '#06b6d4', paddingHorizontal: 20 }]}
+                  onPress={handleSearchVod}
+                  disabled={searchVodLoading}
+                >
+                  {searchVodLoading ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <>
+                      <MaterialIcons name="search" size={20} color="#ffffff" />
+                      <Text style={styles.primaryActionBtnText}>بحث</Text>
+                    </>
+                  )}
+                </Pressable>
+              </View>
+
+              {/* نتائج البحث */}
+              {searchVodResults.length > 0 && (
+                <View style={{ marginTop: 16 }}>
+                  <Text style={{ color: '#94a3b8', fontSize: 13, marginBottom: 8 }}>
+                    نتائج البحث ({searchVodResults.length}): اضغط على عمل لتحديده وفحصه
+                  </Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexDirection: 'row' }}>
+                    <View style={{ flexDirection: 'row', gap: 12 }}>
+                      {searchVodResults.map((item) => {
+                        const isSelected = selectedVodItem?.id === item.id;
+                        return (
+                          <Pressable
+                            key={item.id}
+                            style={[
+                              styles.vodSearchItemCard,
+                              isSelected && styles.vodSearchItemCardActive,
+                            ]}
+                            onPress={() => handleSelectVodItem(item)}
+                          >
+                            {item.poster ? (
+                              <Image source={{ uri: item.poster }} style={styles.vodSearchPoster} resizeMode="cover" />
+                            ) : (
+                              <View style={[styles.vodSearchPoster, styles.vodSearchPosterFallback]}>
+                                <MaterialIcons name="movie" size={32} color="#475569" />
+                              </View>
+                            )}
+                            <View style={{ padding: 8 }}>
+                              <Text style={styles.vodSearchItemTitle} numberOfLines={2}>
+                                {item.title || item.name}
+                              </Text>
+                              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                                <Text style={styles.vodSearchItemYear}>{item.year || ''}</Text>
+                                <View style={[styles.statusBadge, { backgroundColor: item.media_type === 'tv' ? '#a855f720' : '#38bdf820', paddingHorizontal: 6, paddingVertical: 2 }]}>
+                                  <Text style={[styles.statusBadgeText, { color: item.media_type === 'tv' ? '#c084fc' : '#38bdf8', fontSize: 10 }]}>
+                                    {item.media_type === 'tv' ? 'مسلسل' : 'فيلم'}
+                                  </Text>
+                                </View>
+                              </View>
+                            </View>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </ScrollView>
+                </View>
+              )}
+            </View>
+
+            {/* لوحة تفاصيل واعتماد العمل المختار */}
+            {selectedVodItem && (
+              <View style={[styles.vodSettingsCard, { borderColor: '#06b6d4', borderWidth: 1.5, marginBottom: 24 }]}>
+                {/* رأس بطاقة العمل المختار */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: '#1e293b' }}>
+                  {selectedVodItem.poster ? (
+                    <Image source={{ uri: selectedVodItem.poster }} style={{ width: 60, height: 90, borderRadius: 8 }} resizeMode="cover" />
+                  ) : (
+                    <View style={{ width: 60, height: 90, borderRadius: 8, backgroundColor: '#1e293b', justifyContent: 'center', alignItems: 'center' }}>
+                      <MaterialIcons name="movie" size={30} color="#64748b" />
+                    </View>
+                  )}
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <Text style={[styles.cardHeaderTitle, { fontSize: 18, color: '#f8fafc' }]}>
+                        {selectedVodItem.title || selectedVodItem.name}
+                      </Text>
+                      <View style={[styles.statusBadge, { backgroundColor: selectedVodItem.media_type === 'tv' ? '#a855f720' : '#06b6d420' }]}>
+                        <Text style={[styles.statusBadgeText, { color: selectedVodItem.media_type === 'tv' ? '#c084fc' : '#06b6d4' }]}>
+                          {selectedVodItem.media_type === 'tv' ? 'مسلسل عربي' : 'فيلم عربي'}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={{ color: '#94a3b8', fontSize: 13, marginTop: 4 }}>
+                      معرّف TMDB: {selectedVodItem.id} {selectedVodItem.year ? `| سنة الإنتاج: ${selectedVodItem.year}` : ''}
+                    </Text>
+                    {selectedVodItem.overview ? (
+                      <Text style={{ color: '#64748b', fontSize: 12, marginTop: 4 }} numberOfLines={2}>
+                        {selectedVodItem.overview}
+                      </Text>
+                    ) : null}
+                  </View>
+                </View>
+
+                {/* 1. فحص وتخصيص Archive.org */}
+                <View style={{ marginTop: 16 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <MaterialIcons name="archive" size={20} color="#10b981" />
+                      <Text style={[styles.modalLabel, { fontSize: 15, color: '#10b981', marginBottom: 0 }]}>
+                        فحص الأرشيف الرقمي (Archive.org)
+                      </Text>
+                    </View>
+                    <Pressable
+                      style={[styles.smallActionBtn, { borderColor: '#10b981' }]}
+                      onPress={() => handleCheckArchive(selectedVodItem.title || selectedVodItem.name || '')}
+                      disabled={archiveChecking}
+                    >
+                      {archiveChecking ? (
+                        <ActivityIndicator size="small" color="#10b981" />
+                      ) : (
+                        <>
+                          <MaterialIcons name="sync" size={14} color="#10b981" />
+                          <Text style={[styles.smallActionBtnText, { color: '#10b981' }]}>إعادة فحص الأرشيف</Text>
+                        </>
+                      )}
+                    </Pressable>
+                  </View>
+
+                  {/* نتائج الفحص التلقائي */}
+                  {archiveChecking ? (
+                    <View style={{ padding: 14, backgroundColor: '#070b14', borderRadius: 8, marginTop: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <ActivityIndicator size="small" color="#10b981" />
+                      <Text style={{ color: '#94a3b8', fontSize: 13 }}>جارٍ فحص توفر العمل وروابطه على Archive.org...</Text>
+                    </View>
+                  ) : archiveResults.length > 0 ? (
+                    <View style={{ marginTop: 10, gap: 8 }}>
+                      <Text style={{ color: '#10b981', fontSize: 13, fontWeight: '600' }}>
+                        تم العثور على {archiveResults.length} نتيجة متطابقة على Archive.org:
+                      </Text>
+                      {archiveResults.map((ar, idx) => (
+                        <View key={idx} style={{ backgroundColor: '#070b14', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#10b98130', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                          <View style={{ flex: 1, minWidth: 200 }}>
+                            <Text style={{ color: '#f1f5f9', fontSize: 14, fontWeight: '600' }}>{ar.title}</Text>
+                            <Text style={{ color: '#64748b', fontSize: 12, marginTop: 2 }}>
+                              المعرف: {ar.identifier} {ar.year ? `| سنة: ${ar.year}` : ''} {ar.downloads ? `| التحميلات: ${ar.downloads}` : ''}
+                            </Text>
+                            <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }} numberOfLines={1}>
+                              الرابط: {ar.recommendedUrl || ar.directUrl || ar.embedUrl}
+                            </Text>
+                          </View>
+                          <View style={{ flexDirection: 'row', gap: 8 }}>
+                            <Pressable
+                              style={[styles.smallActionBtn, { backgroundColor: '#10b981', borderColor: '#10b981' }]}
+                              onPress={() => {
+                                const targetUrl = ar.recommendedUrl || ar.directUrl || ar.embedUrl || '';
+                                setVodArchiveUrl(targetUrl);
+                                setVodArchivePrimary(true);
+                                setVodYoutubePrimary(false);
+                                handleSaveVodOverride({ forceArchivePrimary: true });
+                              }}
+                            >
+                              <MaterialIcons name="check-circle" size={14} color="#070b14" />
+                              <Text style={[styles.smallActionBtnText, { color: '#070b14', fontWeight: '700' }]}>اعتماد رابط الأرشيف كافتراضي أول</Text>
+                            </Pressable>
+                            {(ar.recommendedUrl || ar.embedUrl) && (
+                              <Pressable
+                                style={[styles.smallActionBtn, { borderColor: '#38bdf8' }]}
+                                onPress={() => {
+                                  setVodPreviewTitle(`Archive.org: ${ar.title}`);
+                                  setVodPreviewUrl(ar.recommendedUrl || ar.embedUrl || '');
+                                  setVodPreviewModalVisible(true);
+                                }}
+                              >
+                                <MaterialIcons name="play-circle-outline" size={14} color="#38bdf8" />
+                                <Text style={[styles.smallActionBtnText, { color: '#38bdf8' }]}>معاينة المشغل</Text>
+                              </Pressable>
+                            )}
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  ) : (
+                    archiveCheckMessage && (
+                      <View style={{ padding: 10, backgroundColor: '#070b14', borderRadius: 8, marginTop: 10 }}>
+                        <Text style={{ color: '#f59e0b', fontSize: 13 }}>{archiveCheckMessage}</Text>
+                      </View>
+                    )
+                  )}
+
+                  {/* إدخال رابط الأرشيف اليدوي والتبديل */}
+                  <View style={{ marginTop: 10 }}>
+                    <Text style={styles.modalLabel}>رابط Archive.org المعتمد (مباشر MP4 أو Embed):</Text>
+                    <TextInput
+                      style={styles.modalInput}
+                      placeholder="https://archive.org/download/... أو https://archive.org/embed/..."
+                      placeholderTextColor="#64748b"
+                      value={vodArchiveUrl}
+                      onChangeText={setVodArchiveUrl}
+                    />
+                    <Pressable
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}
+                      onPress={() => {
+                        setVodArchivePrimary(!vodArchivePrimary);
+                        if (!vodArchivePrimary) setVodYoutubePrimary(false);
+                      }}
+                    >
+                      <MaterialIcons
+                        name={vodArchivePrimary ? 'check-box' : 'check-box-outline-blank'}
+                        size={20}
+                        color={vodArchivePrimary ? '#10b981' : '#64748b'}
+                      />
+                      <Text style={{ color: vodArchivePrimary ? '#10b981' : '#94a3b8', fontSize: 13, fontWeight: '600' }}>
+                        جعل مشغل الأرشيف (Archive.org) هو المشغل الافتراضي الأول لهذا العمل
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+
+                {/* 2. فحص سيرفرات المشاهدة المدمجة السريعة (VidLink / VidSrc) */}
+                <View style={{ marginTop: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#1e293b' }}>
+                  <Text style={[styles.modalLabel, { fontSize: 15, color: '#38bdf8', marginBottom: 6 }]}>
+                    فحص سيرفرات المشاهدة المدمجة (Embed Servers)
+                  </Text>
+                  <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 12 }}>
+                    تعتمد المنصة سيرفرات المشاهدة تلقائياً كافتراضي (سيرفر VidLink بالمرتبة الأولى يليه VidSrc). اضغط على السيرفر لتجربته والتأكد مما إذا كان العمل العربي متوفراً عليه:
+                  </Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+                    <Pressable
+                      style={[styles.smallActionBtn, { backgroundColor: '#38bdf820', borderColor: '#38bdf8', paddingVertical: 8, paddingHorizontal: 12 }]}
+                      onPress={() => handlePreviewVodServer('vidlink')}
+                    >
+                      <MaterialIcons name="play-arrow" size={18} color="#38bdf8" />
+                      <Text style={[styles.smallActionBtnText, { color: '#38bdf8', fontWeight: '700' }]}>
+                        تجربة سيرفر VidLink (#1 الافتراضي)
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      style={[styles.smallActionBtn, { backgroundColor: '#a855f720', borderColor: '#a855f7', paddingVertical: 8, paddingHorizontal: 12 }]}
+                      onPress={() => handlePreviewVodServer('vidsrc')}
+                    >
+                      <MaterialIcons name="play-arrow" size={18} color="#c084fc" />
+                      <Text style={[styles.smallActionBtnText, { color: '#c084fc', fontWeight: '700' }]}>
+                        تجربة سيرفر VidSrc CC (#2)
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+
+                {/* 3. اعتماد رابط يوتيوب يدوي مخصص */}
+                <View style={{ marginTop: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#1e293b' }}>
+                  <Text style={[styles.modalLabel, { fontSize: 15, color: '#ef4444', marginBottom: 6 }]}>
+                    اعتماد رابط يوتيوب يدوي مخصص (YouTube)
+                  </Text>
+                  <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 8 }}>
+                    لن يظهر يوتيوب تلقائياً لأي فيلم أو مسلسل عربي لمنع المحتوى غير المرتبط. إذا كان العمل متوفراً رسمياً على يوتيوب، أدخل رابطه هنا لاعتماده:
+                  </Text>
+
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="https://www.youtube.com/watch?v=... أو قائمة تشغيل"
+                    placeholderTextColor="#64748b"
+                    value={vodYoutubeUrl}
+                    onChangeText={setVodYoutubeUrl}
+                  />
+
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                    <Pressable
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+                      onPress={() => {
+                        setVodYoutubePrimary(!vodYoutubePrimary);
+                        if (!vodYoutubePrimary) setVodArchivePrimary(false);
+                      }}
+                    >
+                      <MaterialIcons
+                        name={vodYoutubePrimary ? 'check-box' : 'check-box-outline-blank'}
+                        size={20}
+                        color={vodYoutubePrimary ? '#ef4444' : '#64748b'}
+                      />
+                      <Text style={{ color: vodYoutubePrimary ? '#ef4444' : '#94a3b8', fontSize: 13, fontWeight: '600' }}>
+                        جعل يوتيوب هو المشغل الافتراضي الأول لهذا العمل
+                      </Text>
+                    </Pressable>
+
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      {vodYoutubeUrl.trim().length > 0 && (
+                        <Pressable
+                          style={[styles.smallActionBtn, { borderColor: '#ef4444' }]}
+                          onPress={() => handlePreviewVodServer('youtube')}
+                        >
+                          <MaterialIcons name="smart-display" size={14} color="#ef4444" />
+                          <Text style={[styles.smallActionBtnText, { color: '#ef4444' }]}>معاينة يوتيوب</Text>
+                        </Pressable>
+                      )}
+                      <Pressable
+                        style={[styles.smallActionBtn, { backgroundColor: '#ef4444', borderColor: '#ef4444' }]}
+                        onPress={() => handleSaveVodOverride({ forceYoutubePrimary: true })}
+                        disabled={vodOverrideSaving || !vodYoutubeUrl.trim()}
+                      >
+                        <MaterialIcons name="done" size={14} color="#ffffff" />
+                        <Text style={[styles.smallActionBtnText, { color: '#ffffff', fontWeight: '700' }]}>اعتماد يوتيوب لهذا العمل</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+
+                {/* 4. ملاحظات وحفظ وإلغاء الاعتماد */}
+                <View style={{ marginTop: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#1e293b' }}>
+                  <Text style={styles.modalLabel}>ملاحظات الأدمن (اختياري):</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="مثال: متوفر نسخة أصلية على الأرشيف / متوفر على يوتيوب بدقة 1080p..."
+                    placeholderTextColor="#64748b"
+                    value={vodNotes}
+                    onChangeText={setVodNotes}
+                  />
+
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, flexWrap: 'wrap', gap: 10 }}>
+                    <Pressable
+                      style={[styles.primaryActionBtn, { backgroundColor: '#06b6d4', paddingHorizontal: 24 }]}
+                      onPress={() => handleSaveVodOverride()}
+                      disabled={vodOverrideSaving}
+                    >
+                      {vodOverrideSaving ? (
+                        <ActivityIndicator size="small" color="#ffffff" />
+                      ) : (
+                        <>
+                          <MaterialIcons name="save" size={18} color="#ffffff" />
+                          <Text style={styles.primaryActionBtnText}>حفظ وتطبيق إعدادات العمل</Text>
+                        </>
+                      )}
+                    </Pressable>
+
+                    {vodOverrides.some((o) => String(o.tmdbId) === String(selectedVodItem.id)) && (
+                      <Pressable
+                        style={[styles.resellerActionBtnSecondary, { borderColor: '#ef4444' }]}
+                        onPress={() => handleDeleteVodOverride(String(selectedVodItem.id))}
+                      >
+                        <MaterialIcons name="delete" size={16} color="#ef4444" />
+                        <Text style={[styles.resellerActionBtnSecondaryText, { color: '#ef4444' }]}>
+                          إلغاء الاعتماد واستعادة الوضع الافتراضي
+                        </Text>
+                      </Pressable>
+                    )}
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {/* قائمة جميع الاستثناءات المعتمدة */}
+            <View style={{ marginTop: 10 }}>
+              <View style={styles.resellersHeaderRow}>
+                <View>
+                  <Text style={styles.sectionHeaderTitle}>
+                    الأعمال العربية المخصصة والمعتمدة مسبقاً ({vodOverrides.length})
+                  </Text>
+                  <Text style={styles.sectionHeaderSub}>
+                    قائمة بالأفلام والمسلسلات العربية التي تم ربطها بروابط أرشيف أو يوتيوب محددة
+                  </Text>
+                </View>
+              </View>
+
+              {vodOverridesLoading ? (
+                <View style={{ padding: 40, alignItems: 'center' }}>
+                  <ActivityIndicator size="large" color="#06b6d4" />
+                </View>
+              ) : vodOverrides.length === 0 ? (
+                <View style={{ padding: 30, backgroundColor: '#0f172a', borderRadius: 12, alignItems: 'center' }}>
+                  <MaterialIcons name="movie-filter" size={48} color="#334155" />
+                  <Text style={{ color: '#94a3b8', fontSize: 15, marginTop: 12, fontWeight: '600' }}>
+                    لا توجد استثناءات مخصصة حالياً
+                  </Text>
+                  <Text style={{ color: '#64748b', fontSize: 13, marginTop: 4, textAlign: 'center' }}>
+                    جميع الأعمال العربية تستخدم السيرفرات المدمجة التلقائية وفحص Archive.org الافتراضي. استخدم البحث أعلاه لتخصيص أي عمل.
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.resellersGrid}>
+                  {vodOverrides.map((ov) => (
+                    <View key={ov.tmdbId} style={[styles.resellerCard, { borderColor: '#06b6d4' }]}>
+                      <View style={styles.resellerCardHeader}>
+                        <View style={styles.resellerInfo}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <MaterialIcons name={ov.mediaType === 'tv' ? 'tv' : 'movie'} size={22} color="#06b6d4" />
+                            <Text style={styles.resellerName}>{ov.title}</Text>
+                          </View>
+                          <Text style={styles.resellerUsername}>
+                            معرّف TMDB: {ov.tmdbId} {ov.mediaType === 'tv' ? '• مسلسل' : '• فيلم'}
+                          </Text>
+                        </View>
+                        <View style={[styles.statusBadge, { backgroundColor: '#06b6d420' }]}>
+                          <Text style={[styles.statusBadgeText, { color: '#06b6d4' }]}>
+                            {ov.useArchivePrimary ? 'الأرشيف أولاً' : ov.useYoutubePrimary ? 'يوتيوب أولاً' : 'سيرفرات مدمجة'}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* تفاصيل المصادر */}
+                      <View style={{ marginVertical: 8, padding: 10, backgroundColor: '#070b14', borderRadius: 8, gap: 6 }}>
+                        {ov.archiveUrl ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <MaterialIcons name="archive" size={16} color="#10b981" />
+                            <Text style={{ color: '#10b981', fontSize: 12, flex: 1 }} numberOfLines={1}>
+                              الأرشيف: {ov.archiveUrl}
+                            </Text>
+                          </View>
+                        ) : null}
+                        {ov.youtubeUrl ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <MaterialIcons name="smart-display" size={16} color="#ef4444" />
+                            <Text style={{ color: '#ef4444', fontSize: 12, flex: 1 }} numberOfLines={1}>
+                              يوتيوب: {ov.youtubeUrl}
+                            </Text>
+                          </View>
+                        ) : null}
+                        {ov.notes ? (
+                          <Text style={{ color: '#94a3b8', fontSize: 12, fontStyle: 'italic' }}>
+                            ملاحظة: {ov.notes}
+                          </Text>
+                        ) : null}
+                      </View>
+
+                      <View style={styles.resellerCardActions}>
+                        <Pressable
+                          style={[styles.resellerActionBtn, { backgroundColor: '#06b6d420', borderColor: '#06b6d4' }]}
+                          onPress={() => {
+                            setSelectedVodItem({
+                              id: ov.tmdbId,
+                              title: ov.title,
+                              media_type: ov.mediaType,
+                            });
+                            setVodYoutubeUrl(ov.youtubeUrl || '');
+                            setVodYoutubePrimary(ov.useYoutubePrimary);
+                            setVodArchiveUrl(ov.archiveUrl || '');
+                            setVodArchivePrimary(ov.useArchivePrimary);
+                            setVodNotes(ov.notes || '');
+                            handleCheckArchive(ov.title);
+                          }}
+                        >
+                          <MaterialIcons name="edit" size={16} color="#06b6d4" />
+                          <Text style={[styles.resellerActionBtnText, { color: '#06b6d4' }]}>تعديل</Text>
+                        </Pressable>
+
+                        <Pressable
+                          style={[styles.resellerActionBtnSecondary, { borderColor: '#ef4444' }]}
+                          onPress={() => handleDeleteVodOverride(ov.tmdbId)}
+                        >
+                          <MaterialIcons name="delete" size={16} color="#ef4444" />
+                          <Text style={[styles.resellerActionBtnSecondaryText, { color: '#ef4444' }]}>إلغاء الاعتماد</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+          </View>
         ) : activeTab === 'networks' ? (
           /* ==========================================
              تبويب سلاسل وباقات القنوات (Networks)
@@ -2132,7 +3024,7 @@ export default function AdminScreen(): React.JSX.Element {
               <View>
                 <Text style={styles.sectionHeaderTitle}>سلاسل وباقات القنوات (Networks)</Text>
                 <Text style={styles.sectionHeaderSub}>
-                  إدارة وتخصيص باقات وسلاسل القنوات التي تظهر في قسم الأقسام (مثل MBC، روتانا، beIN، SSC، إلخ).
+                  إدارة وتخصيص باقات وسلاسل القنوات التلفزيونية والتحكم في ظهورها وإخفائها وحذفها، وتعديل وإخفاء القنوات التابعة لكل باقة مباشرة.
                 </Text>
               </View>
 
@@ -2145,216 +3037,176 @@ export default function AdminScreen(): React.JSX.Element {
               </Pressable>
             </View>
 
-            {/* عرض الباقات المخصصة إن وجدت */}
-            {customNetworks.length > 0 && (
-              <View style={{ marginBottom: 24 }}>
-                <Text
-                  style={[
-                    styles.sectionHeaderTitle,
-                    { fontSize: 18, color: '#c084fc', marginBottom: 12 },
-                  ]}
-                >
-                  الباقات المخصصة المضافة حديثاً ({customNetworks.length})
-                </Text>
-                <View style={styles.resellersGrid}>
-                  {customNetworks.map((net) => (
-                    <View
-                      key={net.id}
-                      style={[styles.resellerCard, { borderColor: '#a855f7' }]}
-                    >
-                      <View style={styles.resellerCardHeader}>
-                        <View style={styles.resellerInfo}>
-                          <View
-                            style={{
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              gap: 8,
-                            }}
-                          >
-                            <MaterialIcons name="hub" size={22} color="#c084fc" />
-                            <Text style={styles.resellerName}>{net.name}</Text>
-                          </View>
-                          <Text style={styles.resellerUsername}>
-                            {net.description}
-                          </Text>
+            {/* شبكة الباقات */}
+            {adminNetworksLoading ? (
+              <View style={{ padding: 40, alignItems: 'center' }}>
+                <ActivityIndicator size="large" color="#a855f7" />
+              </View>
+            ) : (
+              <View style={styles.resellersGrid}>
+                {(adminNetworks.length > 0 ? adminNetworks : DEFAULT_NETWORKS).map((net) => (
+                  <View
+                    key={net.id}
+                    style={[
+                      styles.resellerCard,
+                      net.isCustom && { borderColor: '#a855f7' },
+                      net.isHidden && { opacity: 0.7, borderColor: '#f59e0b' },
+                    ]}
+                  >
+                    <View style={styles.resellerCardHeader}>
+                      <View style={styles.resellerInfo}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <MaterialIcons
+                            name={(net.icon as any) || 'tv'}
+                            size={22}
+                            color={net.isCustom ? '#c084fc' : '#38bdf8'}
+                          />
+                          <Text style={styles.resellerName}>{net.name}</Text>
                         </View>
+                        <Text style={styles.resellerUsername}>{net.description}</Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+                        {net.isHidden ? (
+                          <View style={[styles.statusBadge, { backgroundColor: '#f59e0b20' }]}>
+                            <Text style={[styles.statusBadgeText, { color: '#f59e0b' }]}>مخفية</Text>
+                          </View>
+                        ) : null}
                         <View
                           style={[
                             styles.statusBadge,
-                            { backgroundColor: '#a855f720' },
+                            { backgroundColor: net.isCustom ? '#a855f720' : '#38bdf820' },
                           ]}
                         >
                           <Text
                             style={[
                               styles.statusBadgeText,
-                              { color: '#c084fc' },
+                              { color: net.isCustom ? '#c084fc' : '#38bdf8' },
                             ]}
                           >
-                            باقة مخصصة
+                            {net.isCustom ? 'باقة مخصصة' : 'نظامية'}
                           </Text>
                         </View>
                       </View>
-
-                      <View
-                        style={{
-                          marginVertical: 8,
-                          padding: 10,
-                          backgroundColor: '#070b14',
-                          borderRadius: 8,
-                        }}
-                      >
-                        <Text
-                          style={{
-                            color: '#94a3b8',
-                            fontSize: 13,
-                            marginBottom: 4,
-                          }}
-                        >
-                          الكلمات المفتاحية للمطابقة:
-                        </Text>
-                        <View
-                          style={{
-                            flexDirection: 'row',
-                            flexWrap: 'wrap',
-                            gap: 6,
-                          }}
-                        >
-                          {net.keywords.map((kw, i) => (
-                            <View
-                              key={i}
-                              style={{
-                                backgroundColor: '#1e293b',
-                                paddingHorizontal: 8,
-                                paddingVertical: 4,
-                                borderRadius: 6,
-                              }}
-                            >
-                              <Text style={{ color: '#e2e8f0', fontSize: 12 }}>
-                                {kw}
-                              </Text>
-                            </View>
-                          ))}
-                        </View>
-                      </View>
-
-                      <View style={styles.resellerCardActions}>
-                        <Pressable
-                          style={[
-                            styles.resellerActionBtnSecondary,
-                            { borderColor: '#ef4444' },
-                          ]}
-                          onPress={() => handleDeleteCustomNetwork(net.id)}
-                        >
-                          <MaterialIcons
-                            name="delete"
-                            size={16}
-                            color="#ef4444"
-                          />
-                          <Text
-                            style={[
-                              styles.resellerActionBtnSecondaryText,
-                              { color: '#ef4444' },
-                            ]}
-                          >
-                            حذف الباقة
-                          </Text>
-                        </Pressable>
-                      </View>
                     </View>
-                  ))}
-                </View>
-              </View>
-            )}
 
-            {/* عرض باقات النظام الأساسية */}
-            <Text
-              style={[
-                styles.sectionHeaderTitle,
-                { fontSize: 18, color: '#38bdf8', marginBottom: 12 },
-              ]}
-            >
-              باقات النظام الافتراضية ({DEFAULT_NETWORKS.length})
-            </Text>
-            <View style={styles.resellersGrid}>
-              {DEFAULT_NETWORKS.map((net) => (
-                <View key={net.id} style={styles.resellerCard}>
-                  <View style={styles.resellerCardHeader}>
-                    <View style={styles.resellerInfo}>
-                      <View
-                        style={{
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          gap: 8,
-                        }}
-                      >
-                        <MaterialIcons name="tv" size={22} color="#38bdf8" />
-                        <Text style={styles.resellerName}>{net.name}</Text>
-                      </View>
-                      <Text style={styles.resellerUsername}>
-                        {net.description}
-                      </Text>
-                    </View>
                     <View
-                      style={[
-                        styles.statusBadge,
-                        { backgroundColor: '#38bdf820' },
-                      ]}
+                      style={{
+                        marginVertical: 8,
+                        padding: 10,
+                        backgroundColor: '#070b14',
+                        borderRadius: 8,
+                      }}
                     >
                       <Text
-                        style={[
-                          styles.statusBadgeText,
-                          { color: '#38bdf8' },
-                        ]}
+                        style={{
+                          color: '#94a3b8',
+                          fontSize: 13,
+                          marginBottom: 4,
+                        }}
                       >
-                        نظامية
+                        الكلمات المفتاحية للمطابقة:
                       </Text>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                        {net.keywords.map((kw, i) => (
+                          <View
+                            key={i}
+                            style={{
+                              backgroundColor: '#1e293b',
+                              paddingHorizontal: 8,
+                              paddingVertical: 4,
+                              borderRadius: 6,
+                            }}
+                          >
+                            <Text style={{ color: '#e2e8f0', fontSize: 12 }}>{kw}</Text>
+                          </View>
+                        ))}
+                      </View>
                     </View>
-                  </View>
 
-                  <View
-                    style={{
-                      marginVertical: 8,
-                      padding: 10,
-                      backgroundColor: '#070b14',
-                      borderRadius: 8,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        color: '#94a3b8',
-                        fontSize: 13,
-                        marginBottom: 4,
-                      }}
-                    >
-                      الكلمات المفتاحية:
-                    </Text>
-                    <View
-                      style={{
-                        flexDirection: 'row',
-                        flexWrap: 'wrap',
-                        gap: 6,
-                      }}
-                    >
-                      {net.keywords.map((kw, i) => (
-                        <View
-                          key={i}
-                          style={{
-                            backgroundColor: '#1e293b',
-                            paddingHorizontal: 8,
-                            paddingVertical: 4,
-                            borderRadius: 6,
-                          }}
+                    <View style={[styles.resellerCardActions, { flexWrap: 'wrap', gap: 8 }]}>
+                      {/* زر عرض القنوات التابعة */}
+                      <Pressable
+                        style={[
+                          styles.resellerActionBtn,
+                          { backgroundColor: '#06b6d420', borderColor: '#06b6d4' },
+                        ]}
+                        onPress={() => handleOpenNetworkChannels(net)}
+                      >
+                        <MaterialIcons name="format-list-bulleted" size={16} color="#06b6d4" />
+                        <Text style={[styles.resellerActionBtnText, { color: '#06b6d4', fontWeight: '700' }]}>
+                          عرض القنوات
+                        </Text>
+                      </Pressable>
+
+                      {/* زر تعديل الباقة */}
+                      <Pressable
+                        style={[
+                          styles.resellerActionBtn,
+                          { backgroundColor: '#a855f720', borderColor: '#a855f7' },
+                        ]}
+                        onPress={() => {
+                          setEditingNetwork({
+                            id: net.id,
+                            name: net.name,
+                            keywords: net.keywords.join(', '),
+                            description: net.description || '',
+                            icon: net.icon || 'hub',
+                            sortOrder: net.sortOrder !== undefined && net.sortOrder !== null ? String(net.sortOrder) : '',
+                            isCustom: Boolean(net.isCustom),
+                          });
+                          setShowEditNetworkModal(true);
+                        }}
+                      >
+                        <MaterialIcons name="edit" size={16} color="#c084fc" />
+                        <Text style={[styles.resellerActionBtnText, { color: '#c084fc' }]}>تعديل</Text>
+                      </Pressable>
+
+                      {/* زر إخفاء / إظهار */}
+                      <Pressable
+                        style={[
+                          styles.resellerActionBtnSecondary,
+                          { borderColor: net.isHidden ? '#10b981' : '#f59e0b' },
+                        ]}
+                        onPress={() => handleToggleNetworkHidden(net)}
+                      >
+                        <MaterialIcons
+                          name={net.isHidden ? 'visibility' : 'visibility-off'}
+                          size={16}
+                          color={net.isHidden ? '#10b981' : '#f59e0b'}
+                        />
+                        <Text
+                          style={[
+                            styles.resellerActionBtnSecondaryText,
+                            { color: net.isHidden ? '#10b981' : '#f59e0b' },
+                          ]}
                         >
-                          <Text style={{ color: '#94a3b8', fontSize: 12 }}>
-                            {kw}
-                          </Text>
-                        </View>
-                      ))}
+                          {net.isHidden ? 'إظهار' : 'إخفاء'}
+                        </Text>
+                      </Pressable>
+
+                      {/* زر حذف */}
+                      <Pressable
+                        style={[
+                          styles.resellerActionBtnSecondary,
+                          { borderColor: '#ef4444' },
+                        ]}
+                        onPress={() => handleDeleteNetwork(net)}
+                      >
+                        <MaterialIcons name="delete" size={16} color="#ef4444" />
+                        <Text
+                          style={[
+                            styles.resellerActionBtnSecondaryText,
+                            { color: '#ef4444' },
+                          ]}
+                        >
+                          حذف
+                        </Text>
+                      </Pressable>
                     </View>
                   </View>
-                </View>
-              ))}
-            </View>
+                ))}
+              </View>
+            )}
           </View>
         ) : (
           /* ==========================================
@@ -3248,6 +4100,359 @@ export default function AdminScreen(): React.JSX.Element {
                     {editingChannel.isCustom ? 'حفظ وإضافة القناة' : 'تطبيق وحفظ التخصيص'}
                   </Text>
                 )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ==========================================
+          مودال عرض وتخصيص قنوات الباقة (Network Channels Modal)
+          ========================================== */}
+      <Modal visible={showNetworkChannelsModal} transparent animationType="fade">
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { maxWidth: 760, maxHeight: '88%' }]}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHeaderTitleRow}>
+                <MaterialIcons name="hub" size={24} color="#06b6d4" />
+                <View>
+                  <Text style={styles.modalTitle}>
+                    القنوات التابعة لـ {selectedNetworkForChannels?.name}
+                  </Text>
+                  <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 2 }}>
+                    تعديل مسارات البث أو إخفاء وحذف قنوات هذه الباقة مباشرة
+                  </Text>
+                </View>
+              </View>
+              <Pressable onPress={() => setShowNetworkChannelsModal(false)}>
+                <MaterialIcons name="close" size={22} color="#94a3b8" />
+              </Pressable>
+            </View>
+
+            <ScrollView style={{ padding: 16 }}>
+              {allChannelsLoading ? (
+                <View style={{ padding: 40, alignItems: 'center' }}>
+                  <ActivityIndicator size="large" color="#06b6d4" />
+                  <Text style={{ color: '#94a3b8', marginTop: 12 }}>جارٍ تحميل قنوات البث...</Text>
+                </View>
+              ) : (() => {
+                if (!selectedNetworkForChannels) return null;
+                const matched = allM3uChannels.filter((ch) =>
+                  matchChannelToNetwork(ch, selectedNetworkForChannels)
+                );
+
+                if (matched.length === 0) {
+                  return (
+                    <View style={{ padding: 30, alignItems: 'center' }}>
+                      <MaterialIcons name="tv-off" size={42} color="#475569" />
+                      <Text style={{ color: '#94a3b8', fontSize: 14, marginTop: 8 }}>
+                        لا توجد قنوات تطابق الكلمات المفتاحية لهذه الباقة حالياً
+                      </Text>
+                    </View>
+                  );
+                }
+
+                return (
+                  <View style={{ gap: 10 }}>
+                    <Text style={{ color: '#06b6d4', fontSize: 13, fontWeight: '700', marginBottom: 4 }}>
+                      إجمالي القنوات المطابقة: {matched.length} قناة
+                    </Text>
+                    {matched.map((ch) => {
+                      const override = channelOverrides.find(
+                        (o) => o.id.toLowerCase() === ch.id.toLowerCase()
+                      );
+                      const isHidden = override?.isHidden ?? false;
+                      const isDeleted = override?.isDeleted ?? false;
+
+                      return (
+                        <View
+                          key={ch.id}
+                          style={[
+                            styles.channelCard,
+                            { padding: 12 },
+                            isHidden && { opacity: 0.6, borderColor: '#f59e0b' },
+                            isDeleted && { opacity: 0.4, borderColor: '#ef4444' },
+                          ]}
+                        >
+                          <View style={styles.channelCardHeader}>
+                            <View style={styles.channelLogoBox}>
+                              {ch.logo ? (
+                                <Image source={{ uri: ch.logo }} style={styles.channelLogo} resizeMode="contain" />
+                              ) : (
+                                <MaterialIcons name="live-tv" size={20} color="#64748b" />
+                              )}
+                            </View>
+
+                            <View style={styles.channelInfoText}>
+                              <View style={styles.channelNameRow}>
+                                <Text style={styles.channelName} numberOfLines={1}>
+                                  {override?.name || ch.name}
+                                </Text>
+                                {override && (
+                                  <View style={[styles.badgePill, { backgroundColor: '#38bdf825' }]}>
+                                    <Text style={[styles.badgePillText, { color: '#38bdf8' }]}>مخصصة</Text>
+                                  </View>
+                                )}
+                              </View>
+                              <Text style={styles.channelCategoryText}>
+                                {override?.category || ch.groupTitle || 'عام'} • ID: {ch.id}
+                              </Text>
+                            </View>
+
+                            <View style={styles.channelBadgesRight}>
+                              {isHidden && (
+                                <View style={styles.hiddenBadge}>
+                                  <MaterialIcons name="visibility-off" size={12} color="#f59e0b" />
+                                  <Text style={styles.hiddenBadgeText}>مخفية</Text>
+                                </View>
+                              )}
+                              {isDeleted && (
+                                <View style={styles.deletedBadge}>
+                                  <MaterialIcons name="delete" size={12} color="#ef4444" />
+                                  <Text style={styles.deletedBadgeText}>محذوفة</Text>
+                                </View>
+                              )}
+                            </View>
+                          </View>
+
+                          <View style={styles.channelStreamUrlBox}>
+                            <MaterialIcons name="link" size={14} color="#64748b" />
+                            <Text style={styles.channelStreamUrlText} numberOfLines={1}>
+                              {override?.streamUrl || ch.url || '—'}
+                            </Text>
+                          </View>
+
+                          <View style={[styles.channelCardActionsRow, { justifyContent: 'flex-end', marginTop: 8 }]}>
+                            <View style={styles.actionBtnsGroup}>
+                              <Pressable
+                                style={styles.channelActionBtn}
+                                onPress={() => {
+                                  setShowNetworkChannelsModal(false);
+                                  handleSelectChannelToOverride(ch);
+                                }}
+                              >
+                                <MaterialIcons name="edit" size={14} color="#38bdf8" />
+                                <Text style={styles.channelActionBtnText}>تعديل البث والاسم</Text>
+                              </Pressable>
+
+                              <Pressable
+                                style={[styles.channelActionBtn, isHidden && styles.channelActionBtnActive]}
+                                onPress={() => {
+                                  if (override) {
+                                    handleToggleChannelHidden(override);
+                                  } else {
+                                    handleSelectChannelToOverride(ch);
+                                  }
+                                }}
+                              >
+                                <MaterialIcons
+                                  name={isHidden ? 'visibility' : 'visibility-off'}
+                                  size={14}
+                                  color={isHidden ? '#10b981' : '#f59e0b'}
+                                />
+                                <Text style={[styles.channelActionBtnText, isHidden && { color: '#10b981' }]}>
+                                  {isHidden ? 'إظهار' : 'إخفاء'}
+                                </Text>
+                              </Pressable>
+
+                              <Pressable
+                                style={[styles.channelActionBtn, isDeleted && styles.channelActionBtnDangerActive]}
+                                onPress={() => {
+                                  if (override) {
+                                    handleToggleChannelDeleted(override);
+                                  } else {
+                                    handleSelectChannelToOverride(ch);
+                                  }
+                                }}
+                              >
+                                <MaterialIcons
+                                  name={isDeleted ? 'restore' : 'delete'}
+                                  size={14}
+                                  color={isDeleted ? '#10b981' : '#ef4444'}
+                                />
+                                <Text style={[styles.channelActionBtnText, { color: isDeleted ? '#10b981' : '#ef4444' }]}>
+                                  {isDeleted ? 'استعادة' : 'حذف'}
+                                </Text>
+                              </Pressable>
+                            </View>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                );
+              })()}
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <Pressable
+                style={styles.modalCancelBtn}
+                onPress={() => setShowNetworkChannelsModal(false)}
+              >
+                <Text style={styles.modalCancelBtnText}>إغلاق</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ==========================================
+          مودال تعديل الباقة / السلسلة (Edit Network Modal)
+          ========================================== */}
+      <Modal visible={showEditNetworkModal} transparent animationType="fade">
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHeaderTitleRow}>
+                <MaterialIcons name="edit" size={24} color="#a855f7" />
+                <Text style={styles.modalTitle}>
+                  تعديل باقة {editingNetwork?.name}
+                </Text>
+              </View>
+              <Pressable onPress={() => setShowEditNetworkModal(false)}>
+                <MaterialIcons name="close" size={22} color="#94a3b8" />
+              </Pressable>
+            </View>
+
+            <ScrollView style={styles.modalBody}>
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>اسم الباقة: *</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="اسم الباقة..."
+                  placeholderTextColor="#64748b"
+                  value={editingNetwork?.name || ''}
+                  onChangeText={(val) =>
+                    setEditingNetwork((p) => (p ? { ...p, name: val } : null))
+                  }
+                />
+              </View>
+
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>
+                  الكلمات المفتاحية للمطابقة (افصل بينها بفاصلة): *
+                </Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="مثال: mbc, ام بي سي, شاهد"
+                  placeholderTextColor="#64748b"
+                  value={editingNetwork?.keywords || ''}
+                  onChangeText={(val) =>
+                    setEditingNetwork((p) => (p ? { ...p, keywords: val } : null))
+                  }
+                />
+              </View>
+
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>الوصف:</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="وصف الباقة..."
+                  placeholderTextColor="#64748b"
+                  value={editingNetwork?.description || ''}
+                  onChangeText={(val) =>
+                    setEditingNetwork((p) => (p ? { ...p, description: val } : null))
+                  }
+                />
+              </View>
+
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>الأيقونة (MaterialIcon Name):</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="tv / movie / sports / live-tv..."
+                  placeholderTextColor="#64748b"
+                  value={editingNetwork?.icon || ''}
+                  onChangeText={(val) =>
+                    setEditingNetwork((p) => (p ? { ...p, icon: val } : null))
+                  }
+                />
+              </View>
+
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>ترتيب الظهور (sortOrder):</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="مثال: 10 أو 20"
+                  placeholderTextColor="#64748b"
+                  keyboardType="numeric"
+                  value={editingNetwork?.sortOrder || ''}
+                  onChangeText={(val) =>
+                    setEditingNetwork((p) => (p ? { ...p, sortOrder: val } : null))
+                  }
+                />
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <Pressable
+                style={styles.modalCancelBtn}
+                onPress={() => setShowEditNetworkModal(false)}
+              >
+                <Text style={styles.modalCancelBtnText}>إلغاء</Text>
+              </Pressable>
+
+              <Pressable
+                style={[styles.modalConfirmBtn, { backgroundColor: '#a855f7' }]}
+                onPress={handleSaveEditedNetwork}
+                disabled={savingNetwork}
+              >
+                {savingNetwork ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text style={styles.modalConfirmBtnText}>حفظ التعديلات</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ==========================================
+          مودال معاينة مشغلات VOD (VidLink / VidSrc / YouTube / Archive)
+          ========================================== */}
+      <Modal visible={vodPreviewModalVisible} transparent animationType="fade">
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { maxWidth: 840, maxHeight: '90%', height: 560 }]}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHeaderTitleRow}>
+                <MaterialIcons name="play-circle-filled" size={24} color="#06b6d4" />
+                <Text style={styles.modalTitle} numberOfLines={1}>
+                  {vodPreviewTitle || 'معاينة المشغل'}
+                </Text>
+              </View>
+              <Pressable onPress={() => setVodPreviewModalVisible(false)}>
+                <MaterialIcons name="close" size={22} color="#94a3b8" />
+              </Pressable>
+            </View>
+
+            <View style={{ flex: 1, backgroundColor: '#000000', borderRadius: 8, overflow: 'hidden' }}>
+              {Platform.OS === 'web' ? (
+                // @ts-ignore
+                <iframe
+                  src={vodPreviewUrl}
+                  style={{ width: '100%', height: '100%', border: 'none' }}
+                  allow="autoplay; encrypted-media; fullscreen"
+                  allowFullScreen
+                />
+              ) : (
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+                  <Text style={{ color: '#ffffff', textAlign: 'center', marginBottom: 12 }}>
+                    معاينة المشغل متاحة عبر الرابط المباشر على منصات Native:
+                  </Text>
+                  <Text style={{ color: '#38bdf8', fontSize: 12, textAlign: 'center' }}>
+                    {vodPreviewUrl}
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            <View style={styles.modalActions}>
+              <Pressable
+                style={styles.modalCancelBtn}
+                onPress={() => setVodPreviewModalVisible(false)}
+              >
+                <Text style={styles.modalCancelBtnText}>إغلاق المعاينة</Text>
               </Pressable>
             </View>
           </View>
@@ -4784,5 +5989,56 @@ const styles = StyleSheet.create({
     color: '#94a3b8',
     fontSize: 13,
     fontWeight: '700',
+  },
+
+  // أنماط البحث وتخصيص VOD العربي
+  vodSearchItemCard: {
+    width: 130,
+    backgroundColor: '#0f172a',
+    borderRadius: 10,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  vodSearchItemCardActive: {
+    borderColor: '#06b6d4',
+    backgroundColor: 'rgba(6, 182, 212, 0.1)',
+  },
+  vodSearchPoster: {
+    width: 130,
+    height: 180,
+    backgroundColor: '#1e293b',
+  },
+  vodSearchPosterFallback: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  vodSearchItemTitle: {
+    color: '#f8fafc',
+    fontSize: 12,
+    fontWeight: '700',
+    minHeight: 32,
+  },
+  vodSearchItemYear: {
+    color: '#94a3b8',
+    fontSize: 11,
+  },
+  smallActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    backgroundColor: 'transparent',
+  },
+  smallActionBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  channelActionBtnDangerActive: {
+    borderColor: '#ef4444',
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
   },
 });
