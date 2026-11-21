@@ -64,6 +64,22 @@ export interface ArchiveCheckResult {
   recommendedUrl?: string;
 }
 
+export interface TvSeasonItem {
+  seasonNumber: number;
+  name: string;
+  episodeCount: number;
+  overview?: string;
+  poster?: string;
+}
+
+export interface TvEpisodeItem {
+  episodeNumber: number;
+  name: string;
+  overview?: string;
+  stillPath?: string;
+  airDate?: string;
+}
+
 export interface ChannelOverrideItem {
   id: string;
   name?: string | null;
@@ -181,6 +197,13 @@ export default function AdminScreen(): React.JSX.Element {
   const [searchVodLoading, setSearchVodLoading] = useState<boolean>(false);
   const [searchVodResults, setSearchVodResults] = useState<VodSearchResult[]>([]);
   const [selectedVodItem, setSelectedVodItem] = useState<VodSearchResult | null>(null);
+  // مواسم وحلقات المسلسل العربي المختار
+  const [tvSeasons, setTvSeasons] = useState<TvSeasonItem[]>([]);
+  const [tvSeasonsLoading, setTvSeasonsLoading] = useState<boolean>(false);
+  const [selectedSeason, setSelectedSeason] = useState<number | null>(null); // null = كامل المسلسل
+  const [tvEpisodes, setTvEpisodes] = useState<TvEpisodeItem[]>([]);
+  const [tvEpisodesLoading, setTvEpisodesLoading] = useState<boolean>(false);
+  const [selectedEpisode, setSelectedEpisode] = useState<number | null>(null); // null = كامل الموسم
   const [archiveChecking, setArchiveChecking] = useState<boolean>(false);
   const [archiveResults, setArchiveResults] = useState<ArchiveCheckResult[]>([]);
   const [archiveCheckMessage, setArchiveCheckMessage] = useState<string | null>(null);
@@ -685,9 +708,152 @@ export default function AdminScreen(): React.JSX.Element {
     }
   };
 
-  const handleSelectVodItem = (item: VodSearchResult) => {
-    setSelectedVodItem(item);
-    const existing = vodOverrides.find((o) => String(o.tmdbId) === String(item.id));
+  const getCleanTmdbId = (id: string | number) => {
+    return String(id)
+      .replace(/^tmdb-tv-/, '')
+      .replace(/^tmdb-movie-/, '')
+      .replace(/^tmdb-/, '')
+      .replace(/-s\d+(-e\d+)?$/, '')
+      .trim();
+  };
+
+  const getTargetOverrideKey = (
+    item: VodSearchResult,
+    season: number | null,
+    episode: number | null
+  ) => {
+    const cleanId = getCleanTmdbId(item.id);
+    const isTv =
+      item.media_type === 'tv' ||
+      String(item.id).startsWith('tmdb-tv-') ||
+      String(item.id).includes('-s');
+    if (!isTv) {
+      return `tmdb-movie-${cleanId}`;
+    }
+    if (season !== null && episode !== null) {
+      return `tmdb-tv-${cleanId}-s${season}-e${episode}`;
+    }
+    if (season !== null) {
+      return `tmdb-tv-${cleanId}-s${season}`;
+    }
+    return `tmdb-tv-${cleanId}`;
+  };
+
+  const getTargetScopeTitle = (
+    item: VodSearchResult,
+    season: number | null,
+    episode: number | null
+  ) => {
+    const baseTitle = item.title || item.name || '';
+    const cleanTitle = baseTitle
+      .replace(/\s*-\s*الموسم\s*\d+(\s*-\s*الحلقة\s*\d+)?/g, '')
+      .replace(/\s*\(المسلسل كاملاً\)/g, '')
+      .trim();
+    const isTv =
+      item.media_type === 'tv' ||
+      String(item.id).startsWith('tmdb-tv-') ||
+      String(item.id).includes('-s');
+    if (!isTv) return cleanTitle;
+    if (season !== null && episode !== null) {
+      return `${cleanTitle} - الموسم ${season} - الحلقة ${episode}`;
+    }
+    if (season !== null) {
+      return `${cleanTitle} - الموسم ${season}`;
+    }
+    return `${cleanTitle} (المسلسل كاملاً)`;
+  };
+
+  const parseOverrideScope = (tmdbId: string) => {
+    const matchEp = tmdbId.match(/-s(\d+)-e(\d+)$/i);
+    if (matchEp) {
+      return {
+        scope: 'episode' as const,
+        season: parseInt(matchEp[1], 10),
+        episode: parseInt(matchEp[2], 10),
+        label: `الموسم ${matchEp[1]} • الحلقة ${matchEp[2]}`,
+        isTv: true,
+      };
+    }
+    const matchSeason = tmdbId.match(/-s(\d+)$/i);
+    if (matchSeason) {
+      return {
+        scope: 'season' as const,
+        season: parseInt(matchSeason[1], 10),
+        episode: null,
+        label: `الموسم ${matchSeason[1]} (كاملاً)`,
+        isTv: true,
+      };
+    }
+    if (tmdbId.includes('tv') || tmdbId.startsWith('tmdb-tv-')) {
+      return {
+        scope: 'series' as const,
+        season: null,
+        episode: null,
+        label: 'المسلسل كاملاً',
+        isTv: true,
+      };
+    }
+    return {
+      scope: 'movie' as const,
+      season: null,
+      episode: null,
+      label: 'فيلم',
+      isTv: false,
+    };
+  };
+
+  const fetchTvSeasons = useCallback(
+    async (cleanId: string) => {
+      setTvSeasonsLoading(true);
+      try {
+        const res = await fetch(
+          `${BACKEND_BASE_URL}/api/admin/vod/tv/${encodeURIComponent(cleanId)}/seasons`,
+          { headers: getAuthHeaders() }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          setTvSeasons(Array.isArray(data.seasons) ? data.seasons : []);
+        } else {
+          setTvSeasons([]);
+        }
+      } catch {
+        setTvSeasons([]);
+      } finally {
+        setTvSeasonsLoading(false);
+      }
+    },
+    [getAuthHeaders]
+  );
+
+  const fetchTvEpisodes = useCallback(
+    async (cleanId: string, seasonNum: number) => {
+      setTvEpisodesLoading(true);
+      try {
+        const res = await fetch(
+          `${BACKEND_BASE_URL}/api/admin/vod/tv/${encodeURIComponent(cleanId)}/season/${seasonNum}`,
+          { headers: getAuthHeaders() }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          setTvEpisodes(Array.isArray(data.episodes) ? data.episodes : []);
+        } else {
+          setTvEpisodes([]);
+        }
+      } catch {
+        setTvEpisodes([]);
+      } finally {
+        setTvEpisodesLoading(false);
+      }
+    },
+    [getAuthHeaders]
+  );
+
+  const applyOverrideFields = (key: string) => {
+    const cleanKey = key.toLowerCase();
+    const existing = vodOverrides.find((o) => {
+      const k = o.tmdbId.toLowerCase();
+      return k === cleanKey || k.replace(/^tmdb-tv-/, '') === cleanKey.replace(/^tmdb-tv-/, '');
+    });
     if (existing) {
       setVodYoutubeUrl(existing.youtubeUrl || '');
       setVodYoutubePrimary(existing.useYoutubePrimary);
@@ -701,7 +867,97 @@ export default function AdminScreen(): React.JSX.Element {
       setVodArchivePrimary(false);
       setVodNotes('');
     }
-    handleCheckArchive(item.title || item.name || '');
+  };
+
+  const handleSelectVodItem = (
+    item: VodSearchResult,
+    initialSeason: number | null = null,
+    initialEpisode: number | null = null
+  ) => {
+    setSelectedVodItem(item);
+    setSelectedSeason(initialSeason);
+    setSelectedEpisode(initialEpisode);
+
+    const isTv =
+      item.media_type === 'tv' ||
+      String(item.id).startsWith('tmdb-tv-') ||
+      String(item.id).includes('-s');
+    const cleanId = getCleanTmdbId(item.id);
+
+    if (isTv) {
+      fetchTvSeasons(cleanId);
+      if (initialSeason !== null) {
+        fetchTvEpisodes(cleanId, initialSeason);
+      } else {
+        setTvEpisodes([]);
+      }
+    } else {
+      setTvSeasons([]);
+      setTvEpisodes([]);
+    }
+
+    const targetKey = getTargetOverrideKey(item, initialSeason, initialEpisode);
+    applyOverrideFields(targetKey);
+
+    const baseTitle = item.title || item.name || '';
+    const cleanTitle = baseTitle
+      .replace(/\s*-\s*الموسم\s*\d+(\s*-\s*الحلقة\s*\d+)?/g, '')
+      .replace(/\s*\(المسلسل كاملاً\)/g, '')
+      .trim();
+    let archiveQuery = cleanTitle;
+    if (isTv) {
+      if (initialSeason !== null && initialEpisode !== null) {
+        archiveQuery = `${cleanTitle} الجزء ${initialSeason} الحلقة ${initialEpisode}`;
+      } else if (initialSeason !== null) {
+        archiveQuery = `${cleanTitle} الموسم ${initialSeason}`;
+      }
+    }
+    handleCheckArchive(archiveQuery);
+  };
+
+  const handleSeasonChange = (seasonNum: number | null) => {
+    if (!selectedVodItem) return;
+    setSelectedSeason(seasonNum);
+    setSelectedEpisode(null);
+
+    const cleanId = getCleanTmdbId(selectedVodItem.id);
+    if (seasonNum !== null) {
+      fetchTvEpisodes(cleanId, seasonNum);
+    } else {
+      setTvEpisodes([]);
+    }
+
+    const targetKey = getTargetOverrideKey(selectedVodItem, seasonNum, null);
+    applyOverrideFields(targetKey);
+
+    const baseTitle = selectedVodItem.title || selectedVodItem.name || '';
+    const cleanTitle = baseTitle
+      .replace(/\s*-\s*الموسم\s*\d+(\s*-\s*الحلقة\s*\d+)?/g, '')
+      .replace(/\s*\(المسلسل كاملاً\)/g, '')
+      .trim();
+    const query = seasonNum !== null ? `${cleanTitle} الموسم ${seasonNum}` : cleanTitle;
+    handleCheckArchive(query);
+  };
+
+  const handleEpisodeChange = (epNum: number | null) => {
+    if (!selectedVodItem) return;
+    setSelectedEpisode(epNum);
+
+    const targetKey = getTargetOverrideKey(selectedVodItem, selectedSeason, epNum);
+    applyOverrideFields(targetKey);
+
+    const baseTitle = selectedVodItem.title || selectedVodItem.name || '';
+    const cleanTitle = baseTitle
+      .replace(/\s*-\s*الموسم\s*\d+(\s*-\s*الحلقة\s*\d+)?/g, '')
+      .replace(/\s*\(المسلسل كاملاً\)/g, '')
+      .trim();
+    const query =
+      epNum !== null && selectedSeason !== null
+        ? `${cleanTitle} الجزء ${selectedSeason} الحلقة ${epNum}`
+        : selectedSeason !== null
+        ? `${cleanTitle} الموسم ${selectedSeason}`
+        : cleanTitle;
+    handleCheckArchive(query);
   };
 
   const handleSaveVodOverride = async (options?: { forceArchivePrimary?: boolean; forceYoutubePrimary?: boolean }) => {
@@ -722,10 +978,17 @@ export default function AdminScreen(): React.JSX.Element {
         setVodArchivePrimary(false);
       }
 
+      const targetKey = getTargetOverrideKey(selectedVodItem, selectedSeason, selectedEpisode);
+      const targetTitle = getTargetScopeTitle(selectedVodItem, selectedSeason, selectedEpisode);
+      const isTv =
+        selectedVodItem.media_type === 'tv' ||
+        String(selectedVodItem.id).startsWith('tmdb-tv-') ||
+        String(selectedVodItem.id).includes('-s');
+
       const payload = {
-        tmdbId: String(selectedVodItem.id),
-        title: selectedVodItem.title || selectedVodItem.name || '',
-        mediaType: selectedVodItem.media_type === 'tv' ? 'tv' : 'movie',
+        tmdbId: targetKey,
+        title: targetTitle,
+        mediaType: isTv ? 'tv' : 'movie',
         youtubeUrl: vodYoutubeUrl.trim() || null,
         useYoutubePrimary: ytPrimary,
         archiveUrl: vodArchiveUrl.trim() || null,
@@ -753,20 +1016,23 @@ export default function AdminScreen(): React.JSX.Element {
     }
   };
 
-  const handleDeleteVodOverride = async (tmdbId: string) => {
+  const handleDeleteVodOverride = async (targetKey: string) => {
     try {
-      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/vod/overrides/${encodeURIComponent(tmdbId)}`, {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/vod/overrides/${encodeURIComponent(targetKey)}`, {
         method: 'DELETE',
         headers: getAuthHeaders(),
       });
       if (res.ok) {
         setStatusMessage('تم إلغاء الاستثناء واستعادة المصادر الافتراضية بنجاح');
-        if (selectedVodItem && String(selectedVodItem.id) === String(tmdbId)) {
-          setVodYoutubeUrl('');
-          setVodYoutubePrimary(false);
-          setVodArchiveUrl('');
-          setVodArchivePrimary(false);
-          setVodNotes('');
+        if (selectedVodItem) {
+          const currentKey = getTargetOverrideKey(selectedVodItem, selectedSeason, selectedEpisode);
+          if (currentKey.toLowerCase() === targetKey.toLowerCase()) {
+            setVodYoutubeUrl('');
+            setVodYoutubePrimary(false);
+            setVodArchiveUrl('');
+            setVodArchivePrimary(false);
+            setVodNotes('');
+          }
         }
         fetchVodOverrides();
       } else {
@@ -779,20 +1045,27 @@ export default function AdminScreen(): React.JSX.Element {
 
   const handlePreviewVodServer = (server: 'vidlink' | 'vidsrc' | 'youtube' | 'archive') => {
     if (!selectedVodItem) return;
-    const isTv = selectedVodItem.media_type === 'tv';
+    const isTv =
+      selectedVodItem.media_type === 'tv' ||
+      String(selectedVodItem.id).startsWith('tmdb-tv-') ||
+      String(selectedVodItem.id).includes('-s');
+    const cleanId = getCleanTmdbId(selectedVodItem.id);
+    const seasonNum = selectedSeason !== null ? selectedSeason : 1;
+    const epNum = selectedEpisode !== null ? selectedEpisode : 1;
+
     let url = '';
     let name = '';
 
     if (server === 'vidlink') {
       name = 'VidLink';
       url = isTv
-        ? `https://api.vidlink.pro/tv/${selectedVodItem.id}/1/1`
-        : `https://api.vidlink.pro/movie/${selectedVodItem.id}`;
+        ? `https://api.vidlink.pro/tv/${cleanId}/${seasonNum}/${epNum}`
+        : `https://api.vidlink.pro/movie/${cleanId}`;
     } else if (server === 'vidsrc') {
       name = 'VidSrc CC';
       url = isTv
-        ? `https://vidsrc.cc/v2/embed/tv/${selectedVodItem.id}/1/1`
-        : `https://vidsrc.cc/v2/embed/movie/${selectedVodItem.id}`;
+        ? `https://vidsrc.cc/v2/embed/tv/${cleanId}/${seasonNum}/${epNum}`
+        : `https://vidsrc.cc/v2/embed/movie/${cleanId}`;
     } else if (server === 'youtube') {
       name = 'YouTube';
       url = vodYoutubeUrl;
@@ -806,7 +1079,8 @@ export default function AdminScreen(): React.JSX.Element {
       return;
     }
 
-    setVodPreviewTitle(`${name}: ${selectedVodItem.title || selectedVodItem.name}`);
+    const scopeTitle = getTargetScopeTitle(selectedVodItem, selectedSeason, selectedEpisode);
+    setVodPreviewTitle(`${name}: ${scopeTitle}`);
     setVodPreviewUrl(url);
     setVodPreviewModalVisible(true);
   };
@@ -2640,18 +2914,26 @@ export default function AdminScreen(): React.JSX.Element {
                     </View>
                   )}
                   <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      <Text style={[styles.cardHeaderTitle, { fontSize: 18, color: '#f8fafc' }]}>
-                        {selectedVodItem.title || selectedVodItem.name}
-                      </Text>
-                      <View style={[styles.statusBadge, { backgroundColor: selectedVodItem.media_type === 'tv' ? '#a855f720' : '#06b6d420' }]}>
-                        <Text style={[styles.statusBadgeText, { color: selectedVodItem.media_type === 'tv' ? '#c084fc' : '#06b6d4' }]}>
-                          {selectedVodItem.media_type === 'tv' ? 'مسلسل عربي' : 'فيلم عربي'}
-                        </Text>
-                      </View>
-                    </View>
+                    {(() => {
+                      const isTv =
+                        selectedVodItem.media_type === 'tv' ||
+                        String(selectedVodItem.id).startsWith('tmdb-tv-') ||
+                        String(selectedVodItem.id).includes('-s');
+                      return (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <Text style={[styles.cardHeaderTitle, { fontSize: 18, color: '#f8fafc' }]}>
+                            {selectedVodItem.title || selectedVodItem.name}
+                          </Text>
+                          <View style={[styles.statusBadge, { backgroundColor: isTv ? '#a855f720' : '#06b6d420' }]}>
+                            <Text style={[styles.statusBadgeText, { color: isTv ? '#c084fc' : '#06b6d4' }]}>
+                              {isTv ? 'مسلسل عربي' : 'فيلم عربي'}
+                            </Text>
+                          </View>
+                        </View>
+                      );
+                    })()}
                     <Text style={{ color: '#94a3b8', fontSize: 13, marginTop: 4 }}>
-                      معرّف TMDB: {selectedVodItem.id} {selectedVodItem.year ? `| سنة الإنتاج: ${selectedVodItem.year}` : ''}
+                      معرّف TMDB: {getCleanTmdbId(selectedVodItem.id)} {selectedVodItem.year ? `| سنة الإنتاج: ${selectedVodItem.year}` : ''}
                     </Text>
                     {selectedVodItem.overview ? (
                       <Text style={{ color: '#64748b', fontSize: 12, marginTop: 4 }} numberOfLines={2}>
@@ -2660,6 +2942,151 @@ export default function AdminScreen(): React.JSX.Element {
                     ) : null}
                   </View>
                 </View>
+
+                {/* واجهة اختيار وتحديد الموسم والحلقة للمسلسلات */}
+                {Boolean(
+                  selectedVodItem.media_type === 'tv' ||
+                    String(selectedVodItem.id).startsWith('tmdb-tv-') ||
+                    String(selectedVodItem.id).includes('-s')
+                ) && (
+                  <View style={{ marginTop: 16, padding: 14, backgroundColor: '#070b14', borderRadius: 10, borderWidth: 1, borderColor: '#1e293b' }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <MaterialIcons name="subscriptions" size={20} color="#a855f7" />
+                        <Text style={{ color: '#f8fafc', fontSize: 14, fontWeight: '700' }}>
+                          نطاق التخصيص للمسلسل:
+                        </Text>
+                      </View>
+                      <View style={[styles.statusBadge, { backgroundColor: '#a855f720', borderColor: '#a855f7', borderWidth: 1, paddingHorizontal: 10, paddingVertical: 4 }]}>
+                        <Text style={[styles.statusBadgeText, { color: '#c084fc', fontWeight: '700' }]}>
+                          {getTargetScopeTitle(selectedVodItem, selectedSeason, selectedEpisode)}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* شريط اختيار الموسم */}
+                    <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 6, fontWeight: '600' }}>
+                      1. اختر الموسم (أو اختر "المسلسل كاملاً" لتطبيق التخصيص على جميع الحلقات):
+                    </Text>
+                    {tvSeasonsLoading ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
+                        <ActivityIndicator size="small" color="#a855f7" />
+                        <Text style={{ color: '#94a3b8', fontSize: 12 }}>جارٍ جلب مواسم المسلسل...</Text>
+                      </View>
+                    ) : (
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                          <Pressable
+                            style={[
+                              styles.smallActionBtn,
+                              selectedSeason === null
+                                ? { backgroundColor: '#a855f7', borderColor: '#a855f7' }
+                                : { borderColor: 'rgba(255,255,255,0.15)', backgroundColor: '#1e293b' },
+                            ]}
+                            onPress={() => handleSeasonChange(null)}
+                          >
+                            <Text style={[styles.smallActionBtnText, { color: selectedSeason === null ? '#ffffff' : '#cbd5e1' }]}>
+                              المسلسل كاملاً
+                            </Text>
+                          </Pressable>
+
+                          {tvSeasons.map((s) => {
+                            const isSeasonActive = selectedSeason === s.seasonNumber;
+                            const cleanId = getCleanTmdbId(selectedVodItem.id);
+                            const hasSeasonOverride = vodOverrides.some((o) => {
+                              const targetK = `tmdb-tv-${cleanId}-s${s.seasonNumber}`.toLowerCase();
+                              const targetK2 = `${cleanId}-s${s.seasonNumber}`.toLowerCase();
+                              return o.tmdbId.toLowerCase() === targetK || o.tmdbId.toLowerCase() === targetK2;
+                            });
+
+                            return (
+                              <Pressable
+                                key={s.seasonNumber}
+                                style={[
+                                  styles.smallActionBtn,
+                                  isSeasonActive
+                                    ? { backgroundColor: '#a855f7', borderColor: '#a855f7' }
+                                    : { borderColor: 'rgba(255,255,255,0.15)', backgroundColor: '#1e293b' },
+                                ]}
+                                onPress={() => handleSeasonChange(s.seasonNumber)}
+                              >
+                                {hasSeasonOverride && (
+                                  <MaterialIcons name="check-circle" size={13} color={isSeasonActive ? '#ffffff' : '#10b981'} />
+                                )}
+                                <Text style={[styles.smallActionBtnText, { color: isSeasonActive ? '#ffffff' : '#cbd5e1' }]}>
+                                  الموسم {s.seasonNumber} {s.episodeCount ? `(${s.episodeCount} ح)` : ''}
+                                </Text>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                      </ScrollView>
+                    )}
+
+                    {/* شريط اختيار الحلقة إذا تم اختيار موسم */}
+                    {selectedSeason !== null && (
+                      <View style={{ marginTop: 4, paddingTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' }}>
+                        <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 6, fontWeight: '600' }}>
+                          2. اختر الحلقة المحددة من الموسم {selectedSeason} (الحلقات ذات العلامة الخضراء مخصصة مسبقاً):
+                        </Text>
+                        {tvEpisodesLoading ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
+                            <ActivityIndicator size="small" color="#06b6d4" />
+                            <Text style={{ color: '#94a3b8', fontSize: 12 }}>جارٍ جلب حلقات الموسم {selectedSeason}...</Text>
+                          </View>
+                        ) : (
+                          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                            <View style={{ flexDirection: 'row', gap: 8 }}>
+                              <Pressable
+                                style={[
+                                  styles.smallActionBtn,
+                                  selectedEpisode === null
+                                    ? { backgroundColor: '#06b6d4', borderColor: '#06b6d4' }
+                                    : { borderColor: 'rgba(255,255,255,0.15)', backgroundColor: '#1e293b' },
+                                ]}
+                                onPress={() => handleEpisodeChange(null)}
+                              >
+                                <Text style={[styles.smallActionBtnText, { color: selectedEpisode === null ? '#ffffff' : '#cbd5e1' }]}>
+                                  الموسم {selectedSeason} كاملاً
+                                </Text>
+                              </Pressable>
+
+                              {tvEpisodes.map((ep) => {
+                                const isEpActive = selectedEpisode === ep.episodeNumber;
+                                const cleanId = getCleanTmdbId(selectedVodItem.id);
+                                const hasEpOverride = vodOverrides.some((o) => {
+                                  const targetK = `tmdb-tv-${cleanId}-s${selectedSeason}-e${ep.episodeNumber}`.toLowerCase();
+                                  const targetK2 = `${cleanId}-s${selectedSeason}-e${ep.episodeNumber}`.toLowerCase();
+                                  return o.tmdbId.toLowerCase() === targetK || o.tmdbId.toLowerCase() === targetK2;
+                                });
+
+                                return (
+                                  <Pressable
+                                    key={ep.episodeNumber}
+                                    style={[
+                                      styles.smallActionBtn,
+                                      isEpActive
+                                        ? { backgroundColor: '#06b6d4', borderColor: '#06b6d4' }
+                                        : { borderColor: 'rgba(255,255,255,0.15)', backgroundColor: '#1e293b' },
+                                    ]}
+                                    onPress={() => handleEpisodeChange(ep.episodeNumber)}
+                                  >
+                                    {hasEpOverride && (
+                                      <MaterialIcons name="check-circle" size={13} color={isEpActive ? '#ffffff' : '#10b981'} />
+                                    )}
+                                    <Text style={[styles.smallActionBtnText, { color: isEpActive ? '#ffffff' : '#cbd5e1' }]}>
+                                      الحلقة {ep.episodeNumber}
+                                    </Text>
+                                  </Pressable>
+                                );
+                              })}
+                            </View>
+                          </ScrollView>
+                        )}
+                      </View>
+                    )}
+                  </View>
+                )}
 
                 {/* 1. فحص وتخصيص Archive.org */}
                 <View style={{ marginTop: 16 }}>
@@ -2886,22 +3313,34 @@ export default function AdminScreen(): React.JSX.Element {
                       ) : (
                         <>
                           <MaterialIcons name="save" size={18} color="#ffffff" />
-                          <Text style={styles.primaryActionBtnText}>حفظ وتطبيق إعدادات العمل</Text>
+                          <Text style={styles.primaryActionBtnText}>
+                            حفظ واعتماد: {getTargetScopeTitle(selectedVodItem, selectedSeason, selectedEpisode)}
+                          </Text>
                         </>
                       )}
                     </Pressable>
 
-                    {vodOverrides.some((o) => String(o.tmdbId) === String(selectedVodItem.id)) && (
-                      <Pressable
-                        style={[styles.resellerActionBtnSecondary, { borderColor: '#ef4444' }]}
-                        onPress={() => handleDeleteVodOverride(String(selectedVodItem.id))}
-                      >
-                        <MaterialIcons name="delete" size={16} color="#ef4444" />
-                        <Text style={[styles.resellerActionBtnSecondaryText, { color: '#ef4444' }]}>
-                          إلغاء الاعتماد واستعادة الوضع الافتراضي
-                        </Text>
-                      </Pressable>
-                    )}
+                    {(() => {
+                      const currentKey = getTargetOverrideKey(selectedVodItem, selectedSeason, selectedEpisode);
+                      const hasCurrentOverride = vodOverrides.some(
+                        (o) =>
+                          o.tmdbId.toLowerCase() === currentKey.toLowerCase() ||
+                          o.tmdbId.toLowerCase().replace(/^tmdb-tv-/, '') === currentKey.toLowerCase().replace(/^tmdb-tv-/, '')
+                      );
+                      if (!hasCurrentOverride) return null;
+
+                      return (
+                        <Pressable
+                          style={[styles.resellerActionBtnSecondary, { borderColor: '#ef4444' }]}
+                          onPress={() => handleDeleteVodOverride(currentKey)}
+                        >
+                          <MaterialIcons name="delete" size={16} color="#ef4444" />
+                          <Text style={[styles.resellerActionBtnSecondaryText, { color: '#ef4444' }]}>
+                            إلغاء الاعتماد لهذا النطاق
+                          </Text>
+                        </Pressable>
+                      );
+                    })()}
                   </View>
                 </View>
               </View>
@@ -2936,81 +3375,95 @@ export default function AdminScreen(): React.JSX.Element {
                 </View>
               ) : (
                 <View style={styles.resellersGrid}>
-                  {vodOverrides.map((ov) => (
-                    <View key={ov.tmdbId} style={[styles.resellerCard, { borderColor: '#06b6d4' }]}>
-                      <View style={styles.resellerCardHeader}>
-                        <View style={styles.resellerInfo}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                            <MaterialIcons name={ov.mediaType === 'tv' ? 'tv' : 'movie'} size={22} color="#06b6d4" />
-                            <Text style={styles.resellerName}>{ov.title}</Text>
-                          </View>
-                          <Text style={styles.resellerUsername}>
-                            معرّف TMDB: {ov.tmdbId} {ov.mediaType === 'tv' ? '• مسلسل' : '• فيلم'}
-                          </Text>
-                        </View>
-                        <View style={[styles.statusBadge, { backgroundColor: '#06b6d420' }]}>
-                          <Text style={[styles.statusBadgeText, { color: '#06b6d4' }]}>
-                            {ov.useArchivePrimary ? 'الأرشيف أولاً' : ov.useYoutubePrimary ? 'يوتيوب أولاً' : 'سيرفرات مدمجة'}
-                          </Text>
-                        </View>
-                      </View>
-
-                      {/* تفاصيل المصادر */}
-                      <View style={{ marginVertical: 8, padding: 10, backgroundColor: '#070b14', borderRadius: 8, gap: 6 }}>
-                        {ov.archiveUrl ? (
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                            <MaterialIcons name="archive" size={16} color="#10b981" />
-                            <Text style={{ color: '#10b981', fontSize: 12, flex: 1 }} numberOfLines={1}>
-                              الأرشيف: {ov.archiveUrl}
+                  {vodOverrides.map((ov) => {
+                    const scopeInfo = parseOverrideScope(ov.tmdbId);
+                    return (
+                      <View key={ov.tmdbId} style={[styles.resellerCard, { borderColor: '#06b6d4' }]}>
+                        <View style={styles.resellerCardHeader}>
+                          <View style={styles.resellerInfo}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                              <MaterialIcons name={scopeInfo.isTv ? 'tv' : 'movie'} size={22} color="#06b6d4" />
+                              <Text style={styles.resellerName}>{ov.title}</Text>
+                            </View>
+                            <Text style={styles.resellerUsername}>
+                              معرّف TMDB: {ov.tmdbId} • {scopeInfo.label}
                             </Text>
                           </View>
-                        ) : null}
-                        {ov.youtubeUrl ? (
+                          <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+                            <View style={[styles.statusBadge, { backgroundColor: scopeInfo.isTv ? '#a855f720' : '#38bdf820' }]}>
+                              <Text style={[styles.statusBadgeText, { color: scopeInfo.isTv ? '#c084fc' : '#38bdf8' }]}>
+                                {scopeInfo.isTv ? 'مسلسل عربي' : 'فيلم عربي'}
+                              </Text>
+                            </View>
+                            <View style={[styles.statusBadge, { backgroundColor: '#06b6d420' }]}>
+                              <Text style={[styles.statusBadgeText, { color: '#06b6d4' }]}>
+                                {ov.useArchivePrimary ? 'الأرشيف أولاً' : ov.useYoutubePrimary ? 'يوتيوب أولاً' : 'سيرفرات مدمجة'}
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+
+                        {/* تفاصيل المصادر */}
+                        <View style={{ marginVertical: 8, padding: 10, backgroundColor: '#070b14', borderRadius: 8, gap: 6 }}>
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                            <MaterialIcons name="smart-display" size={16} color="#ef4444" />
-                            <Text style={{ color: '#ef4444', fontSize: 12, flex: 1 }} numberOfLines={1}>
-                              يوتيوب: {ov.youtubeUrl}
+                            <MaterialIcons name="filter-none" size={14} color="#a855f7" />
+                            <Text style={{ color: '#c084fc', fontSize: 12, fontWeight: '700' }}>
+                              نطاق التخصيص: {scopeInfo.label}
                             </Text>
                           </View>
-                        ) : null}
-                        {ov.notes ? (
-                          <Text style={{ color: '#94a3b8', fontSize: 12, fontStyle: 'italic' }}>
-                            ملاحظة: {ov.notes}
-                          </Text>
-                        ) : null}
-                      </View>
+                          {ov.archiveUrl ? (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                              <MaterialIcons name="archive" size={16} color="#10b981" />
+                              <Text style={{ color: '#10b981', fontSize: 12, flex: 1 }} numberOfLines={1}>
+                                الأرشيف: {ov.archiveUrl}
+                              </Text>
+                            </View>
+                          ) : null}
+                          {ov.youtubeUrl ? (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                              <MaterialIcons name="smart-display" size={16} color="#ef4444" />
+                              <Text style={{ color: '#ef4444', fontSize: 12, flex: 1 }} numberOfLines={1}>
+                                يوتيوب: {ov.youtubeUrl}
+                              </Text>
+                            </View>
+                          ) : null}
+                          {ov.notes ? (
+                            <Text style={{ color: '#94a3b8', fontSize: 12, fontStyle: 'italic' }}>
+                              ملاحظة: {ov.notes}
+                            </Text>
+                          ) : null}
+                        </View>
 
-                      <View style={styles.resellerCardActions}>
-                        <Pressable
-                          style={[styles.resellerActionBtn, { backgroundColor: '#06b6d420', borderColor: '#06b6d4' }]}
-                          onPress={() => {
-                            setSelectedVodItem({
-                              id: ov.tmdbId,
-                              title: ov.title,
-                              media_type: ov.mediaType,
-                            });
-                            setVodYoutubeUrl(ov.youtubeUrl || '');
-                            setVodYoutubePrimary(ov.useYoutubePrimary);
-                            setVodArchiveUrl(ov.archiveUrl || '');
-                            setVodArchivePrimary(ov.useArchivePrimary);
-                            setVodNotes(ov.notes || '');
-                            handleCheckArchive(ov.title);
-                          }}
-                        >
-                          <MaterialIcons name="edit" size={16} color="#06b6d4" />
-                          <Text style={[styles.resellerActionBtnText, { color: '#06b6d4' }]}>تعديل</Text>
-                        </Pressable>
+                        <View style={styles.resellerCardActions}>
+                          <Pressable
+                            style={[styles.resellerActionBtn, { backgroundColor: '#06b6d420', borderColor: '#06b6d4' }]}
+                            onPress={() => {
+                              handleSelectVodItem(
+                                {
+                                  id: ov.tmdbId,
+                                  title: ov.title,
+                                  media_type: scopeInfo.isTv ? 'tv' : 'movie',
+                                },
+                                scopeInfo.season,
+                                scopeInfo.episode
+                              );
+                            }}
+                          >
+                            <MaterialIcons name="edit" size={16} color="#06b6d4" />
+                            <Text style={[styles.resellerActionBtnText, { color: '#06b6d4' }]}>تعديل</Text>
+                          </Pressable>
 
-                        <Pressable
-                          style={[styles.resellerActionBtnSecondary, { borderColor: '#ef4444' }]}
-                          onPress={() => handleDeleteVodOverride(ov.tmdbId)}
-                        >
-                          <MaterialIcons name="delete" size={16} color="#ef4444" />
-                          <Text style={[styles.resellerActionBtnSecondaryText, { color: '#ef4444' }]}>إلغاء الاعتماد</Text>
-                        </Pressable>
+                          <Pressable
+                            style={[styles.resellerActionBtnSecondary, { borderColor: '#ef4444' }]}
+                            onPress={() => handleDeleteVodOverride(ov.tmdbId)}
+                          >
+                            <MaterialIcons name="delete" size={16} color="#ef4444" />
+                            <Text style={[styles.resellerActionBtnSecondaryText, { color: '#ef4444' }]}>إلغاء الاعتماد</Text>
+                          </Pressable>
+                        </View>
                       </View>
-                    </View>
-                  ))}
+                    );
+                  })}
                 </View>
               )}
             </View>

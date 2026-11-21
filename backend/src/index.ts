@@ -2024,11 +2024,40 @@ async function handleVodSources(request: Request, url: URL, env: Env): Promise<R
   }));
 
   // فحص سجل الاعتمادات والتخصيصات للمحتوى العربي (vod_source_overrides)
+  // ترتيب الأولوية للمسلسلات: 1) الحلقة المحددة -> 2) الموسم المحدد -> 3) المسلسل كاملاً -> 4) العنوان
   let vodOverride: any = null;
   if (env.DB && (tmdbId || title)) {
     try {
-      if (tmdbId) {
-        vodOverride = await env.DB.prepare('SELECT * FROM vod_source_overrides WHERE tmdb_id = ?').bind(tmdbId).first<any>();
+      const rawId = tmdbId.replace(/^tmdb-tv-/, '').replace(/^tmdb-movie-/, '').replace(/^tmdb-/, '').trim();
+      if (type === 'tv' && rawId) {
+        const candidateKeys = [
+          `tmdb-tv-${rawId}-s${season}-e${episode}`,
+          `${rawId}-s${season}-e${episode}`,
+          `tmdb-tv-${rawId}-s${season}`,
+          `${rawId}-s${season}`,
+          `tmdb-tv-${rawId}`,
+          `${rawId}`,
+        ];
+        for (const k of candidateKeys) {
+          const row = await env.DB.prepare('SELECT * FROM vod_source_overrides WHERE tmdb_id = ?').bind(k).first<any>();
+          if (row) {
+            vodOverride = row;
+            break;
+          }
+        }
+      } else if (rawId) {
+        const candidateKeys = [
+          `tmdb-movie-${rawId}`,
+          `tmdb-${rawId}`,
+          `${rawId}`,
+        ];
+        for (const k of candidateKeys) {
+          const row = await env.DB.prepare('SELECT * FROM vod_source_overrides WHERE tmdb_id = ?').bind(k).first<any>();
+          if (row) {
+            vodOverride = row;
+            break;
+          }
+        }
       }
       if (!vodOverride && title) {
         vodOverride = await env.DB.prepare('SELECT * FROM vod_source_overrides WHERE title = ?').bind(title).first<any>();
@@ -4105,6 +4134,97 @@ async function handleAdminCheckArchive(request: Request, env: Env, url: URL): Pr
   }
 }
 
+async function handleAdminGetTvSeasons(request: Request, env: Env, rawTmdbId: string): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  const cleanId = rawTmdbId.replace(/^tmdb-tv-/, '').replace(/^tmdb-movie-/, '').replace(/^tmdb-/, '').trim();
+  const apiKey = env.TMDB_API_KEY || '';
+  if (!cleanId || !apiKey) {
+    return jsonResponse({ error: 'المعرف غير صالح أو مفتاح TMDB غير متوفر', seasons: [] }, 400);
+  }
+
+  try {
+    const res = await fetch(`https://api.themoviedb.org/3/tv/${cleanId}?api_key=${apiKey}&language=ar-SA`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) {
+      return jsonResponse({ error: 'فشل جلب مواسم المسلسل من TMDB', seasons: [] }, 502);
+    }
+    const data = (await res.json()) as any;
+    const allSeasons = (data.seasons || []) as any[];
+    let seasons = allSeasons.filter((s: any) => s.season_number > 0);
+    if (seasons.length === 0 && allSeasons.length > 0) {
+      seasons = allSeasons;
+    }
+
+    return jsonResponse({
+      show: {
+        id: data.id,
+        name: data.name || data.original_name,
+        overview: data.overview || '',
+        poster: data.poster_path ? `https://image.tmdb.org/t/p/w500${data.poster_path}` : '',
+        numberOfSeasons: data.number_of_seasons || seasons.length,
+        numberOfEpisodes: data.number_of_episodes,
+      },
+      seasons: seasons.map((s: any) => ({
+        seasonNumber: s.season_number,
+        name: s.name || `الموسم ${s.season_number}`,
+        episodeCount: s.episode_count || 0,
+        overview: s.overview || '',
+        poster: s.poster_path ? `https://image.tmdb.org/t/p/w500${s.poster_path}` : '',
+      })),
+    });
+  } catch (err: any) {
+    return jsonResponse({ error: 'خطأ أثناء الاتصال بـ TMDB: ' + (err?.message || ''), seasons: [] }, 500);
+  }
+}
+
+async function handleAdminGetTvSeasonEpisodes(request: Request, env: Env, rawTmdbId: string, seasonNumber: number): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  const cleanId = rawTmdbId.replace(/^tmdb-tv-/, '').replace(/^tmdb-movie-/, '').replace(/^tmdb-/, '').trim();
+  const apiKey = env.TMDB_API_KEY || '';
+  if (!cleanId || !apiKey) {
+    return jsonResponse({ error: 'المعرف غير صالح أو مفتاح TMDB غير متوفر', episodes: [] }, 400);
+  }
+
+  try {
+    let res = await fetch(`https://api.themoviedb.org/3/tv/${cleanId}/season/${seasonNumber}?api_key=${apiKey}&language=ar-SA`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) {
+      res = await fetch(`https://api.themoviedb.org/3/tv/${cleanId}/season/${seasonNumber}?api_key=${apiKey}`, {
+        headers: { Accept: 'application/json' },
+      });
+    }
+    if (!res.ok) {
+      return jsonResponse({ error: 'فشل جلب حلقات الموسم', episodes: [] }, 502);
+    }
+    const data = (await res.json()) as any;
+    const episodes = (data.episodes || []).map((ep: any) => ({
+      episodeNumber: ep.episode_number,
+      name: ep.name || `الحلقة ${ep.episode_number}`,
+      overview: ep.overview || '',
+      stillPath: ep.still_path ? `https://image.tmdb.org/t/p/w500${ep.still_path}` : '',
+      airDate: ep.air_date || '',
+    }));
+
+    return jsonResponse({
+      seasonNumber,
+      name: data.name || `الموسم ${seasonNumber}`,
+      episodes,
+    });
+  } catch (err: any) {
+    return jsonResponse({ error: 'خطأ أثناء جلب حلقات الموسم: ' + (err?.message || ''), episodes: [] }, 500);
+  }
+}
+
 async function handleGetPublicVodOverride(request: Request, env: Env, tmdbId: string): Promise<Response> {
   if (!env.DB) {
     return jsonResponse({ override: null });
@@ -4928,6 +5048,18 @@ export default {
     }
     if (url.pathname === '/api/admin/vod/check-archive' && request.method === 'GET') {
       return handleAdminCheckArchive(request, env, url);
+    }
+    if (url.pathname.startsWith('/api/admin/vod/tv/') && request.method === 'GET') {
+      const rest = url.pathname.substring('/api/admin/vod/tv/'.length);
+      const parts = rest.split('/');
+      const tmdbId = decodeURIComponent(parts[0]);
+      if (parts.length === 2 && parts[1] === 'seasons') {
+        return handleAdminGetTvSeasons(request, env, tmdbId);
+      }
+      if (parts.length === 3 && parts[1] === 'season') {
+        const sNum = parseInt(parts[2], 10) || 1;
+        return handleAdminGetTvSeasonEpisodes(request, env, tmdbId, sNum);
+      }
     }
     if (url.pathname.startsWith('/api/vod/overrides/') && request.method === 'GET') {
       const tmdbId = decodeURIComponent(url.pathname.substring('/api/vod/overrides/'.length));
