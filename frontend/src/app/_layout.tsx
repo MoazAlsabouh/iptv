@@ -6,6 +6,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as Font from 'expo-font';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import { MainLayout } from '../components/layout/MainLayout';
+import { UpdateModal } from '../components/UpdateModal';
 
 // تحميل الخطوط عبر expo-font على الويب مباشرة من المتصفح
 // هذا يمنع @expo/vector-icons من طلب ملفات الخط من /assets/node_modules/... نهائياً
@@ -310,6 +311,7 @@ export default function RootLayout(): React.JSX.Element {
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <NavigationGuard />
+          <UpdateModal />
         </AuthProvider>
       </QueryClientProvider>
     </SafeAreaProvider>

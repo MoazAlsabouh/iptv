@@ -39,6 +39,54 @@ export interface Env {
   TMDB_API_KEY?: string;
   WYZIE_API_KEY?: string;
   OPENSUBTITLES_API_KEY?: string;
+  LATEST_VERSION_CODE?: string | number;
+  MIN_SUPPORTED_VERSION_CODE?: string | number;
+  LATEST_VERSION_NAME?: string;
+  APP_DOWNLOAD_URL?: string;
+  APP_UPDATE_MESSAGE?: string;
+}
+
+// ==========================================
+// إعدادات إصدار تطبيق أندرويد وتلفاز (App Version)
+// ==========================================
+export const DEFAULT_APP_VERSION = {
+  latestVersionCode: 3,
+  minSupportedVersionCode: 3,
+  latestVersionName: '1.0.3',
+  downloadUrl: 'https://tv.moazns.sy/telfazi.apk',
+  message: 'يتوفر إصدار جديد من تلفازي يتضمن تحسينات في الأداء والمشغّل.',
+};
+
+function handleAppVersion(env: Env): Response {
+  const latestVersionCode = env.LATEST_VERSION_CODE
+    ? Number(env.LATEST_VERSION_CODE)
+    : DEFAULT_APP_VERSION.latestVersionCode;
+  const minSupportedVersionCode = env.MIN_SUPPORTED_VERSION_CODE
+    ? Number(env.MIN_SUPPORTED_VERSION_CODE)
+    : DEFAULT_APP_VERSION.minSupportedVersionCode;
+  const latestVersionName = env.LATEST_VERSION_NAME || DEFAULT_APP_VERSION.latestVersionName;
+  const downloadUrl = env.APP_DOWNLOAD_URL || DEFAULT_APP_VERSION.downloadUrl;
+  const message = env.APP_UPDATE_MESSAGE || DEFAULT_APP_VERSION.message;
+
+  return new Response(
+    JSON.stringify({
+      latestVersionCode,
+      minSupportedVersionCode,
+      latestVersionName,
+      downloadUrl,
+      message,
+    }),
+    {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      },
+    }
+  );
 }
 
 interface TMDBMovie {
@@ -3966,6 +4014,11 @@ export default {
           'Access-Control-Max-Age': '86400',
         },
       });
+    }
+
+    // نقطة نهاية فحص إصدار التطبيق (Android / Android TV)
+    if (url.pathname === '/api/app-version' && request.method === 'GET') {
+      return handleAppVersion(env);
     }
 
     // نقطة نهاية بروكسي بث HLS المباشر (تخطي حظر 403 للمتصفحات)
