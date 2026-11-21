@@ -46,7 +46,9 @@ export function PlayerScreen(): React.JSX.Element {
     originalLanguage?: string;
   }>();
 
-  const { favoriteIds, toggleFavorite } = useAppStore();
+  const rawFavoriteIds = useAppStore((state) => state.favoriteIds);
+  const favoriteIds = Array.isArray(rawFavoriteIds) ? rawFavoriteIds : [];
+  const toggleFavorite = useAppStore((state) => state.toggleFavorite);
   const { channels, categories, countries, networks, totalChannels } = useMediaData();
   const { token } = useAuth();
 
@@ -88,10 +90,11 @@ export function PlayerScreen(): React.JSX.Element {
 
   // دعم مواسم وحلقات المسلسلات
   const isTvSeries = useMemo(() => {
+    const sId = String(channelId || '');
     return (
       params.type === 'tv' ||
-      channelId.includes('-tv-') ||
-      channelId.startsWith('tvm-')
+      sId.includes('-tv-') ||
+      sId.startsWith('tvm-')
     );
   }, [params.type, channelId]);
 
@@ -345,7 +348,7 @@ export function PlayerScreen(): React.JSX.Element {
     if (!channels || channels.length === 0) return [];
 
     if (activeCategoryType === 'favorites') {
-      return channels.filter((ch) => favoriteIds.includes(ch.id));
+      return channels.filter((ch) => ch?.id && favoriteIds.includes(ch.id));
     }
     if (activeCategoryType === 'all') {
       return channels;
@@ -480,7 +483,8 @@ export function PlayerScreen(): React.JSX.Element {
       url = channelSources[activeSourceIndex].url;
     }
     // تحويل روابط يوتيوب تلقائياً إلى صيغة التضمين الآمنة لمنع خطأ X-Frame-Options
-    if (url && (url.includes('youtube.com') || url.includes('youtu.be'))) {
+    const sUrl = String(url || '');
+    if (sUrl && (sUrl.includes('youtube.com') || sUrl.includes('youtu.be'))) {
       url = toYouTubeEmbedUrl(url);
     }
     // إذا كان الرابط ينتمي لنطاقات تفرض حظر 403 على المتصفحات، نوجهه مباشرة للبروكسي
@@ -878,13 +882,15 @@ export function PlayerScreen(): React.JSX.Element {
                   <View style={styles.optionsWrap}>
                     {channelSources.map((src, idx) => {
                       const isCurrentSource = idx === activeSourceIndex;
+                      const sLabel = String(src?.label || '');
+                      const sUrl = String(src?.url || '');
                       const isYouTube =
-                        src.label.includes('يوتيوب') || src.url.includes('youtube');
+                        sLabel.includes('يوتيوب') || sUrl.includes('youtube');
                       const isDailymotion =
-                        src.label.includes('ديلي موشن') || src.url.includes('dailymotion');
+                        sLabel.includes('ديلي موشن') || sUrl.includes('dailymotion');
                       const isArchive =
-                        src.label.includes('أرشيف') || src.url.includes('archive.org');
-                      const isDirect = src.label.includes('مباشر');
+                        sLabel.includes('أرشيف') || sUrl.includes('archive.org');
+                      const isDirect = sLabel.includes('مباشر');
 
                       return (
                         <Pressable
@@ -1169,7 +1175,7 @@ export function PlayerScreen(): React.JSX.Element {
           <Text style={styles.errorDesc}>
             {isVod
               ? 'لم يتم العثور على مصادر بث صالحة أو تعذر تشغيل كافة المصادر المتوفرة لهذا العمل.'
-              : playbackError.includes('HLS') || playbackError.includes('hls')
+              : (playbackError && (String(playbackError).includes('HLS') || String(playbackError).includes('hls')))
               ? 'تعذر تشغيل هذا البث حالياً، يرجى اختيار مصدر آخر أو إعادة المحاولة'
               : playbackError}
           </Text>

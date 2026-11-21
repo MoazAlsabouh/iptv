@@ -28,7 +28,7 @@ export const ChannelLogo: React.FC<ChannelLogoProps> = ({
     setHasError(false);
   }, [uri]);
 
-  const cleanUri = uri?.trim();
+  const cleanUri = String(uri || '').trim();
   const isValidUrl = Boolean(
     cleanUri &&
       cleanUri.length > 8 &&

@@ -209,7 +209,7 @@ export function parseM3U(content: string): MediaItem[] {
       if (line.length > 5) {
         const country = currentItem.country || '';
         const groupTitle = currentItem.groupTitle || 'General';
-        const lowerUrl = line.toLowerCase();
+        const lowerUrl = String(line || '').toLowerCase();
         const isVod =
           country === 'أفلام عالمية' ||
           groupTitle === 'أفلام رائجة' ||
@@ -256,7 +256,7 @@ export async function fetchAndParseM3U(
       throw new Error('رابط قائمة التشغيل غير صالح أو فارغ');
     }
 
-    const cleanUrl = playlistUrl.trim();
+    const cleanUrl = String(playlistUrl || '').trim();
     // روابط خادمنا السحابي (workers.dev) تدعم CORS مباشرة ولا يجوز تغليفها بالبروكسي
     const isDirectServer = cleanUrl.includes('workers.dev') || cleanUrl.includes('iptv-backend');
     const finalUrl = useProxy && !isDirectServer ? `${proxyPrefix}${encodeURIComponent(cleanUrl)}` : cleanUrl;

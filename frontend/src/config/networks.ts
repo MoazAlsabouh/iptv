@@ -161,13 +161,15 @@ export function matchChannelToNetwork(
   channel: MediaItem,
   network: ChannelNetwork
 ): boolean {
-  const name = (channel.name || '').toLowerCase();
-  const group = (channel.groupTitle || '').toLowerCase();
+  if (!channel || !network || !Array.isArray(network.keywords)) return false;
+  const name = String(channel.name || '').toLowerCase();
+  const group = String(channel.groupTitle || '').toLowerCase();
 
   return network.keywords.some((kw) => {
+    if (!kw || typeof kw !== 'string') return false;
     const k = kw.trim().toLowerCase();
     if (!k) return false;
-    return name.includes(k) || group.includes(k);
+    return (name || '').includes(k) || (group || '').includes(k);
   });
 }
 

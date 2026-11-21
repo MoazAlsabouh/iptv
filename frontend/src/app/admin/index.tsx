@@ -837,7 +837,7 @@ export default function AdminScreen(): React.JSX.Element {
         isTv: true,
       };
     }
-    if (tmdbId.includes('tv') || tmdbId.startsWith('tmdb-tv-')) {
+    if (String(tmdbId || '').includes('tv') || String(tmdbId || '').startsWith('tmdb-tv-')) {
       return {
         scope: 'series' as const,
         season: null,
@@ -1505,7 +1505,7 @@ export default function AdminScreen(): React.JSX.Element {
     if (!channelSearchQuery.trim()) return allM3uChannels.slice(0, 50);
     const q = channelSearchQuery.trim().toLowerCase();
     return allM3uChannels
-      .filter((c) => c.name.toLowerCase().includes(q) || (c.groupTitle && c.groupTitle.toLowerCase().includes(q)))
+      .filter((c) => String(c?.name || '').toLowerCase().includes(q) || (c?.groupTitle && String(c.groupTitle).toLowerCase().includes(q)))
       .slice(0, 50);
   }, [allM3uChannels, channelSearchQuery]);
 
@@ -1514,9 +1514,9 @@ export default function AdminScreen(): React.JSX.Element {
     const q = overrideFilterQuery.trim().toLowerCase();
     return channelOverrides.filter(
       (c) =>
-        (c.name && c.name.toLowerCase().includes(q)) ||
-        (c.category && c.category.toLowerCase().includes(q)) ||
-        c.id.toLowerCase().includes(q)
+        (c?.name && String(c.name).toLowerCase().includes(q)) ||
+        (c?.category && String(c.category).toLowerCase().includes(q)) ||
+        String(c?.id || '').toLowerCase().includes(q)
     );
   }, [channelOverrides, overrideFilterQuery]);
 
@@ -1851,9 +1851,9 @@ export default function AdminScreen(): React.JSX.Element {
       const q = searchQuery.trim().toLowerCase();
       result = result.filter(
         (c) =>
-          c.code.toLowerCase().includes(q) ||
-          (c.note && c.note.toLowerCase().includes(q)) ||
-          (c.resellerName && c.resellerName.toLowerCase().includes(q))
+          String(c?.code || '').toLowerCase().includes(q) ||
+          (c?.note && String(c.note).toLowerCase().includes(q)) ||
+          (c?.resellerName && String(c.resellerName).toLowerCase().includes(q))
       );
     }
     return result;

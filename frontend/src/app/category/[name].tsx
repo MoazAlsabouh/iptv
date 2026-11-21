@@ -145,7 +145,7 @@ export default function CategoryChannelsScreen(): React.JSX.Element {
               : categoryName || 'التصنيف'}
           </Text>
           <Text style={styles.channelCount}>
-            {filteredChannels.length} {categoryName.includes('أفلام') ? 'فيلم متاح' : 'قناة متاحة'}
+            {filteredChannels.length} {String(categoryName || '').includes('أفلام') ? 'فيلم متاح' : 'قناة متاحة'}
           </Text>
         </View>
       </View>

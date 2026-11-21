@@ -30,7 +30,8 @@ interface MainLayoutProps {
  */
 export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const router = useRouter();
-  const currentPath = usePathname();
+  const rawPath = usePathname();
+  const currentPath = String(rawPath || '');
   const isChildMode = useAppStore((state) => state.isChildMode);
   const insets = useSafeAreaInsets();
 
@@ -75,7 +76,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               const isActive =
                 item.route === '/home'
                   ? currentPath === '/home' || currentPath.startsWith('/category')
-                  : currentPath === item.route || currentPath.startsWith(item.route);
+                  : currentPath === item.route || (item.route !== '/' && currentPath.startsWith(item.route));
 
               return (
                 <Pressable

@@ -124,27 +124,29 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
   const onLevelsLoadedRef = useRef(onLevelsLoaded);
   onLevelsLoadedRef.current = onLevelsLoaded;
 
+  const safeStreamUrl = String(streamUrl || '');
+
   const isYouTube =
     streamType === 'youtube' ||
-    streamUrl.includes('youtube.com') ||
-    streamUrl.includes('youtu.be');
+    safeStreamUrl.includes('youtube.com') ||
+    safeStreamUrl.includes('youtu.be');
 
   const isEmbedUrl =
     streamType === 'youtube' ||
     streamType === 'iframe' ||
     isYouTube ||
-    streamUrl.includes('/embed/') ||
-    streamUrl.includes('vidsrc') ||
-    streamUrl.includes('vidlink.pro') ||
-    streamUrl.includes('embed.su') ||
-    streamUrl.includes('autoembed') ||
-    streamUrl.includes('2embed') ||
-    streamUrl.includes('dailymotion.com') ||
-    streamUrl.includes('player.');
+    safeStreamUrl.includes('/embed/') ||
+    safeStreamUrl.includes('vidsrc') ||
+    safeStreamUrl.includes('vidlink.pro') ||
+    safeStreamUrl.includes('embed.su') ||
+    safeStreamUrl.includes('autoembed') ||
+    safeStreamUrl.includes('2embed') ||
+    safeStreamUrl.includes('dailymotion.com') ||
+    safeStreamUrl.includes('player.');
 
   const finalEmbedUrl = React.useMemo(() => {
-    if (!isEmbedUrl) return streamUrl;
-    let url = streamUrl;
+    if (!isEmbedUrl) return safeStreamUrl;
+    let url = safeStreamUrl;
 
     if (isYouTube) {
       url = normalizeYouTubeEmbedUrl(url);
@@ -155,11 +157,11 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
       .replace(/([?&])(?:mute|muted)=(?:1|true|yes)(&|$)/gi, '$1')
       .replace(/[?&]$/, '');
 
-    if (isYouTube && !url.includes('enablejsapi=1')) {
-      url = url + (url.includes('?') ? '&' : '?') + 'enablejsapi=1';
+    if (isYouTube && url && !String(url).includes('enablejsapi=1')) {
+      url = url + (String(url).includes('?') ? '&' : '?') + 'enablejsapi=1';
     }
     return url;
-  }, [streamUrl, isEmbedUrl, isYouTube]);
+  }, [safeStreamUrl, isEmbedUrl, isYouTube]);
 
   // استماع لرسائل أخطاء يوتيوب (postMessage) من الـ iframe للتنقل التلقائي عند الحظر أو تقييد العمر
   useEffect(() => {
@@ -171,7 +173,7 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
       try {
         if (
           event.origin &&
-          (event.origin.includes('youtube.com') || event.origin.includes('youtube-nocookie.com'))
+          (String(event.origin).includes('youtube.com') || String(event.origin).includes('youtube-nocookie.com'))
         ) {
           let data = event.data;
           if (typeof data === 'string') {
@@ -321,10 +323,11 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
     const loadHlsStream = (urlToLoad: string) => {
       resetPlaybackTimeout();
 
+      const safeUrl = String(urlToLoad || '');
       const isM3u8 =
-        urlToLoad.toLowerCase().includes('.m3u8') ||
-        urlToLoad.includes('playlist') ||
-        urlToLoad.includes('/api/proxy');
+        safeUrl.toLowerCase().includes('.m3u8') ||
+        safeUrl.includes('playlist') ||
+        safeUrl.includes('/api/proxy');
 
       if (isM3u8 && Hls.isSupported()) {
         const hls = new Hls({

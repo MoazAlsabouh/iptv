@@ -637,7 +637,7 @@ const PosterSlider: React.FC<PosterSliderProps> = ({
                 key={`item-${config.id}-${item.id}-${idx}`}
                 item={item}
                 onSelect={onSelect}
-                isFav={favoriteIds.includes(item.id)}
+                isFav={Boolean(item?.id && Array.isArray(favoriteIds) && favoriteIds.includes(item.id))}
                 onToggleFav={onToggleFav}
                 hasTVPreferredFocus={hasTVPreferredFocus && idx === 0}
               />
@@ -1039,7 +1039,7 @@ export default function MoviesScreen(): React.JSX.Element {
                       key={`search-${item.id}-${idx}`}
                       item={item}
                       onSelect={handleSelect}
-                      isFav={favoriteIds.includes(item.id)}
+                      isFav={Boolean(item?.id && Array.isArray(favoriteIds) && favoriteIds.includes(item.id))}
                       onToggleFav={handleToggleFav}
                       width={gridCardWidth}
                       hasTVPreferredFocus={idx === 0}

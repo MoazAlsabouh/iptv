@@ -91,7 +91,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setPlaylistUrl: (playlistUrl: string) => set({ playlistUrl }),
 
   isItemFavorite: (id: string) => {
-    return get().favoriteIds.includes(id);
+    return Array.isArray(get().favoriteIds) ? get().favoriteIds.includes(id) : false;
   },
 
   loadFavoritesFromStorage: async () => {
@@ -174,7 +174,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     const itemId = isObj ? target.id : target;
     if (!itemId) return;
 
-    const { favoriteIds, vodFavorites, channelFavorites } = get();
+    const rawFavs = get().favoriteIds;
+    const favoriteIds = Array.isArray(rawFavs) ? rawFavs : [];
     const isCurrentlyFav = favoriteIds.includes(itemId);
 
     let itemType: 'channel' | 'vod' = 'channel';

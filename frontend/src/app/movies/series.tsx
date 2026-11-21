@@ -109,7 +109,9 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
       : 'تفاصيل المسلسل';
   }, [params.title]);
 
-  const { favoriteIds, toggleFavorite } = useAppStore();
+  const rawFavs = useAppStore((state) => state.favoriteIds);
+  const favoriteIds = Array.isArray(rawFavs) ? rawFavs : [];
+  const toggleFavorite = useAppStore((state) => state.toggleFavorite);
   const isFavorite = Boolean(params.id && favoriteIds.includes(params.id));
 
   const seriesPoster = useMemo(() => {

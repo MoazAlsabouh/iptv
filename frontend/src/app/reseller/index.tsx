@@ -293,8 +293,8 @@ export default function ResellerPortalScreen(): React.JSX.Element {
       const q = searchQuery.trim().toLowerCase();
       result = result.filter(
         (c) =>
-          c.code.toLowerCase().includes(q) ||
-          (c.note && c.note.toLowerCase().includes(q))
+          String(c?.code || '').toLowerCase().includes(q) ||
+          (c?.note && String(c.note).toLowerCase().includes(q))
       );
     }
     return result;

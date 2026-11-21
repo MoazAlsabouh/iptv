@@ -21,7 +21,7 @@ const RESTRICTED_KEYWORDS: string[] = ['action', 'horror', 'adult', 'news', '18+
  * فحص ما إذا كان التصنيف يحتوي على محتوى مقيد للأطفال
  */
 function isRestrictedCategory(categoryName: string): boolean {
-  const lower = categoryName.toLowerCase();
+  const lower = String(categoryName || '').toLowerCase();
   return RESTRICTED_KEYWORDS.some((keyword) => lower.includes(keyword));
 }
 
@@ -114,15 +114,16 @@ export function isVodItem(item: MediaItem): boolean {
     return true;
   }
   const group = (item.groupTitle || '').trim();
+  const lowerGroup = group.toLowerCase();
   if (
     group === 'أفلام رائجة' ||
     group === 'أفلام عالمية' ||
-    group.toLowerCase() === 'vod' ||
-    group.toLowerCase().includes('vod')
+    lowerGroup === 'vod' ||
+    lowerGroup.includes('vod')
   ) {
     return true;
   }
-  const url = (item.url || '').toLowerCase();
+  const url = String(item.url || '').toLowerCase();
   // ملفات الفيديو المسجلة (mp4, mkv, webm, sample) التي لا تمثل بثاً حياً (.m3u8)
   if (
     (url.endsWith('.mp4') || url.endsWith('.mkv') || url.endsWith('.webm') || url.includes('/sample/')) &&
@@ -219,7 +220,7 @@ export function useMediaData() {
   const isChildMode = useAppStore((state) => state.isChildMode);
   const { token, isLoading: isAuthLoading } = useAuth();
 
-  const isBackendUrl = !playlistUrl || playlistUrl.includes('workers.dev') || playlistUrl.includes('iptv-backend');
+  const isBackendUrl = !playlistUrl || (playlistUrl || '').includes('workers.dev') || (playlistUrl || '').includes('iptv-backend');
   const isQueryEnabled = Boolean(
     playlistUrl &&
     playlistUrl.trim().length > 0 &&
@@ -234,7 +235,7 @@ export function useMediaData() {
     staleTime: 1000 * 60 * 5, // 5 دقائق
     retry: (failureCount, error) => {
       // لا تعيد المحاولة في حال انتهاء الاشتراك أو عدم التفعيل
-      if (error?.message?.includes('الاشتراك')) {
+      if (error && error.message && typeof error.message === 'string' && error.message.includes('الاشتراك')) {
         return false;
       }
       return failureCount < 2;

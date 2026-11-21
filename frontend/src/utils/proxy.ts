@@ -16,7 +16,7 @@ export const BACKEND_PROXY_URL = 'https://iptv-backend.moaznsm.workers.dev/api/p
  */
 export function shouldAutoProxy(url?: string | null): boolean {
   if (!url) return false;
-  const lower = url.trim().toLowerCase();
+  const lower = String(url || '').trim().toLowerCase();
 
   // على بيئة الويب العاملة ببروتوكول HTTPS، المتصفح يحظر أي طلب غير مشفر http:// تلقائياً كـ Mixed Content
   if (

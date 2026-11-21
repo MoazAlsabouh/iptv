@@ -43,12 +43,11 @@ export default function DashboardScreen(): React.JSX.Element {
   const { width } = useWindowDimensions();
   const isWide = width >= 900;
 
-  const {
-    playlistUrl,
-    setPlaylistUrl,
-    favoriteIds,
-    toggleFavorite,
-  } = useAppStore();
+  const rawFavoriteIds = useAppStore((state) => state.favoriteIds);
+  const favoriteIds = Array.isArray(rawFavoriteIds) ? rawFavoriteIds : [];
+  const toggleFavorite = useAppStore((state) => state.toggleFavorite);
+  const playlistUrl = useAppStore((state) => state.playlistUrl);
+  const setPlaylistUrl = useAppStore((state) => state.setPlaylistUrl);
 
   useEffect(() => {
     if (!playlistUrl || playlistUrl.trim().length === 0) {
@@ -165,7 +164,7 @@ export default function DashboardScreen(): React.JSX.Element {
     let list: MediaItem[] = [];
 
     if (selectedGroup.type === 'favorites') {
-      list = channels.filter((ch) => favoriteIds.includes(ch.id));
+      list = channels.filter((ch) => ch?.id && favoriteIds.includes(ch.id));
     } else if (selectedGroup.type === 'all') {
       list = channels;
     } else if (selectedGroup.type === 'network') {
@@ -180,9 +179,9 @@ export default function DashboardScreen(): React.JSX.Element {
       );
     }
 
-    if (searchQuery.trim().length > 0) {
+    if (searchQuery && searchQuery.trim().length > 0) {
       const q = searchQuery.trim().toLowerCase();
-      list = list.filter((ch) => ch.name.toLowerCase().includes(q));
+      list = list.filter((ch) => (ch?.name || '').toLowerCase().includes(q));
     }
 
     return list;
@@ -441,7 +440,7 @@ export default function DashboardScreen(): React.JSX.Element {
                 windowSize={15}
                 renderItem={({ item, index }) => {
                   const isPreviewing = previewChannel?.id === item.id;
-                  const isFav = favoriteIds.includes(item.id);
+                  const isFav = Boolean(item?.id && favoriteIds.includes(item.id));
                   const channelNum = String(index + 1).padStart(3, '0');
 
                   return (
@@ -581,30 +580,37 @@ export default function DashboardScreen(): React.JSX.Element {
                       <Text style={styles.fullscreenBtnText}>مشاهدة بملء الشاشة</Text>
                     </Pressable>
 
-                    <Pressable
-                      focusable={true}
-                      accessible={true}
-                      style={({ focused }) => [
-                        styles.favToggleBtn,
-                        favoriteIds.includes(previewChannel.id) && styles.favToggleBtnActive,
-                        focused && styles.focusHighlight,
-                      ]}
-                      onPress={() => toggleFavorite(previewChannel.id)}
-                    >
-                      <MaterialIcons
-                        name={favoriteIds.includes(previewChannel.id) ? 'star' : 'star-border'}
-                        size={20}
-                        color={favoriteIds.includes(previewChannel.id) ? '#eab308' : '#94a3b8'}
-                      />
-                      <Text
-                        style={[
-                          styles.favToggleBtnText,
-                          favoriteIds.includes(previewChannel.id) && { color: '#eab308', fontWeight: '700' },
-                        ]}
-                      >
-                        {favoriteIds.includes(previewChannel.id) ? 'في المفضلة' : 'إضافة للمفضلة'}
-                      </Text>
-                    </Pressable>
+                    {(() => {
+                      const isPreviewFav = Boolean(
+                        previewChannel?.id && favoriteIds.includes(previewChannel.id)
+                      );
+                      return (
+                        <Pressable
+                          focusable={true}
+                          accessible={true}
+                          style={({ focused }) => [
+                            styles.favToggleBtn,
+                            isPreviewFav && styles.favToggleBtnActive,
+                            focused && styles.focusHighlight,
+                          ]}
+                          onPress={() => previewChannel?.id && toggleFavorite(previewChannel.id)}
+                        >
+                          <MaterialIcons
+                            name={isPreviewFav ? 'star' : 'star-border'}
+                            size={20}
+                            color={isPreviewFav ? '#eab308' : '#94a3b8'}
+                          />
+                          <Text
+                            style={[
+                              styles.favToggleBtnText,
+                              isPreviewFav && { color: '#eab308', fontWeight: '700' },
+                            ]}
+                          >
+                            {isPreviewFav ? 'في المفضلة' : 'إضافة للمفضلة'}
+                          </Text>
+                        </Pressable>
+                      );
+                    })()}
                   </View>
 
                   {/* إرشادات التحكم بالريموت */}
