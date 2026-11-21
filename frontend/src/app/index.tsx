@@ -13,14 +13,13 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, BACKEND_BASE_URL } from '../context/AuthContext';
 
 /**
- * روابط تحميل التطبيقات المباشرة
- * (ضع الرابط المباشر لملف APK عند توفره، وسيفتح فوراً للمستخدم)
+ * رابط تحميل ملف APK الافتراضي ورقم الإصدار
  */
-export const SMART_TV_DOWNLOAD_URL = '';
-export const MOBILE_DOWNLOAD_URL = '';
+export const DEFAULT_DOWNLOAD_URL = 'https://github.com/MoazAlsabouh/iptv/releases/latest/download/telfazi.apk';
+export const DEFAULT_VERSION_NAME = '1.0.3';
 
 export default function LandingPage(): React.JSX.Element {
   const router = useRouter();
@@ -31,6 +30,21 @@ export default function LandingPage(): React.JSX.Element {
 
   const { token } = useAuth();
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [downloadUrl, setDownloadUrl] = useState<string>(DEFAULT_DOWNLOAD_URL);
+  const [versionName, setVersionName] = useState<string>(DEFAULT_VERSION_NAME);
+
+  // جلب رابط وأحدث إصدار من السيرفر
+  useEffect(() => {
+    fetch(`${BACKEND_BASE_URL}/api/app-version`, { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.downloadUrl) setDownloadUrl(data.downloadUrl);
+        if (data?.latestVersionName) setVersionName(data.latestVersionName);
+      })
+      .catch((err) => {
+        console.warn('[LandingPage] Failed to fetch app version:', err);
+      });
+  }, []);
 
   // تجاوز صفحة الهبوط فوراً في تطبيق الأندرويد/التلفاز الأصلي
   useEffect(() => {
@@ -75,30 +89,33 @@ export default function LandingPage(): React.JSX.Element {
     }
   };
 
-  // معالجة تحميل تطبيق الشاشات الذكية
-  const handleDownloadSmartTV = () => {
-    if (SMART_TV_DOWNLOAD_URL && SMART_TV_DOWNLOAD_URL.trim().length > 0) {
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.open(SMART_TV_DOWNLOAD_URL, '_blank');
-      } else {
-        Linking.openURL(SMART_TV_DOWNLOAD_URL);
+  // معالجة تحميل ملف APK المباشر (للشاشات والموبايل)
+  const handleDownloadApk = () => {
+    const targetUrl = downloadUrl || DEFAULT_DOWNLOAD_URL;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      try {
+        const link = document.createElement('a');
+        link.href = targetUrl;
+        link.setAttribute('download', 'telfazi.apk');
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } catch {
+        window.open(targetUrl, '_blank');
       }
     } else {
-      showToast('جاري تجهيز النسخة وسيتم رفع رابط التحميل قريباً');
+      Linking.openURL(targetUrl);
     }
   };
 
-  // معالجة تحميل تطبيق الموبايل
+  const handleDownloadSmartTV = () => {
+    handleDownloadApk();
+  };
+
   const handleDownloadMobile = () => {
-    if (MOBILE_DOWNLOAD_URL && MOBILE_DOWNLOAD_URL.trim().length > 0) {
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.open(MOBILE_DOWNLOAD_URL, '_blank');
-      } else {
-        Linking.openURL(MOBILE_DOWNLOAD_URL);
-      }
-    } else {
-      showToast('جاري تجهيز النسخة وسيتم رفع رابط التحميل قريباً');
-    }
+    handleDownloadApk();
   };
 
   return (
@@ -255,11 +272,10 @@ export default function LandingPage(): React.JSX.Element {
                 <View style={styles.downloadIconWrap}>
                   <MaterialIcons name="tv" size={36} color="#38bdf8" />
                 </View>
-                {!SMART_TV_DOWNLOAD_URL && (
-                  <View style={styles.comingSoonBadge}>
-                    <Text style={styles.comingSoonText}>قريباً</Text>
-                  </View>
-                )}
+                <View style={[styles.versionBadge, { backgroundColor: 'rgba(14, 165, 233, 0.15)', borderColor: 'rgba(14, 165, 233, 0.35)' }]}>
+                  <MaterialIcons name="verified" size={13} color="#38bdf8" />
+                  <Text style={[styles.versionBadgeText, { color: '#38bdf8' }]}>الإصدار v{versionName}</Text>
+                </View>
               </View>
 
               <Text style={styles.downloadCardTitle}>شاشات أندرويد والتلفاز الذكي</Text>
@@ -303,9 +319,13 @@ export default function LandingPage(): React.JSX.Element {
                     >
                       تحميل نسخة الشاشات (APK)
                     </Text>
+                    <View style={[styles.btnVersionTag, { backgroundColor: 'rgba(56, 189, 248, 0.15)' }, focused && { backgroundColor: 'rgba(11, 17, 32, 0.2)' }]}>
+                      <Text style={[styles.btnVersionText, { color: '#38bdf8' }, focused && { color: '#070b14' }]}>v{versionName}</Text>
+                    </View>
                   </>
                 )}
               </Pressable>
+              <Text style={styles.downloadSubMeta}>ملف APK مباشر • v{versionName} • متوافق مع الريموت</Text>
             </View>
 
             {/* بطاقة الهواتف الذكية */}
@@ -314,11 +334,10 @@ export default function LandingPage(): React.JSX.Element {
                 <View style={[styles.downloadIconWrap, { backgroundColor: 'rgba(129, 140, 248, 0.15)' }]}>
                   <MaterialIcons name="smartphone" size={36} color="#818cf8" />
                 </View>
-                {!MOBILE_DOWNLOAD_URL && (
-                  <View style={[styles.comingSoonBadge, { backgroundColor: 'rgba(129, 140, 248, 0.2)', borderColor: 'rgba(129, 140, 248, 0.4)' }]}>
-                    <Text style={[styles.comingSoonText, { color: '#a5b4fc' }]}>قريباً</Text>
-                  </View>
-                )}
+                <View style={[styles.versionBadge, { backgroundColor: 'rgba(129, 140, 248, 0.15)', borderColor: 'rgba(129, 140, 248, 0.35)' }]}>
+                  <MaterialIcons name="verified" size={13} color="#818cf8" />
+                  <Text style={[styles.versionBadgeText, { color: '#818cf8' }]}>الإصدار v{versionName}</Text>
+                </View>
               </View>
 
               <Text style={styles.downloadCardTitle}>الهواتف والأجهزة اللوحية</Text>
@@ -362,11 +381,15 @@ export default function LandingPage(): React.JSX.Element {
                         focused && styles.downloadBtnTextFocused,
                       ]}
                     >
-                      تحميل نسخة الموبايل (APK)
+                      تحميل نسخة المحمول (APK)
                     </Text>
+                    <View style={[styles.btnVersionTag, focused && { backgroundColor: 'rgba(11, 17, 32, 0.2)' }]}>
+                      <Text style={[styles.btnVersionText, focused && { color: '#070b14' }]}>v{versionName}</Text>
+                    </View>
                   </>
                 )}
               </Pressable>
+              <Text style={styles.downloadSubMeta}>ملف APK مباشر • v{versionName} • أندرويد 6.0 وما فوق</Text>
             </View>
           </View>
         </View>
@@ -831,6 +854,37 @@ const styles = StyleSheet.create({
   },
   downloadBtnTextFocused: {
     color: '#0B1120',
+  },
+  versionBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  versionBadgeText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  btnVersionTag: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: 'rgba(129, 140, 248, 0.15)',
+    marginLeft: 4,
+  },
+  btnVersionText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#818cf8',
+  },
+  downloadSubMeta: {
+    fontSize: 12,
+    color: '#94a3b8',
+    textAlign: 'center',
+    marginTop: 8,
   },
 
   // قسم المميزات

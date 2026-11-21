@@ -53,7 +53,7 @@ export const DEFAULT_APP_VERSION = {
   latestVersionCode: 3,
   minSupportedVersionCode: 3,
   latestVersionName: '1.0.3',
-  downloadUrl: 'https://tv.moazns.sy/telfazi.apk',
+  downloadUrl: 'https://github.com/MoazAlsabouh/iptv/releases/latest/download/telfazi.apk',
   message: 'يتوفر إصدار جديد من تلفازي يتضمن تحسينات في الأداء والمشغّل.',
 };
 
