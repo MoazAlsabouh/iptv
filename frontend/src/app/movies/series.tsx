@@ -5,10 +5,10 @@ import {
   Pressable,
   Image,
   ScrollView,
-  FlatList,
   ActivityIndicator,
   StyleSheet,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -236,10 +236,20 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
     return found?.episodes || [];
   }, [seasons, selectedSeason]);
 
+  const { width, height } = useWindowDimensions();
+  const isLandscapeShort = height < 520;
+  const numCols = width > 950 ? 3 : width > 600 ? 2 : 1;
+  const epColWidth = `${100 / numCols}%` as any;
+
   return (
-    <View style={styles.container}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.scrollContent}
+      nestedScrollEnabled={true}
+      showsVerticalScrollIndicator={true}
+    >
       {/* 1. رأس سينمائي كبير (Hero Header) */}
-      <View style={styles.heroSection}>
+      <View style={[styles.heroSection, isLandscapeShort && styles.heroSectionLandscape]}>
         {seriesBackdrop || seriesPoster ? (
           <Image
             source={{ uri: seriesBackdrop || seriesPoster }}
@@ -274,17 +284,22 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
         </View>
 
         {/* تفاصيل العمل في مقدمة الهيرو */}
-        <View style={styles.heroContent}>
-          <View style={styles.posterThumb}>
+        <View style={[styles.heroContent, isLandscapeShort && styles.heroContentLandscape]}>
+          <View style={[styles.posterThumb, isLandscapeShort && styles.posterThumbLandscape]}>
             {seriesPoster ? (
               <Image source={{ uri: seriesPoster }} style={styles.thumbImage} resizeMode="cover" />
             ) : (
-              <ChannelLogo uri="" name={seriesTitle} size={90} />
+              <ChannelLogo uri="" name={seriesTitle} size={isLandscapeShort ? 60 : 90} />
             )}
           </View>
 
           <View style={styles.heroInfo}>
-            <Text style={styles.seriesTitle}>{seriesTitle}</Text>
+            <Text
+              style={[styles.seriesTitle, isLandscapeShort && styles.seriesTitleLandscape]}
+              numberOfLines={isLandscapeShort ? 1 : 2}
+            >
+              {seriesTitle}
+            </Text>
 
             <View style={styles.badgesRow}>
               {ratingNum > 0 ? (
@@ -345,7 +360,7 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
             </View>
 
             {seriesOverview ? (
-              <Text numberOfLines={3} style={styles.overviewText}>
+              <Text numberOfLines={isLandscapeShort ? 1 : 3} style={styles.overviewText}>
                 {seriesOverview}
               </Text>
             ) : null}
@@ -400,14 +415,12 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
           <Text style={styles.emptyTitle}>لا تتوفر حلقات لهذا الموسم حالياً</Text>
         </View>
       ) : (
-        <FlatList<EpisodeItem>
-          data={currentEpisodes}
-          keyExtractor={(item) => `ep-${item.season}-${item.number}-${item.id}`}
-          numColumns={3}
-          contentContainerStyle={styles.episodesGrid}
-          showsVerticalScrollIndicator={false}
-          renderItem={({ item }) => (
-            <View style={styles.epCol}>
+        <View style={styles.episodesGridWrap}>
+          {currentEpisodes.map((item) => (
+            <View
+              key={`ep-${item.season}-${item.number}-${item.id}`}
+              style={[styles.epCol, { width: epColWidth }]}
+            >
               <Pressable
                 onPress={() => handlePlayEpisode(item.season, item.number)}
                 style={({ focused }) => [styles.epCard, focused && styles.epCardFocused]}
@@ -434,7 +447,7 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
 
                     {item.summary ? (
                       <Text
-                        numberOfLines={2}
+                        numberOfLines={isLandscapeShort ? 1 : 2}
                         style={[styles.epSummary, focused && styles.epSummaryFocused]}
                       >
                         {item.summary}
@@ -444,10 +457,10 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
                 )}
               </Pressable>
             </View>
-          )}
-        />
+          ))}
+        </View>
       )}
-    </View>
+    </ScrollView>
   );
 }
 
@@ -456,12 +469,19 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0f172a',
   },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 48,
+  },
   heroSection: {
     width: '100%',
     height: 310,
     position: 'relative',
     backgroundColor: '#0b1120',
     overflow: 'hidden',
+  },
+  heroSectionLandscape: {
+    height: 195,
   },
   heroBackdrop: {
     ...StyleSheet.absoluteFillObject,
@@ -526,6 +546,12 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     gap: 22,
   },
+  heroContentLandscape: {
+    bottom: 10,
+    left: 16,
+    right: 16,
+    gap: 14,
+  },
   posterThumb: {
     width: 110,
     height: 165,
@@ -534,6 +560,11 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: 'rgba(255, 255, 255, 0.25)',
     backgroundColor: '#0b1120',
+  },
+  posterThumbLandscape: {
+    width: 72,
+    height: 105,
+    borderRadius: 8,
   },
   thumbImage: {
     width: '100%',
@@ -548,6 +579,10 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#ffffff',
     marginBottom: 8,
+  },
+  seriesTitleLandscape: {
+    fontSize: 20,
+    marginBottom: 4,
   },
   badgesRow: {
     flexDirection: 'row',
@@ -680,12 +715,17 @@ const styles = StyleSheet.create({
     color: '#000000',
     fontWeight: '900',
   },
+  episodesGridWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    padding: 12,
+    paddingBottom: 40,
+  },
   episodesGrid: {
     padding: 16,
     paddingBottom: 40,
   },
   epCol: {
-    flex: 1,
     padding: 8,
   },
   epCard: {

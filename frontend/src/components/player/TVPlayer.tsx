@@ -207,12 +207,15 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
 
   // إعداد hls.js على بيئة الويب وشاشات التلفاز الذكية
   useEffect(() => {
-    if (Platform.OS !== 'web' || !streamUrl) {
-      return;
-    }
-
     if (isEmbedUrl) {
       onBufferingRef.current?.(false);
+      const timer = setTimeout(() => {
+        onBufferingRef.current?.(false);
+      }, 2500);
+      return () => clearTimeout(timer);
+    }
+
+    if (Platform.OS !== 'web' || !streamUrl) {
       return;
     }
 
@@ -513,6 +516,7 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
       <TVEmbedPlayer
         url={finalEmbedUrl}
         style={style}
+        onBuffering={onBuffering}
         onError={onError}
       />
     );

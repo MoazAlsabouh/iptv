@@ -499,6 +499,26 @@ export function PlayerScreen(): React.JSX.Element {
   const [retryKey, setRetryKey] = useState<number>(0);
   const [showOverlay, setShowOverlay] = useState<boolean>(true);
 
+  // مهلة أمان لمؤشر التحميل عند تشغيل الأفلام والمسلسلات أو مشغلات التضمين لمنع بقائه عالقاً
+  useEffect(() => {
+    const sUrl = String(currentStreamUrl || '');
+    const isEmbedOrVod =
+      isVod ||
+      sUrl.includes('/embed/') ||
+      sUrl.includes('vidsrc') ||
+      sUrl.includes('vidlink') ||
+      sUrl.includes('youtube.com') ||
+      sUrl.includes('youtu.be') ||
+      sUrl.includes('archive.org');
+
+    if (isEmbedOrVod && isBuffering) {
+      const timer = setTimeout(() => {
+        setIsBuffering(false);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [currentStreamUrl, activeSourceIndex, isVod, isBuffering]);
+
   const resetOverlayTimer = useCallback(() => {
     setShowOverlay(true);
   }, []);
@@ -1158,6 +1178,8 @@ export function PlayerScreen(): React.JSX.Element {
           <Text style={styles.bufferingText}>
             {activeSourceIndex > 0
               ? 'جاري الاتصال بمصدر بث بديل...'
+              : isVod
+              ? 'جاري تحميل الفيديو...'
               : 'جاري تهيئة البث المباشر...'}
           </Text>
         </View>
