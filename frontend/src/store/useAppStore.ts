@@ -23,6 +23,10 @@ export interface AppState {
   channelFavorites: any[];
   isFavoritesLoaded: boolean;
   activeDashboardTab: 'category' | 'network' | 'country';
+  isSidebarFocused: boolean;
+  focusedSidebarIndex: number;
+  setIsSidebarFocused: (isSidebarFocused: boolean) => void;
+  setFocusedSidebarIndex: (focusedSidebarIndex: number) => void;
   setChildMode: (isChildMode: boolean) => void;
   setPinCode: (pinCode: string | null) => void;
   setPlaylistUrl: (playlistUrl: string) => void;
@@ -85,7 +89,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   channelFavorites: initialFavs.channelFavorites,
   isFavoritesLoaded: false,
   activeDashboardTab: 'category',
+  isSidebarFocused: false,
+  focusedSidebarIndex: 0,
 
+  setIsSidebarFocused: (isSidebarFocused: boolean) => set({ isSidebarFocused }),
+  setFocusedSidebarIndex: (focusedSidebarIndex: number) => set({ focusedSidebarIndex }),
   setChildMode: (isChildMode: boolean) => set({ isChildMode }),
   setPinCode: (pinCode: string | null) => set({ pinCode }),
   setPlaylistUrl: (playlistUrl: string) => set({ playlistUrl }),

@@ -428,6 +428,11 @@ export function PlayerScreen(): React.JSX.Element {
   // 8. القائمة المتداخلة الشفافة فوق البث (Hierarchical Overlay Menu)
   const [showSideMenu, setShowSideMenu] = useState<boolean>(false);
   const [sideMenuLevel, setSideMenuLevel] = useState<'channels' | 'categories'>('channels');
+  const [focusedDrawerChannelIndex, setFocusedDrawerChannelIndex] = useState<number>(0);
+  const [focusedDrawerCategoryIndex, setFocusedDrawerCategoryIndex] = useState<number>(0);
+
+  const drawerChannelsScrollRef = useRef<ScrollView | null>(null);
+  const drawerCategoriesScrollRef = useRef<ScrollView | null>(null);
 
   // مصادر البث المتعددة للقناة أو العمل
   const channelSources: StreamSource[] = useMemo(() => {
@@ -541,6 +546,206 @@ export function PlayerScreen(): React.JSX.Element {
     }
   };
 
+  // مزامنة فهرس العنصر المحدد في القائمة المنبثقة عند فتحها أو تغيير القناة
+  useEffect(() => {
+    if (showSideMenu && !isVod) {
+      if (sideMenuLevel === 'channels') {
+        const curIdx = activeChannelList.findIndex((c) => c.id === effectiveChannelId);
+        if (curIdx >= 0) {
+          setFocusedDrawerChannelIndex(curIdx);
+        }
+      } else {
+        const curCatIdx = navGroups.findIndex((g) => g.name === activeCategoryName);
+        if (curCatIdx >= 0) {
+          setFocusedDrawerCategoryIndex(curCatIdx);
+        }
+      }
+    }
+  }, [showSideMenu, sideMenuLevel, effectiveChannelId, activeCategoryName, activeChannelList, navGroups, isVod]);
+
+  // تمرير تلقائي للقائمة المنبثقة ليبقى العنصر المحدد ظاهراً
+  useEffect(() => {
+    if (showSideMenu && !isVod) {
+      if (sideMenuLevel === 'channels' && focusedDrawerChannelIndex >= 0) {
+        drawerChannelsScrollRef.current?.scrollTo({
+          y: Math.max(0, (focusedDrawerChannelIndex - 2) * 54),
+          animated: true,
+        });
+      } else if (sideMenuLevel === 'categories' && focusedDrawerCategoryIndex >= 0) {
+        drawerCategoriesScrollRef.current?.scrollTo({
+          y: Math.max(0, (focusedDrawerCategoryIndex - 2) * 54),
+          animated: true,
+        });
+      }
+    }
+  }, [showSideMenu, sideMenuLevel, focusedDrawerChannelIndex, focusedDrawerCategoryIndex, isVod]);
+
+  // دوال التحكم بالريموت داخل القائمة المنبثقة
+  const handleDrawerArrowUp = useCallback(() => {
+    if (!showSideMenu || isVod) return false;
+    if (sideMenuLevel === 'channels') {
+      setFocusedDrawerChannelIndex((prev) => Math.max(0, prev - 1));
+    } else {
+      setFocusedDrawerCategoryIndex((prev) => Math.max(0, prev - 1));
+    }
+    return true;
+  }, [showSideMenu, isVod, sideMenuLevel]);
+
+  const handleDrawerArrowDown = useCallback(() => {
+    if (!showSideMenu || isVod) return false;
+    if (sideMenuLevel === 'channels') {
+      setFocusedDrawerChannelIndex((prev) => Math.min(activeChannelList.length - 1, prev + 1));
+    } else {
+      setFocusedDrawerCategoryIndex((prev) => Math.min(navGroups.length - 1, prev + 1));
+    }
+    return true;
+  }, [showSideMenu, isVod, sideMenuLevel, activeChannelList.length, navGroups.length]);
+
+  const handleDrawerArrowRight = useCallback(() => {
+    if (!showSideMenu || isVod) return false;
+    if (sideMenuLevel === 'channels') {
+      setSideMenuLevel('categories');
+      const curCatIdx = navGroups.findIndex((g) => g.name === activeCategoryName);
+      setFocusedDrawerCategoryIndex(curCatIdx >= 0 ? curCatIdx : 0);
+      return true;
+    }
+    return false;
+  }, [showSideMenu, isVod, sideMenuLevel, navGroups, activeCategoryName]);
+
+  const handleDrawerArrowLeft = useCallback(() => {
+    if (!showSideMenu || isVod) return false;
+    if (sideMenuLevel === 'categories') {
+      const targetGrp = navGroups[focusedDrawerCategoryIndex];
+      if (targetGrp) {
+        setActiveCategoryName(targetGrp.name);
+        setActiveCategoryType(targetGrp.type);
+        setSideMenuLevel('channels');
+        setFocusedDrawerChannelIndex(0);
+      }
+      return true;
+    }
+    return false;
+  }, [showSideMenu, isVod, sideMenuLevel, navGroups, focusedDrawerCategoryIndex]);
+
+  const handleDrawerEnter = useCallback(() => {
+    if (!showSideMenu || isVod) return false;
+    if (sideMenuLevel === 'channels') {
+      const targetCh = activeChannelList[focusedDrawerChannelIndex];
+      if (targetCh) {
+        switchLiveChannel(targetCh);
+      }
+    } else {
+      const targetGrp = navGroups[focusedDrawerCategoryIndex];
+      if (targetGrp) {
+        setActiveCategoryName(targetGrp.name);
+        setActiveCategoryType(targetGrp.type);
+        setSideMenuLevel('channels');
+        setFocusedDrawerChannelIndex(0);
+      }
+    }
+    return true;
+  }, [
+    showSideMenu,
+    isVod,
+    sideMenuLevel,
+    activeChannelList,
+    focusedDrawerChannelIndex,
+    navGroups,
+    focusedDrawerCategoryIndex,
+    switchLiveChannel,
+  ]);
+
+  // مستمع لوحة المفاتيح والريموت على الويب لشاشة المشغّل والقائمة المنبثقة
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      resetOverlayTimer();
+
+      if (showSideMenu && !isVod) {
+        switch (e.key) {
+          case 'ArrowUp':
+            e.preventDefault();
+            handleDrawerArrowUp();
+            break;
+          case 'ArrowDown':
+            e.preventDefault();
+            handleDrawerArrowDown();
+            break;
+          case 'ArrowRight':
+            e.preventDefault();
+            handleDrawerArrowRight();
+            break;
+          case 'ArrowLeft':
+            e.preventDefault();
+            handleDrawerArrowLeft();
+            break;
+          case 'Enter':
+          case 'NumpadEnter':
+          case ' ':
+          case 'Select':
+            e.preventDefault();
+            handleDrawerEnter();
+            break;
+          case 'Escape':
+          case 'Backspace':
+          case 'BrowserBack':
+            e.preventDefault();
+            if (sideMenuLevel === 'channels') {
+              setSideMenuLevel('categories');
+            } else {
+              setShowSideMenu(false);
+            }
+            break;
+        }
+        return;
+      }
+
+      // القائمة مغلقة: Zapping أو فتح القائمة
+      if (!isVod && !showQualityModal && !showEpisodesModal) {
+        switch (e.key) {
+          case 'ArrowUp':
+            e.preventDefault();
+            handleZapNext();
+            break;
+          case 'ArrowDown':
+            e.preventDefault();
+            handleZapPrev();
+            break;
+          case 'Enter':
+          case 'NumpadEnter':
+          case 'Select':
+          case 'ArrowRight':
+            e.preventDefault();
+            const curIdx = activeChannelList.findIndex((c) => c.id === effectiveChannelId);
+            setFocusedDrawerChannelIndex(curIdx >= 0 ? curIdx : 0);
+            setSideMenuLevel('channels');
+            setShowSideMenu(true);
+            break;
+        }
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    showSideMenu,
+    isVod,
+    sideMenuLevel,
+    showQualityModal,
+    showEpisodesModal,
+    handleDrawerArrowUp,
+    handleDrawerArrowDown,
+    handleDrawerArrowRight,
+    handleDrawerArrowLeft,
+    handleDrawerEnter,
+    handleZapNext,
+    handleZapPrev,
+    activeChannelList,
+    effectiveChannelId,
+    resetOverlayTimer,
+  ]);
+
   useTVRemoteNavigation({
     onBack: () => {
       if (showSideMenu) {
@@ -574,27 +779,49 @@ export function PlayerScreen(): React.JSX.Element {
       }
     },
     onArrowUp: () => {
+      if (showSideMenu && !isVod) {
+        handleDrawerArrowUp();
+        return;
+      }
       if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal && !showOverlay) {
         handleZapNext();
       }
     },
     onArrowDown: () => {
+      if (showSideMenu && !isVod) {
+        handleDrawerArrowDown();
+        return;
+      }
       if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal && !showOverlay) {
         handleZapPrev();
       }
     },
     onArrowRight: () => {
+      if (showSideMenu && !isVod) {
+        handleDrawerArrowRight();
+        return;
+      }
       if (!isVod && !showQualityModal && !showEpisodesModal) {
-        if (!showSideMenu) {
-          setSideMenuLevel('channels');
-          setShowSideMenu(true);
-        } else if (sideMenuLevel === 'channels') {
-          setSideMenuLevel('categories');
-        }
+        const curIdx = activeChannelList.findIndex((c) => c.id === effectiveChannelId);
+        setFocusedDrawerChannelIndex(curIdx >= 0 ? curIdx : 0);
+        setSideMenuLevel('channels');
+        setShowSideMenu(true);
+      }
+    },
+    onArrowLeft: () => {
+      if (showSideMenu && !isVod) {
+        handleDrawerArrowLeft();
+        return;
       }
     },
     onEnter: () => {
+      if (showSideMenu && !isVod) {
+        handleDrawerEnter();
+        return;
+      }
       if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal && !showOverlay) {
+        const curIdx = activeChannelList.findIndex((c) => c.id === effectiveChannelId);
+        setFocusedDrawerChannelIndex(curIdx >= 0 ? curIdx : 0);
         setSideMenuLevel('channels');
         setShowSideMenu(true);
       }
@@ -1297,7 +1524,7 @@ export function PlayerScreen(): React.JSX.Element {
 
             {/* المستوى 1: قائمة القنوات في القسم الحالي */}
             {sideMenuLevel === 'channels' ? (
-              <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+              <ScrollView ref={drawerChannelsScrollRef} style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
                 {activeChannelList.length === 0 ? (
                   <View style={{ padding: 24, alignItems: 'center' }}>
                     <Text style={{ color: '#64748b', fontSize: 13 }}>لا توجد قنوات في هذا القسم</Text>
@@ -1305,6 +1532,7 @@ export function PlayerScreen(): React.JSX.Element {
                 ) : (
                   activeChannelList.map((ch, idx) => {
                     const isCurrent = ch.id === effectiveChannelId;
+                    const isDrawerFocused = focusedDrawerChannelIndex === idx;
                     const numStr = String(idx + 1).padStart(3, '0');
 
                     return (
@@ -1312,45 +1540,50 @@ export function PlayerScreen(): React.JSX.Element {
                         key={ch.id}
                         focusable={true}
                         accessible={true}
-                        hasTVPreferredFocus={isCurrent}
                         style={({ focused }) => [
                           styles.sideMenuChannelRow,
                           isCurrent && styles.sideMenuChannelRowCurrent,
-                          focused && styles.sideMenuRowFocused,
+                          (isDrawerFocused || focused) && styles.sideMenuRowFocused,
                         ]}
-                        onPress={() => switchLiveChannel(ch)}
+                        onPress={() => {
+                          setFocusedDrawerChannelIndex(idx);
+                          switchLiveChannel(ch);
+                        }}
                       >
-                        {({ focused }) => (
-                          <View style={{ flexDirection: 'row', alignItems: 'center', width: '100%' }}>
-                            <Text style={[styles.sideMenuChannelNum, focused && styles.textFocused]}>
-                              {numStr}
-                            </Text>
+                        {({ focused }) => {
+                          const rowFocused = isDrawerFocused || focused;
+                          return (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', width: '100%' }}>
+                              <Text style={[styles.sideMenuChannelNum, rowFocused && styles.textFocused]}>
+                                {numStr}
+                              </Text>
 
-                            <View style={styles.sideMenuLogoBox}>
-                              <ChannelLogo
-                                uri={ch.logo}
-                                name={ch.name}
-                                size={32}
-                                focused={focused}
-                              />
+                              <View style={styles.sideMenuLogoBox}>
+                                <ChannelLogo
+                                  uri={ch.logo}
+                                  name={ch.name}
+                                  size={32}
+                                  focused={rowFocused}
+                                />
+                              </View>
+
+                              <Text
+                                style={[
+                                  styles.sideMenuChannelName,
+                                  isCurrent && { color: '#10b981', fontWeight: '800' },
+                                  rowFocused && styles.textFocused,
+                                ]}
+                                numberOfLines={1}
+                              >
+                                {ch.name}
+                              </Text>
+
+                              {isCurrent && (
+                                <View style={styles.sideMenuPlayingDot} />
+                              )}
                             </View>
-
-                            <Text
-                              style={[
-                                styles.sideMenuChannelName,
-                                isCurrent && { color: '#10b981', fontWeight: '800' },
-                                focused && styles.textFocused,
-                              ]}
-                              numberOfLines={1}
-                            >
-                              {ch.name}
-                            </Text>
-
-                            {isCurrent && (
-                              <View style={styles.sideMenuPlayingDot} />
-                            )}
-                          </View>
-                        )}
+                          );
+                        }}
                       </Pressable>
                     );
                   })
@@ -1358,54 +1591,59 @@ export function PlayerScreen(): React.JSX.Element {
               </ScrollView>
             ) : (
               /* المستوى 2: قائمة الأقسام والبلدان والسلاسل */
-              <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
-                {navGroups.map((group) => {
+              <ScrollView ref={drawerCategoriesScrollRef} style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+                {navGroups.map((group, idx) => {
                   const isSelected = activeCategoryName === group.name;
+                  const isDrawerFocused = focusedDrawerCategoryIndex === idx;
 
                   return (
                     <Pressable
                       key={group.id}
                       focusable={true}
                       accessible={true}
-                      hasTVPreferredFocus={isSelected}
                       style={({ focused }) => [
                         styles.sideMenuGroupRow,
                         isSelected && styles.sideMenuGroupRowSelected,
-                        focused && styles.sideMenuRowFocused,
+                        (isDrawerFocused || focused) && styles.sideMenuRowFocused,
                       ]}
                       onPress={() => {
+                        setFocusedDrawerCategoryIndex(idx);
                         setActiveCategoryName(group.name);
                         setActiveCategoryType(group.type);
                         setSideMenuLevel('channels');
+                        setFocusedDrawerChannelIndex(0);
                       }}
                     >
-                      {({ focused }) => (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-                            <MaterialIcons
-                              name={group.icon}
-                              size={20}
-                              color={focused ? '#38bdf8' : isSelected ? '#38bdf8' : '#94a3b8'}
-                            />
-                            <Text
-                              style={[
-                                styles.sideMenuGroupName,
-                                isSelected && { color: '#38bdf8', fontWeight: '800' },
-                                focused && styles.textFocused,
-                              ]}
-                              numberOfLines={1}
-                            >
-                              {group.name}
-                            </Text>
-                          </View>
+                      {({ focused }) => {
+                        const rowFocused = isDrawerFocused || focused;
+                        return (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                              <MaterialIcons
+                                name={group.icon}
+                                size={20}
+                                color={rowFocused ? '#38bdf8' : isSelected ? '#38bdf8' : '#94a3b8'}
+                              />
+                              <Text
+                                style={[
+                                  styles.sideMenuGroupName,
+                                  isSelected && { color: '#38bdf8', fontWeight: '800' },
+                                  rowFocused && styles.textFocused,
+                                ]}
+                                numberOfLines={1}
+                              >
+                                {group.name}
+                              </Text>
+                            </View>
 
-                          <View style={styles.sideMenuGroupBadge}>
-                            <Text style={[styles.sideMenuGroupBadgeText, focused && { color: '#38bdf8' }]}>
-                              {group.count}
-                            </Text>
+                            <View style={styles.sideMenuGroupBadge}>
+                              <Text style={[styles.sideMenuGroupBadgeText, rowFocused && { color: '#38bdf8' }]}>
+                                {group.count}
+                              </Text>
+                            </View>
                           </View>
-                        </View>
-                      )}
+                        );
+                      }}
                     </Pressable>
                   );
                 })}
@@ -1925,6 +2163,10 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#38bdf8',
     transform: [{ scale: 1.02 }],
+    shadowColor: '#38bdf8',
+    shadowOpacity: 0.6,
+    shadowRadius: 8,
+    elevation: 6,
   },
   sideMenuChannelNum: {
     width: 32,

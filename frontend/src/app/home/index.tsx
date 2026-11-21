@@ -20,6 +20,7 @@ import { TVPlayer } from '../../components/player/TVPlayer';
 import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 import { MediaItem } from '../../types/media';
 import { DEFAULT_BACKEND_M3U_URL } from '../../utils/m3uParser';
+import { NAV_ITEMS } from '../../components/layout/MainLayout';
 
 type GroupType = 'favorites' | 'all' | 'network' | 'country' | 'category';
 
@@ -68,13 +69,27 @@ export default function DashboardScreen(): React.JSX.Element {
   } = useMediaData();
 
   // الحالة النشطة للأعمدة والتحديد (D-Pad Navigation)
-  const [activePane, setActivePane] = useState<'categories' | 'channels' | 'preview'>('channels');
+  // ترتيب الأعمدة من اليمين إلى اليسار (RTL):
+  // sidebar (أقسام التطبيق) ⇄ categories (أقسام القنوات) ⇄ channels (قائمة القنوات) ⇄ preview (المعاينة)
+  const [activePane, setActivePane] = useState<'sidebar' | 'categories' | 'channels' | 'preview'>('channels');
+  const [focusedSidebarIndex, setFocusedSidebarIndex] = useState<number>(0);
   const [focusedCategoryIndex, setFocusedCategoryIndex] = useState<number>(1);
   const [focusedChannelIndex, setFocusedChannelIndex] = useState<number>(0);
   const [selectedGroupId, setSelectedGroupId] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [previewChannel, setPreviewChannel] = useState<MediaItem | null>(null);
   const [mobileTab, setMobileTab] = useState<'groups' | 'channels' | 'preview'>('channels');
+
+  // مزامنة حالة تركيز الشريط الجانبي مع المتجر العام للتطبيق
+  const setIsSidebarFocused = useAppStore((state) => state.setIsSidebarFocused);
+  const setStoreSidebarIndex = useAppStore((state) => state.setFocusedSidebarIndex);
+
+  useEffect(() => {
+    setIsSidebarFocused(activePane === 'sidebar');
+    if (activePane === 'sidebar') {
+      setStoreSidebarIndex(focusedSidebarIndex);
+    }
+  }, [activePane, focusedSidebarIndex, setIsSidebarFocused, setStoreSidebarIndex]);
 
   // مراجع القوائم للتمرير التلقائي بالريموت
   const categoriesScrollViewRef = useRef<ScrollView | null>(null);
@@ -270,7 +285,9 @@ export default function DashboardScreen(): React.JSX.Element {
 
   // دوال التنقل بالأسهم والمفاتيح
   const handleArrowUp = useCallback(() => {
-    if (activePane === 'categories') {
+    if (activePane === 'sidebar') {
+      setFocusedSidebarIndex((prev) => Math.max(0, prev - 1));
+    } else if (activePane === 'categories') {
       setFocusedCategoryIndex((prev) => Math.max(0, prev - 1));
     } else if (activePane === 'channels') {
       setFocusedChannelIndex((prev) => Math.max(0, prev - 1));
@@ -278,7 +295,9 @@ export default function DashboardScreen(): React.JSX.Element {
   }, [activePane]);
 
   const handleArrowDown = useCallback(() => {
-    if (activePane === 'categories') {
+    if (activePane === 'sidebar') {
+      setFocusedSidebarIndex((prev) => Math.min(NAV_ITEMS.length - 1, prev + 1));
+    } else if (activePane === 'categories') {
       setFocusedCategoryIndex((prev) => Math.min(navGroups.length - 1, prev + 1));
     } else if (activePane === 'channels') {
       setFocusedChannelIndex((prev) => Math.min(activeChannels.length - 1, prev + 1));
@@ -286,17 +305,22 @@ export default function DashboardScreen(): React.JSX.Element {
   }, [activePane, navGroups.length, activeChannels.length]);
 
   const handleArrowRight = useCallback(() => {
-    // في واجهة RTL: التحرك يميناً يعني الانتقال من المعاينة (اليسار) -> القنوات (الوسط) -> الأقسام (اليمين)
+    // في واجهة RTL: التحرك يميناً يعني الانتقال من المعاينة (اليسار) -> القنوات (الوسط) -> الأقسام (اليمين) -> الشريط الجانبي (أقصى اليمين)
     if (activePane === 'preview') {
       setActivePane('channels');
     } else if (activePane === 'channels') {
       setActivePane('categories');
+    } else if (activePane === 'categories') {
+      setActivePane('sidebar');
+      setFocusedSidebarIndex(0);
     }
   }, [activePane]);
 
   const handleArrowLeft = useCallback(() => {
-    // في واجهة RTL: التحرك يساراً يعني الانتقال من الأقسام (اليمين) -> القنوات (الوسط) -> المعاينة (اليسار)
-    if (activePane === 'categories') {
+    // في واجهة RTL: التحرك يساراً يعني الانتقال من الشريط الجانبي -> الأقسام -> القنوات -> المعاينة
+    if (activePane === 'sidebar') {
+      setActivePane('categories');
+    } else if (activePane === 'categories') {
       setActivePane('channels');
     } else if (activePane === 'channels') {
       if (isWide && previewChannel) {
@@ -306,7 +330,16 @@ export default function DashboardScreen(): React.JSX.Element {
   }, [activePane, isWide, previewChannel]);
 
   const handleEnterKey = useCallback(() => {
-    if (activePane === 'categories') {
+    if (activePane === 'sidebar') {
+      const target = NAV_ITEMS[focusedSidebarIndex];
+      if (target) {
+        if (target.route !== '/home') {
+          router.push(target.route as any);
+        } else {
+          setActivePane('categories');
+        }
+      }
+    } else if (activePane === 'categories') {
       const targetGroup = navGroups[focusedCategoryIndex];
       if (targetGroup) {
         setSelectedGroupId(targetGroup.id);
@@ -328,12 +361,14 @@ export default function DashboardScreen(): React.JSX.Element {
     }
   }, [
     activePane,
+    focusedSidebarIndex,
     focusedCategoryIndex,
     focusedChannelIndex,
     navGroups,
     activeChannels,
     previewChannel,
     isWide,
+    router,
     handleOpenFullScreen,
   ]);
 
@@ -408,6 +443,10 @@ export default function DashboardScreen(): React.JSX.Element {
       }
       if (activePane === 'channels') {
         setActivePane('categories');
+        return true;
+      }
+      if (activePane === 'categories') {
+        setActivePane('sidebar');
         return true;
       }
       return false;

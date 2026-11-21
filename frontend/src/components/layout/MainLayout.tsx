@@ -6,17 +6,18 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuth } from '../../context/AuthContext';
 
-interface NavItem {
+export interface NavItem {
   id: string;
   title: string;
   route: string;
   icon: keyof typeof MaterialIcons.glyphMap;
 }
 
-const NAV_ITEMS: NavItem[] = [
+export const NAV_ITEMS: NavItem[] = [
   { id: 'channels', title: 'القنوات التلفزيونية', route: '/home', icon: 'live-tv' },
   { id: 'movies', title: 'الأفلام والمسلسلات', route: '/movies', icon: 'movie' },
   { id: 'favorites', title: 'المفضلة', route: '/favorites', icon: 'star' },
+  { id: 'admin', title: 'الإحصائيات', route: '/admin', icon: 'analytics' },
   { id: 'settings', title: 'الإعدادات', route: '/settings', icon: 'settings' },
 ];
 
@@ -34,6 +35,75 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const currentPath = String(rawPath || '');
   const isChildMode = useAppStore((state) => state.isChildMode);
   const insets = useSafeAreaInsets();
+
+  const isSidebarFocused = useAppStore((state) => state.isSidebarFocused);
+  const focusedSidebarIndex = useAppStore((state) => state.focusedSidebarIndex);
+  const setIsSidebarFocused = useAppStore((state) => state.setIsSidebarFocused);
+  const setFocusedSidebarIndex = useAppStore((state) => state.setFocusedSidebarIndex);
+
+  // إعادة تعيين تركيز الشريط الجانبي عند تغيير المسار
+  useEffect(() => {
+    setIsSidebarFocused(false);
+  }, [currentPath, setIsSidebarFocused]);
+
+  // دعم التنقل بالريموت للشريط الجانبي في الصفحات الأخرى غير /home
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    if (currentPath === '/home' || currentPath === '/') return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const activeEl = document.activeElement;
+      const isInput =
+        activeEl &&
+        (activeEl.tagName === 'INPUT' ||
+          activeEl.tagName === 'TEXTAREA' ||
+          (activeEl as HTMLElement).isContentEditable);
+
+      if (isInput) return;
+
+      if (!isSidebarFocused) {
+        // في واجهة RTL: سهم اليمين ينتقل للشريط الجانبي
+        if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          setIsSidebarFocused(true);
+          const currentIdx = NAV_ITEMS.findIndex((item) =>
+            item.route === '/home' ? currentPath === '/home' : currentPath.startsWith(item.route)
+          );
+          setFocusedSidebarIndex(currentIdx >= 0 ? currentIdx : 0);
+        }
+      } else {
+        switch (e.key) {
+          case 'ArrowUp':
+            e.preventDefault();
+            setFocusedSidebarIndex(Math.max(0, focusedSidebarIndex - 1));
+            break;
+          case 'ArrowDown':
+            e.preventDefault();
+            setFocusedSidebarIndex(Math.min(NAV_ITEMS.length - 1, focusedSidebarIndex + 1));
+            break;
+          case 'ArrowLeft':
+            // سهم اليسار يرجع للمحتوى
+            e.preventDefault();
+            setIsSidebarFocused(false);
+            break;
+          case 'Enter':
+          case 'NumpadEnter':
+          case ' ':
+          case 'Select':
+            e.preventDefault();
+            const target = NAV_ITEMS[focusedSidebarIndex];
+            if (target) {
+              setIsSidebarFocused(false);
+              router.push(target.route as any);
+            }
+            break;
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [currentPath, isSidebarFocused, focusedSidebarIndex, setIsSidebarFocused, setFocusedSidebarIndex, router]);
 
   return (
     <View
@@ -77,6 +147,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 item.route === '/home'
                   ? currentPath === '/home' || currentPath.startsWith('/category')
                   : currentPath === item.route || (item.route !== '/' && currentPath.startsWith(item.route));
+              const isItemFocused = isSidebarFocused && focusedSidebarIndex === index;
 
               return (
                 <Pressable
@@ -86,12 +157,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                   style={({ focused }) => [
                     styles.navItem,
                     isActive && styles.navItemActive,
-                    focused && styles.navItemFocused,
+                    (isItemFocused || focused) && styles.navItemFocused,
                   ]}
                 >
                   {({ focused }) => {
-                    const iconColor = focused
-                      ? '#000000'
+                    const rowFocused = isItemFocused || focused;
+                    const iconColor = rowFocused
+                      ? '#38bdf8'
                       : isActive
                       ? item.id === 'favorites'
                         ? '#eab308'
@@ -105,7 +177,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                           style={[
                             styles.navItemText,
                             isActive && styles.navItemTextActive,
-                            focused && styles.navItemTextFocused,
+                            rowFocused && styles.navItemTextFocused,
                           ]}
                         >
                           {item.title}
@@ -209,10 +281,11 @@ const styles = StyleSheet.create({
     borderColor: '#0EA5E9',
   },
   navItemFocused: {
-    backgroundColor: '#ffffff',
-    borderColor: '#ffffff',
-    transform: [{ scale: 1.06 }],
-    shadowColor: '#0EA5E9',
+    backgroundColor: '#1e293b',
+    borderWidth: 2,
+    borderColor: '#38bdf8',
+    transform: [{ scale: 1.04 }],
+    shadowColor: '#38bdf8',
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.9,
     shadowRadius: 12,
@@ -233,7 +306,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   navItemTextFocused: {
-    color: '#000000',
+    color: '#38bdf8',
     fontWeight: '800',
   },
   sidebarFooter: {
