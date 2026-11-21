@@ -3,6 +3,7 @@
     "name": "تلفازي",
     "slug": "telfazi",
     "version": "1.0.0",
+    "isTV": true,
     "orientation": "landscape",
     "scheme": "telfazi",
     "userInterfaceStyle": "dark",

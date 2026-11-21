@@ -37,6 +37,7 @@ export function PlayerScreen(): React.JSX.Element {
     logo?: string;
     sources?: string;
     type?: string;
+    category?: string;
     tmdbId?: string;
     imdbId?: string;
     season?: string;
@@ -46,7 +47,7 @@ export function PlayerScreen(): React.JSX.Element {
   }>();
 
   const { favoriteIds, toggleFavorite } = useAppStore();
-  const { channels } = useMediaData();
+  const { channels, categories, countries, networks, totalChannels } = useMediaData();
   const { token } = useAuth();
 
   const channelId = useMemo(() => {
@@ -239,6 +240,192 @@ export function PlayerScreen(): React.JSX.Element {
     channelId,
   ]);
 
+  // 1. القناة الحية النشطة (تدعم التبديل اللحظي بالريموت Zapping والقائمة الجانبية)
+  const [liveChannel, setLiveChannel] = useState<MediaItem | null>(() => {
+    if (channels && channels.length > 0 && channelId) {
+      const found = channels.find((c) => c.id === channelId);
+      if (found) return found;
+    }
+    return null;
+  });
+
+  useEffect(() => {
+    if (!liveChannel && channels && channels.length > 0 && channelId) {
+      const found = channels.find((c) => c.id === channelId);
+      if (found) setLiveChannel(found);
+    }
+  }, [channels, channelId, liveChannel]);
+
+  const effectiveChannelId = liveChannel ? liveChannel.id : channelId;
+  const effectiveTitle = liveChannel ? liveChannel.name : channelTitle;
+  const effectiveLogo = liveChannel ? (liveChannel.logo || '') : channelLogo;
+
+  // 2. سياق القسم النشط للتنقل السريع (Zapping)
+  const [activeCategoryName, setActiveCategoryName] = useState<string>(() => {
+    if (params.category) return decodeURIComponent(params.category);
+    return 'جميع القنوات';
+  });
+  const [activeCategoryType, setActiveCategoryType] = useState<
+    'favorites' | 'all' | 'network' | 'country' | 'category'
+  >('all');
+
+  // 3. بناء قائمة المجموعات بشكل ديناميكي مرن (Dynamic Categories/Groups)
+  const navGroups = useMemo(() => {
+    const list: Array<{
+      id: string;
+      type: 'favorites' | 'all' | 'network' | 'country' | 'category';
+      name: string;
+      icon: keyof typeof MaterialIcons.glyphMap;
+      count: number;
+      channels?: MediaItem[];
+    }> = [];
+
+    list.push({
+      id: 'favorites',
+      type: 'favorites',
+      name: 'المفضلة',
+      icon: 'star',
+      count: favoriteIds.length,
+    });
+
+    list.push({
+      id: 'all',
+      type: 'all',
+      name: 'جميع القنوات',
+      icon: 'live-tv',
+      count: totalChannels || channels.length,
+    });
+
+    if (networks && networks.length > 0) {
+      networks.forEach((net) => {
+        list.push({
+          id: `net-${net.name}`,
+          type: 'network',
+          name: net.name,
+          icon: 'hub',
+          count: net.count,
+          channels: net.channels,
+        });
+      });
+    }
+
+    if (countries && countries.length > 0) {
+      countries.forEach((country) => {
+        if (country.name && country.name !== 'أفلام عالمية' && country.name !== 'أفلام رائجة') {
+          list.push({
+            id: `country-${country.name}`,
+            type: 'country',
+            name: country.name,
+            icon: 'flag',
+            count: country.count,
+          });
+        }
+      });
+    }
+
+    if (categories && categories.length > 0) {
+      categories.forEach((cat) => {
+        if (cat.name && cat.name !== 'أفلام عالمية' && cat.name !== 'أفلام رائجة') {
+          list.push({
+            id: `cat-${cat.name}`,
+            type: 'category',
+            name: cat.name,
+            icon: 'folder',
+            count: cat.count,
+          });
+        }
+      });
+    }
+
+    return list;
+  }, [favoriteIds.length, totalChannels, channels.length, networks, countries, categories]);
+
+  // 4. قنوات القسم النشط للـ Zapping
+  const activeChannelList = useMemo<MediaItem[]>(() => {
+    if (!channels || channels.length === 0) return [];
+
+    if (activeCategoryType === 'favorites') {
+      return channels.filter((ch) => favoriteIds.includes(ch.id));
+    }
+    if (activeCategoryType === 'all') {
+      return channels;
+    }
+    if (activeCategoryType === 'network') {
+      const net = networks.find((n) => n.name === activeCategoryName);
+      return net ? net.channels : [];
+    }
+    if (activeCategoryType === 'country') {
+      return channels.filter(
+        (ch) => (ch.country ? ch.country.trim() : 'قنوات عامة') === activeCategoryName
+      );
+    }
+    if (activeCategoryType === 'category') {
+      return channels.filter(
+        (ch) => (ch.groupTitle ? ch.groupTitle.trim() : 'قنوات عامة ومنوعة') === activeCategoryName
+      );
+    }
+    const byGroup = channels.filter(
+      (ch) => ch.groupTitle && ch.groupTitle.trim() === activeCategoryName
+    );
+    if (byGroup.length > 0) return byGroup;
+    return channels;
+  }, [channels, networks, activeCategoryType, activeCategoryName, favoriteIds]);
+
+  // 5. شريط معلومات التبديل السريع (Zapping Banner)
+  const [zapBanner, setZapBanner] = useState<{
+    visible: boolean;
+    channel: MediaItem;
+    numberStr: string;
+  } | null>(null);
+  const zapTimeoutRef = useRef<any>(null);
+
+  const showZapBanner = useCallback((ch: MediaItem, numStr: string) => {
+    if (zapTimeoutRef.current) {
+      clearTimeout(zapTimeoutRef.current);
+    }
+    setZapBanner({ visible: true, channel: ch, numberStr: numStr });
+    zapTimeoutRef.current = setTimeout(() => {
+      setZapBanner(null);
+    }, 3000);
+  }, []);
+
+  // 6. دالة التبديل اللحظي للقناة دون انقطاع البث
+  const switchLiveChannel = useCallback(
+    (ch: MediaItem) => {
+      setLiveChannel(ch);
+      setActiveSourceIndex(0);
+      setPlaybackError(null);
+      setIsBuffering(true);
+      setRetryKey((k) => k + 1);
+
+      const idx = activeChannelList.findIndex((c) => c.id === ch.id);
+      const numStr = String(idx >= 0 ? idx + 1 : 1).padStart(3, '0');
+      showZapBanner(ch, numStr);
+    },
+    [activeChannelList, showZapBanner]
+  );
+
+  // 7. دوال الـ Zapping للقناة التالية والسابقة
+  const handleZapNext = useCallback(() => {
+    if (isVod || activeChannelList.length <= 1) return;
+    const currentIdx = activeChannelList.findIndex((c) => c.id === effectiveChannelId);
+    const nextIdx = (currentIdx + 1) % activeChannelList.length;
+    const nextCh = activeChannelList[nextIdx];
+    switchLiveChannel(nextCh);
+  }, [isVod, activeChannelList, effectiveChannelId, switchLiveChannel]);
+
+  const handleZapPrev = useCallback(() => {
+    if (isVod || activeChannelList.length <= 1) return;
+    const currentIdx = activeChannelList.findIndex((c) => c.id === effectiveChannelId);
+    const prevIdx = (currentIdx - 1 + activeChannelList.length) % activeChannelList.length;
+    const prevCh = activeChannelList[prevIdx];
+    switchLiveChannel(prevCh);
+  }, [isVod, activeChannelList, effectiveChannelId, switchLiveChannel]);
+
+  // 8. القائمة المتداخلة الشفافة فوق البث (Hierarchical Overlay Menu)
+  const [showSideMenu, setShowSideMenu] = useState<boolean>(false);
+  const [sideMenuLevel, setSideMenuLevel] = useState<'channels' | 'categories'>('channels');
+
   // مصادر البث المتعددة للقناة أو العمل
   const channelSources: StreamSource[] = useMemo(() => {
     if (vodSources && vodSources.length > 0) {
@@ -246,6 +433,9 @@ export function PlayerScreen(): React.JSX.Element {
     }
     if (customSources && customSources.length > 0) {
       return customSources;
+    }
+    if (liveChannel && liveChannel.sources && liveChannel.sources.length > 0) {
+      return liveChannel.sources;
     }
     if (params.sources) {
       try {
@@ -258,9 +448,9 @@ export function PlayerScreen(): React.JSX.Element {
         // تجاهل
       }
     }
-    const found = channels.find((c) => c.id === channelId);
+    const found = channels.find((c) => c.id === effectiveChannelId);
     return found?.sources || [];
-  }, [vodSources, customSources, params.sources, channels, channelId]);
+  }, [vodSources, customSources, liveChannel, params.sources, channels, effectiveChannelId]);
 
   const [activeSourceIndex, setActiveSourceIndex] = useState<number>(0);
   const [hlsLevels, setHlsLevels] = useState<HlsLevelOption[]>([]);
@@ -281,11 +471,11 @@ export function PlayerScreen(): React.JSX.Element {
     setActiveSourceIndex(0);
     setPlaybackError(null);
     setIsBuffering(true);
-  }, [channelId]);
+  }, [effectiveChannelId]);
 
   // رابط البث الفعلي بناءً على المصدر المختار
   const currentStreamUrl = useMemo(() => {
-    let url = rawStreamUrl;
+    let url = liveChannel ? liveChannel.streamUrl : rawStreamUrl;
     if (channelSources.length > 0 && channelSources[activeSourceIndex]) {
       url = channelSources[activeSourceIndex].url;
     }
@@ -294,7 +484,7 @@ export function PlayerScreen(): React.JSX.Element {
       return getProxyStreamUrl(url);
     }
     return url;
-  }, [channelSources, activeSourceIndex, rawStreamUrl]);
+  }, [liveChannel, channelSources, activeSourceIndex, rawStreamUrl]);
 
   const [isBuffering, setIsBuffering] = useState<boolean>(true);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
@@ -306,14 +496,14 @@ export function PlayerScreen(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
-    if (!showOverlay || showQualityModal || showEpisodesModal) return;
+    if (!showOverlay || showQualityModal || showEpisodesModal || showSideMenu) return;
 
     const timer = setTimeout(() => {
       setShowOverlay(false);
     }, 5000);
 
     return () => clearTimeout(timer);
-  }, [showOverlay, showQualityModal, showEpisodesModal]);
+  }, [showOverlay, showQualityModal, showEpisodesModal, showSideMenu]);
 
   const handleGoBack = () => {
     if (router.canGoBack()) {
@@ -325,12 +515,60 @@ export function PlayerScreen(): React.JSX.Element {
 
   useTVRemoteNavigation({
     onBack: () => {
+      if (showSideMenu) {
+        if (sideMenuLevel === 'channels') {
+          setSideMenuLevel('categories');
+          return true;
+        } else {
+          setShowSideMenu(false);
+          return true;
+        }
+      }
       if (showEpisodesModal) {
         setShowEpisodesModal(false);
-      } else if (showQualityModal) {
+        return true;
+      }
+      if (showQualityModal) {
         setShowQualityModal(false);
-      } else {
-        handleGoBack();
+        return true;
+      }
+      handleGoBack();
+      return true;
+    },
+    onChannelUp: () => {
+      if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal) {
+        handleZapNext();
+      }
+    },
+    onChannelDown: () => {
+      if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal) {
+        handleZapPrev();
+      }
+    },
+    onArrowUp: () => {
+      if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal && !showOverlay) {
+        handleZapNext();
+      }
+    },
+    onArrowDown: () => {
+      if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal && !showOverlay) {
+        handleZapPrev();
+      }
+    },
+    onArrowRight: () => {
+      if (!isVod && !showQualityModal && !showEpisodesModal) {
+        if (!showSideMenu) {
+          setSideMenuLevel('channels');
+          setShowSideMenu(true);
+        } else if (sideMenuLevel === 'channels') {
+          setSideMenuLevel('categories');
+        }
+      }
+    },
+    onEnter: () => {
+      if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal && !showOverlay) {
+        setSideMenuLevel('channels');
+        setShowSideMenu(true);
       }
     },
     onAnyKey: resetOverlayTimer,
@@ -448,16 +686,16 @@ export function PlayerScreen(): React.JSX.Element {
             </Pressable>
 
             {/* عنوان وشعار القناة أو العمل */}
-            {channelTitle ? (
+            {effectiveTitle ? (
               <View style={styles.titleBadge}>
                 <ChannelLogo
-                  uri={channelLogo}
-                  name={channelTitle}
+                  uri={effectiveLogo}
+                  name={effectiveTitle}
                   size={26}
                   style={styles.playerChannelLogo}
                 />
                 <Text numberOfLines={1} style={styles.titleBadgeText}>
-                  {channelTitle}
+                  {effectiveTitle}
                   {isTvSeries && seasons.length > 0
                     ? ` (الموسم ${selectedSeason} • حلقة ${selectedEpisode})`
                     : ''}
@@ -524,17 +762,50 @@ export function PlayerScreen(): React.JSX.Element {
               </Pressable>
             ) : null}
 
+            {/* زر دليل القنوات والتنقل السريع للقنوات التلفزيونية */}
+            {!isVod && (
+              <Pressable
+                onPress={() => {
+                  setSideMenuLevel('channels');
+                  setShowSideMenu(true);
+                  resetOverlayTimer();
+                }}
+                style={({ focused }) => [
+                  styles.channelsListBtn,
+                  focused && styles.overlayBtnFocused,
+                ]}
+              >
+                {({ focused }) => (
+                  <View style={styles.btnRow}>
+                    <MaterialIcons
+                      name="menu"
+                      size={20}
+                      color={focused ? '#000000' : '#38bdf8'}
+                    />
+                    <Text
+                      style={[
+                        styles.channelsListBtnText,
+                        focused && styles.overlayBtnTextFocused,
+                      ]}
+                    >
+                      دليل القنوات ☰
+                    </Text>
+                  </View>
+                )}
+              </Pressable>
+            )}
+
             {/* زر المفضلة */}
-            {channelId ? (
+            {effectiveChannelId ? (
               <Pressable
                 onPress={() => {
                   toggleFavorite({
-                    id: channelId,
-                    title: channelTitle,
-                    name: channelTitle,
-                    logo: channelLogo,
-                    poster: channelLogo,
-                    url: rawStreamUrl,
+                    id: effectiveChannelId,
+                    title: effectiveTitle,
+                    name: effectiveTitle,
+                    logo: effectiveLogo,
+                    poster: effectiveLogo,
+                    url: currentStreamUrl,
                     type: isVod ? (isTvSeries ? 'tv' : 'movie') : 'channel',
                     tmdbId: params.tmdbId ? Number(params.tmdbId) : undefined,
                     imdbId: params.imdbId,
@@ -578,7 +849,7 @@ export function PlayerScreen(): React.JSX.Element {
           </View>
 
           <View style={styles.helpHint}>
-            <Text style={styles.helpHintText}>الأسهم و OK للتحكم</Text>
+            <Text style={styles.helpHintText}>الأسهم أو CH+/- للتبديل • OK لدليل القنوات</Text>
           </View>
         </View>
       )}
@@ -947,6 +1218,194 @@ export function PlayerScreen(): React.JSX.Element {
           </View>
         </View>
       ) : null}
+
+      {/* 5. قائمة التنقل السريع المتداخلة الشفافة فوق البث (Live Overlay Drawer) */}
+      {showSideMenu && !isVod && (
+        <View style={styles.sideMenuOverlay}>
+          {/* خلفية شفافة قابلة للنقر لإغلاق القائمة */}
+          <Pressable
+            style={StyleSheet.absoluteFillObject}
+            onPress={() => setShowSideMenu(false)}
+          />
+
+          {/* الدرج الجانبي على اليمين RTL */}
+          <View style={styles.sideMenuDrawer}>
+            {/* رأس القائمة */}
+            <View style={styles.sideMenuHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                {sideMenuLevel === 'channels' ? (
+                  <Pressable
+                    style={styles.backToCategoriesBtn}
+                    onPress={() => setSideMenuLevel('categories')}
+                  >
+                    <MaterialIcons name="chevron-right" size={24} color="#38bdf8" />
+                    <Text style={styles.backToCategoriesText}>الأقسام</Text>
+                  </Pressable>
+                ) : (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <MaterialIcons name="dashboard" size={20} color="#38bdf8" />
+                    <Text style={styles.sideMenuTitle}>الأقسام والباقات</Text>
+                  </View>
+                )}
+
+                {sideMenuLevel === 'channels' && (
+                  <Text style={styles.sideMenuSubTitle} numberOfLines={1}>
+                    {activeCategoryName} ({activeChannelList.length})
+                  </Text>
+                )}
+              </View>
+
+              <Pressable
+                style={styles.closeSideMenuBtn}
+                onPress={() => setShowSideMenu(false)}
+              >
+                <MaterialIcons name="close" size={20} color="#94a3b8" />
+              </Pressable>
+            </View>
+
+            {/* المستوى 1: قائمة القنوات في القسم الحالي */}
+            {sideMenuLevel === 'channels' ? (
+              <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+                {activeChannelList.length === 0 ? (
+                  <View style={{ padding: 24, alignItems: 'center' }}>
+                    <Text style={{ color: '#64748b', fontSize: 13 }}>لا توجد قنوات في هذا القسم</Text>
+                  </View>
+                ) : (
+                  activeChannelList.map((ch, idx) => {
+                    const isCurrent = ch.id === effectiveChannelId;
+                    const numStr = String(idx + 1).padStart(3, '0');
+
+                    return (
+                      <Pressable
+                        key={ch.id}
+                        focusable={true}
+                        accessible={true}
+                        hasTVPreferredFocus={isCurrent}
+                        style={({ focused }) => [
+                          styles.sideMenuChannelRow,
+                          isCurrent && styles.sideMenuChannelRowCurrent,
+                          focused && styles.sideMenuRowFocused,
+                        ]}
+                        onPress={() => switchLiveChannel(ch)}
+                      >
+                        {({ focused }) => (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', width: '100%' }}>
+                            <Text style={[styles.sideMenuChannelNum, focused && styles.textFocused]}>
+                              {numStr}
+                            </Text>
+
+                            <View style={styles.sideMenuLogoBox}>
+                              <ChannelLogo
+                                uri={ch.logo}
+                                name={ch.name}
+                                size={32}
+                                focused={focused}
+                              />
+                            </View>
+
+                            <Text
+                              style={[
+                                styles.sideMenuChannelName,
+                                isCurrent && { color: '#10b981', fontWeight: '800' },
+                                focused && styles.textFocused,
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {ch.name}
+                            </Text>
+
+                            {isCurrent && (
+                              <View style={styles.sideMenuPlayingDot} />
+                            )}
+                          </View>
+                        )}
+                      </Pressable>
+                    );
+                  })
+                )}
+              </ScrollView>
+            ) : (
+              /* المستوى 2: قائمة الأقسام والبلدان والسلاسل */
+              <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+                {navGroups.map((group) => {
+                  const isSelected = activeCategoryName === group.name;
+
+                  return (
+                    <Pressable
+                      key={group.id}
+                      focusable={true}
+                      accessible={true}
+                      hasTVPreferredFocus={isSelected}
+                      style={({ focused }) => [
+                        styles.sideMenuGroupRow,
+                        isSelected && styles.sideMenuGroupRowSelected,
+                        focused && styles.sideMenuRowFocused,
+                      ]}
+                      onPress={() => {
+                        setActiveCategoryName(group.name);
+                        setActiveCategoryType(group.type);
+                        setSideMenuLevel('channels');
+                      }}
+                    >
+                      {({ focused }) => (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                            <MaterialIcons
+                              name={group.icon}
+                              size={20}
+                              color={focused ? '#38bdf8' : isSelected ? '#38bdf8' : '#94a3b8'}
+                            />
+                            <Text
+                              style={[
+                                styles.sideMenuGroupName,
+                                isSelected && { color: '#38bdf8', fontWeight: '800' },
+                                focused && styles.textFocused,
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {group.name}
+                            </Text>
+                          </View>
+
+                          <View style={styles.sideMenuGroupBadge}>
+                            <Text style={[styles.sideMenuGroupBadgeText, focused && { color: '#38bdf8' }]}>
+                              {group.count}
+                            </Text>
+                          </View>
+                        </View>
+                      )}
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      )}
+
+      {/* 6. شريط معلومات التبديل السريع (Zapping Quick Banner) */}
+      {zapBanner && zapBanner.visible && (
+        <View style={styles.zapBannerContainer}>
+          <Text style={styles.zapBannerNumber}>{zapBanner.numberStr}</Text>
+          <ChannelLogo
+            uri={zapBanner.channel.logo}
+            name={zapBanner.channel.name}
+            size={42}
+            style={{ borderRadius: 6, backgroundColor: '#0f172a' }}
+          />
+          <View style={{ flex: 1, paddingHorizontal: 10 }}>
+            <Text style={styles.zapBannerTitle} numberOfLines={1}>
+              {zapBanner.channel.name}
+            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+              <View style={styles.greenPulseDot} />
+              <Text style={styles.zapBannerCategory}>
+                {zapBanner.channel.country || zapBanner.channel.groupTitle || activeCategoryName}
+              </Text>
+            </View>
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -1332,6 +1791,216 @@ const styles = StyleSheet.create({
   btnRow: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  channelsListBtn: {
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    borderWidth: 1.5,
+    borderColor: '#38bdf8',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 30,
+  },
+  channelsListBtnText: {
+    color: '#38bdf8',
+    fontSize: 14,
+    fontWeight: '700',
+    marginLeft: 6,
+  },
+  sideMenuOverlay: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    zIndex: 100,
+  },
+  sideMenuDrawer: {
+    width: 380,
+    maxWidth: '85%',
+    height: '100%',
+    backgroundColor: 'rgba(7, 11, 20, 0.95)',
+    borderLeftWidth: 1.5,
+    borderLeftColor: '#1e293b',
+    paddingTop: 24,
+    paddingBottom: 16,
+    paddingHorizontal: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: -4, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 16,
+    elevation: 20,
+  },
+  sideMenuHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingBottom: 14,
+    marginBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1e293b',
+  },
+  sideMenuTitle: {
+    color: '#f8fafc',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  sideMenuSubTitle: {
+    color: '#38bdf8',
+    fontSize: 14,
+    fontWeight: '700',
+    flex: 1,
+  },
+  backToCategoriesBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#38bdf8',
+  },
+  backToCategoriesText: {
+    color: '#38bdf8',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  closeSideMenuBtn: {
+    padding: 6,
+    borderRadius: 20,
+    backgroundColor: '#1e293b',
+  },
+  sideMenuChannelRow: {
+    height: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    marginVertical: 2,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(30, 41, 59, 0.3)',
+  },
+  sideMenuChannelRowCurrent: {
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    borderColor: '#10b981',
+    borderWidth: 1,
+  },
+  sideMenuRowFocused: {
+    backgroundColor: '#1e293b',
+    borderWidth: 2,
+    borderColor: '#38bdf8',
+    transform: [{ scale: 1.02 }],
+  },
+  sideMenuChannelNum: {
+    width: 32,
+    color: '#64748b',
+    fontSize: 12,
+    fontWeight: '700',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  sideMenuLogoBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 6,
+    backgroundColor: '#0f172a',
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+    marginRight: 8,
+  },
+  sideMenuChannelName: {
+    flex: 1,
+    color: '#e2e8f0',
+    fontSize: 13,
+    fontWeight: '600',
+    paddingHorizontal: 6,
+  },
+  sideMenuPlayingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10b981',
+    marginLeft: 6,
+  },
+  sideMenuGroupRow: {
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginVertical: 2,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(30, 41, 59, 0.3)',
+  },
+  sideMenuGroupRowSelected: {
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+    borderColor: '#38bdf8',
+    borderWidth: 1,
+  },
+  sideMenuGroupName: {
+    color: '#cbd5e1',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  sideMenuGroupBadge: {
+    backgroundColor: '#1e293b',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  sideMenuGroupBadgeText: {
+    color: '#94a3b8',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  zapBannerContainer: {
+    position: 'absolute',
+    bottom: 36,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(11, 17, 32, 0.92)',
+    borderWidth: 1.5,
+    borderColor: '#38bdf8',
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    minWidth: 320,
+    maxWidth: '90%',
+    shadowColor: '#38bdf8',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+    elevation: 15,
+    zIndex: 90,
+  },
+  zapBannerNumber: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#38bdf8',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    marginRight: 12,
+  },
+  zapBannerTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#f8fafc',
+  },
+  zapBannerCategory: {
+    fontSize: 11,
+    color: '#94a3b8',
+    fontWeight: '500',
+  },
+  greenPulseDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10b981',
+  },
+  textFocused: {
+    color: '#38bdf8',
+    fontWeight: '800',
   },
 });
 
