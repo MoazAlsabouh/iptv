@@ -50,6 +50,20 @@ export function useTVRemoteNavigation(handlers: TVKeyHandlers) {
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      const activeEl = document.activeElement;
+      const isInput =
+        activeEl &&
+        (activeEl.tagName === 'INPUT' ||
+          activeEl.tagName === 'TEXTAREA' ||
+          (activeEl as HTMLElement).isContentEditable);
+
+      if (isInput) {
+        if (event.key === 'Escape' || event.key === 'ArrowDown') {
+          (activeEl as HTMLElement).blur();
+        }
+        return;
+      }
+
       handlers.onAnyKey?.();
 
       switch (event.key) {

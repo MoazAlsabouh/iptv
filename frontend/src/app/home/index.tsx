@@ -67,13 +67,17 @@ export default function DashboardScreen(): React.JSX.Element {
     refetch,
   } = useMediaData();
 
-  // الحالة النشطة للأعمدة والتحديد
+  // الحالة النشطة للأعمدة والتحديد (D-Pad Navigation)
+  const [activePane, setActivePane] = useState<'categories' | 'channels' | 'preview'>('channels');
+  const [focusedCategoryIndex, setFocusedCategoryIndex] = useState<number>(1);
+  const [focusedChannelIndex, setFocusedChannelIndex] = useState<number>(0);
   const [selectedGroupId, setSelectedGroupId] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [previewChannel, setPreviewChannel] = useState<MediaItem | null>(null);
   const [mobileTab, setMobileTab] = useState<'groups' | 'channels' | 'preview'>('channels');
 
   // مراجع القوائم للتمرير التلقائي بالريموت
+  const categoriesScrollViewRef = useRef<ScrollView | null>(null);
   const channelsFlatListRef = useRef<FlatList<MediaItem> | null>(null);
 
   // 1. تجميع قائمة المجموعات والأقسام في العمود الأيمن
@@ -194,40 +198,216 @@ export default function DashboardScreen(): React.JSX.Element {
     }
   }, [activeChannels, previewChannel]);
 
-  // فتح القناة بملء الشاشة
-  const handleOpenFullScreen = useCallback((channel: MediaItem) => {
-    router.push({
-      pathname: '/play/[id]',
-      params: {
-        id: channel.id,
-        url: encodeURIComponent(channel.streamUrl),
-        title: encodeURIComponent(channel.name),
-        logo: encodeURIComponent(channel.logo || ''),
-        type: 'channel',
-        category: encodeURIComponent(selectedGroup.name),
-      },
-    });
-  }, [router, selectedGroup.name]);
+  // إعادة ضبط مؤشر القناة المحددة عند تغيير القسم
+  useEffect(() => {
+    setFocusedChannelIndex(0);
+  }, [selectedGroupId]);
 
-  // سلوك الضغط بالريموت أو النقر على القناة:
-  // الضغطة الأولى: معاينة مباشرة في العمود الأيسر.
-  // الضغطة الثانية (على نفس القناة): فتح ملء الشاشة.
-  const handleChannelPress = useCallback((channel: MediaItem) => {
-    if (previewChannel?.id === channel.id) {
-      handleOpenFullScreen(channel);
-    } else {
-      setPreviewChannel(channel);
-      if (!isWide) {
-        setMobileTab('preview');
+  // معاينة تلقائية عند الوقوف بالأسهم على أي قناة مع تأخير 400ms لتجنب الضغط أثناء التمرير السريع
+  useEffect(() => {
+    if (activeChannels.length === 0) return;
+    const targetChannel = activeChannels[focusedChannelIndex];
+    if (!targetChannel) return;
+
+    const timer = setTimeout(() => {
+      setPreviewChannel(targetChannel);
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [focusedChannelIndex, activeChannels]);
+
+  // تمرير قائمة الأقسام تلقائياً ليبقى العنصر المحدد ظاهراً
+  useEffect(() => {
+    if (activePane === 'categories' && focusedCategoryIndex >= 0) {
+      categoriesScrollViewRef.current?.scrollTo({
+        y: Math.max(0, (focusedCategoryIndex - 2) * 50),
+        animated: true,
+      });
+    }
+  }, [activePane, focusedCategoryIndex]);
+
+  // تمرير قائمة القنوات تلقائياً ليبقى العنصر المحدد ظاهراً
+  useEffect(() => {
+    if (
+      activePane === 'channels' &&
+      activeChannels.length > 0 &&
+      focusedChannelIndex >= 0 &&
+      focusedChannelIndex < activeChannels.length
+    ) {
+      try {
+        channelsFlatListRef.current?.scrollToIndex({
+          index: focusedChannelIndex,
+          animated: true,
+          viewPosition: 0.5,
+        });
+      } catch {
+        channelsFlatListRef.current?.scrollToOffset({
+          offset: Math.max(0, (focusedChannelIndex - 2) * 60),
+          animated: true,
+        });
       }
     }
-  }, [previewChannel, handleOpenFullScreen, isWide]);
+  }, [activePane, focusedChannelIndex, activeChannels.length]);
 
-  // التنقل السريع بريموت التلفاز
+  // فتح القناة بملء الشاشة بنقرة واحدة
+  const handleOpenFullScreen = useCallback(
+    (channel: MediaItem | null) => {
+      if (!channel) return;
+      router.push({
+        pathname: '/play/[id]',
+        params: {
+          id: channel.id,
+          url: encodeURIComponent(channel.streamUrl),
+          title: encodeURIComponent(channel.name),
+          logo: encodeURIComponent(channel.logo || ''),
+          type: 'channel',
+          category: encodeURIComponent(selectedGroup.name),
+        },
+      });
+    },
+    [router, selectedGroup.name]
+  );
+
+  // دوال التنقل بالأسهم والمفاتيح
+  const handleArrowUp = useCallback(() => {
+    if (activePane === 'categories') {
+      setFocusedCategoryIndex((prev) => Math.max(0, prev - 1));
+    } else if (activePane === 'channels') {
+      setFocusedChannelIndex((prev) => Math.max(0, prev - 1));
+    }
+  }, [activePane]);
+
+  const handleArrowDown = useCallback(() => {
+    if (activePane === 'categories') {
+      setFocusedCategoryIndex((prev) => Math.min(navGroups.length - 1, prev + 1));
+    } else if (activePane === 'channels') {
+      setFocusedChannelIndex((prev) => Math.min(activeChannels.length - 1, prev + 1));
+    }
+  }, [activePane, navGroups.length, activeChannels.length]);
+
+  const handleArrowRight = useCallback(() => {
+    // في واجهة RTL: التحرك يميناً يعني الانتقال من المعاينة (اليسار) -> القنوات (الوسط) -> الأقسام (اليمين)
+    if (activePane === 'preview') {
+      setActivePane('channels');
+    } else if (activePane === 'channels') {
+      setActivePane('categories');
+    }
+  }, [activePane]);
+
+  const handleArrowLeft = useCallback(() => {
+    // في واجهة RTL: التحرك يساراً يعني الانتقال من الأقسام (اليمين) -> القنوات (الوسط) -> المعاينة (اليسار)
+    if (activePane === 'categories') {
+      setActivePane('channels');
+    } else if (activePane === 'channels') {
+      if (isWide && previewChannel) {
+        setActivePane('preview');
+      }
+    }
+  }, [activePane, isWide, previewChannel]);
+
+  const handleEnterKey = useCallback(() => {
+    if (activePane === 'categories') {
+      const targetGroup = navGroups[focusedCategoryIndex];
+      if (targetGroup) {
+        setSelectedGroupId(targetGroup.id);
+        setActivePane('channels');
+        setFocusedChannelIndex(0);
+        if (!isWide) {
+          setMobileTab('channels');
+        }
+      }
+    } else if (activePane === 'channels') {
+      const targetChannel = activeChannels[focusedChannelIndex];
+      if (targetChannel) {
+        handleOpenFullScreen(targetChannel);
+      }
+    } else if (activePane === 'preview') {
+      if (previewChannel) {
+        handleOpenFullScreen(previewChannel);
+      }
+    }
+  }, [
+    activePane,
+    focusedCategoryIndex,
+    focusedChannelIndex,
+    navGroups,
+    activeChannels,
+    previewChannel,
+    isWide,
+    handleOpenFullScreen,
+  ]);
+
+  // استماع لأزرار لوحة المفاتيح والريموت على الويب مع حماية حقول الإدخال
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      const activeEl = document.activeElement;
+      const isInput =
+        activeEl &&
+        (activeEl.tagName === 'INPUT' ||
+          activeEl.tagName === 'TEXTAREA' ||
+          (activeEl as HTMLElement).isContentEditable);
+
+      if (isInput) {
+        if (e.key === 'Escape' || e.key === 'ArrowDown') {
+          (activeEl as HTMLElement).blur();
+          setActivePane('channels');
+          setFocusedChannelIndex(0);
+          e.preventDefault();
+        }
+        return;
+      }
+
+      switch (e.key) {
+        case 'ArrowUp':
+          e.preventDefault();
+          handleArrowUp();
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          handleArrowDown();
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          handleArrowRight();
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          handleArrowLeft();
+          break;
+        case 'Enter':
+        case 'NumpadEnter':
+        case ' ':
+        case 'Select':
+          e.preventDefault();
+          handleEnterKey();
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleArrowUp, handleArrowDown, handleArrowRight, handleArrowLeft, handleEnterKey]);
+
+  // التنقل السريع بريموت أجهزة Android TV
   useTVRemoteNavigation({
+    onArrowUp: handleArrowUp,
+    onArrowDown: handleArrowDown,
+    onArrowRight: handleArrowRight,
+    onArrowLeft: handleArrowLeft,
+    onEnter: handleEnterKey,
     onBack: () => {
       if (!isWide && mobileTab !== 'groups') {
         setMobileTab('groups');
+        return true;
+      }
+      if (activePane === 'preview') {
+        setActivePane('channels');
+        return true;
+      }
+      if (activePane === 'channels') {
+        setActivePane('categories');
         return true;
       }
       return false;
@@ -315,73 +495,80 @@ export default function DashboardScreen(): React.JSX.Element {
             </View>
 
             <ScrollView
+              ref={categoriesScrollViewRef}
               style={{ flex: 1 }}
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingVertical: 6 }}
             >
               {navGroups.map((group, index) => {
                 const isSelected = selectedGroupId === group.id;
+                const isFocused = activePane === 'categories' && focusedCategoryIndex === index;
                 return (
                   <Pressable
                     key={group.id}
                     focusable={true}
                     accessible={true}
-                    hasTVPreferredFocus={index === 0 && !previewChannel}
                     style={({ focused }) => [
                       styles.groupItemRow,
                       isSelected && styles.groupItemRowSelected,
-                      focused && styles.focusHighlight,
+                      (isFocused || focused) && styles.focusHighlight,
                     ]}
                     onPress={() => {
                       setSelectedGroupId(group.id);
+                      setFocusedCategoryIndex(index);
+                      setActivePane('channels');
+                      setFocusedChannelIndex(0);
                       if (!isWide) {
                         setMobileTab('channels');
                       }
                     }}
                   >
-                    {({ focused }) => (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 }}>
-                        <MaterialIcons
-                          name={group.icon}
-                          size={20}
-                          color={
-                            focused
-                              ? '#38bdf8'
-                              : isSelected
-                              ? '#38bdf8'
-                              : group.type === 'favorites'
-                              ? '#eab308'
-                              : '#94a3b8'
-                          }
-                        />
-                        <Text
-                          style={[
-                            styles.groupItemName,
-                            isSelected && styles.groupItemNameSelected,
-                            focused && styles.textFocused,
-                          ]}
-                          numberOfLines={1}
-                        >
-                          {group.name}
-                        </Text>
-                        <View
-                          style={[
-                            styles.groupItemBadge,
-                            isSelected && { backgroundColor: 'rgba(56, 189, 248, 0.25)' },
-                            focused && { backgroundColor: '#38bdf8' },
-                          ]}
-                        >
+                    {({ focused }) => {
+                      const itemFocused = isFocused || focused;
+                      return (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 }}>
+                          <MaterialIcons
+                            name={group.icon}
+                            size={20}
+                            color={
+                              itemFocused
+                                ? '#38bdf8'
+                                : isSelected
+                                ? '#38bdf8'
+                                : group.type === 'favorites'
+                                ? '#eab308'
+                                : '#94a3b8'
+                            }
+                          />
                           <Text
                             style={[
-                              styles.groupItemBadgeText,
-                              focused && { color: '#070b14', fontWeight: '800' },
+                              styles.groupItemName,
+                              isSelected && styles.groupItemNameSelected,
+                              itemFocused && styles.textFocused,
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {group.name}
+                          </Text>
+                          <View
+                            style={[
+                              styles.groupItemBadge,
+                              isSelected && { backgroundColor: 'rgba(56, 189, 248, 0.25)' },
+                              itemFocused && { backgroundColor: '#38bdf8' },
                             ]}
                           >
-                            {group.count}
-                          </Text>
+                            <Text
+                              style={[
+                                styles.groupItemBadgeText,
+                                itemFocused && { color: '#070b14', fontWeight: '800' },
+                              ]}
+                            >
+                              {group.count}
+                            </Text>
+                          </View>
                         </View>
-                      </View>
-                    )}
+                      );
+                    }}
                   </Pressable>
                 );
               })}
@@ -413,6 +600,10 @@ export default function DashboardScreen(): React.JSX.Element {
                   placeholderTextColor="#64748b"
                   value={searchQuery}
                   onChangeText={setSearchQuery}
+                  onSubmitEditing={() => {
+                    setActivePane('channels');
+                    setFocusedChannelIndex(0);
+                  }}
                 />
                 {searchQuery.length > 0 && (
                   <Pressable onPress={() => setSearchQuery('')}>
@@ -438,75 +629,93 @@ export default function DashboardScreen(): React.JSX.Element {
                 initialNumToRender={20}
                 maxToRenderPerBatch={25}
                 windowSize={15}
+                getItemLayout={(data, index) => ({
+                  length: 60,
+                  offset: 60 * index,
+                  index,
+                })}
+                onScrollToIndexFailed={(info) => {
+                  channelsFlatListRef.current?.scrollToOffset({
+                    offset: Math.max(0, info.index * 60),
+                    animated: true,
+                  });
+                }}
                 renderItem={({ item, index }) => {
                   const isPreviewing = previewChannel?.id === item.id;
                   const isFav = Boolean(item?.id && favoriteIds.includes(item.id));
                   const channelNum = String(index + 1).padStart(3, '0');
+                  const isFocused = activePane === 'channels' && focusedChannelIndex === index;
 
                   return (
                     <Pressable
                       focusable={true}
                       accessible={true}
-                      hasTVPreferredFocus={index === 0}
-                      onPress={() => handleChannelPress(item)}
+                      onPress={() => {
+                        setFocusedChannelIndex(index);
+                        setActivePane('channels');
+                        handleOpenFullScreen(item);
+                      }}
                       style={({ focused }) => [
                         styles.channelRow,
                         isPreviewing && styles.channelRowPreviewing,
-                        focused && styles.focusHighlight,
+                        (isFocused || focused) && styles.focusHighlight,
                       ]}
                     >
-                      {({ focused }) => (
-                        <View style={styles.channelRowContent}>
-                          {/* رقم القناة التسلسلي */}
-                          <Text style={[styles.channelNumber, focused && styles.textFocused]}>
-                            {channelNum}
-                          </Text>
-
-                          {/* شعار القناة */}
-                          <View style={styles.logoContainer}>
-                            <ChannelLogo
-                              uri={item.logo}
-                              name={item.name}
-                              size={38}
-                              focused={focused}
-                              style={styles.channelLogo}
-                            />
-                          </View>
-
-                          {/* اسم القناة */}
-                          <View style={{ flex: 1, paddingHorizontal: 6 }}>
-                            <Text
-                              style={[
-                                styles.channelName,
-                                isPreviewing && styles.channelNamePreviewing,
-                                focused && styles.textFocused,
-                              ]}
-                              numberOfLines={1}
-                            >
-                              {item.name}
+                      {({ focused }) => {
+                        const itemFocused = isFocused || focused;
+                        return (
+                          <View style={styles.channelRowContent}>
+                            {/* رقم القناة التسلسلي */}
+                            <Text style={[styles.channelNumber, itemFocused && styles.textFocused]}>
+                              {channelNum}
                             </Text>
-                            {item.groupTitle && (
-                              <Text style={styles.channelCategorySmall} numberOfLines={1}>
-                                {item.groupTitle}
+
+                            {/* شعار القناة */}
+                            <View style={styles.logoContainer}>
+                              <ChannelLogo
+                                uri={item.logo}
+                                name={item.name}
+                                size={38}
+                                focused={itemFocused}
+                                style={styles.channelLogo}
+                              />
+                            </View>
+
+                            {/* اسم القناة */}
+                            <View style={{ flex: 1, paddingHorizontal: 6 }}>
+                              <Text
+                                style={[
+                                  styles.channelName,
+                                  isPreviewing && styles.channelNamePreviewing,
+                                  itemFocused && styles.textFocused,
+                                ]}
+                                numberOfLines={1}
+                              >
+                                {item.name}
                               </Text>
-                            )}
-                          </View>
+                              {item.groupTitle && (
+                                <Text style={styles.channelCategorySmall} numberOfLines={1}>
+                                  {item.groupTitle}
+                                </Text>
+                              )}
+                            </View>
 
-                          {/* شارة التشغيل المباشر أو المفضلة */}
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                            {isPreviewing && (
-                              <View style={styles.nowPlayingBadge}>
-                                <View style={styles.greenPulseDot} />
-                                <Text style={styles.nowPlayingText}>يعمل الآن</Text>
-                              </View>
-                            )}
+                            {/* شارة التشغيل المباشر أو المفضلة */}
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                              {isPreviewing && (
+                                <View style={styles.nowPlayingBadge}>
+                                  <View style={styles.greenPulseDot} />
+                                  <Text style={styles.nowPlayingText}>يعمل الآن</Text>
+                                </View>
+                              )}
 
-                            {isFav && (
-                              <MaterialIcons name="star" size={16} color="#eab308" />
-                            )}
+                              {isFav && (
+                                <MaterialIcons name="star" size={16} color="#eab308" />
+                              )}
+                            </View>
                           </View>
-                        </View>
-                      )}
+                        );
+                      }}
                     </Pressable>
                   );
                 }}
@@ -530,9 +739,9 @@ export default function DashboardScreen(): React.JSX.Element {
                     style={styles.playerInner}
                   />
 
-                  {/* تلميح الضغط المزدوج للشاشات */}
+                  {/* تلميح الضغط المباشر للشاشات */}
                   <View style={styles.playerOverlayHint}>
-                    <Text style={styles.playerOverlayHintText}>معاينة حية • اضغط OK للتكبير</Text>
+                    <Text style={styles.playerOverlayHintText}>معاينة حية • اضغط OK لفتح القناة مباشرة</Text>
                   </View>
                 </View>
 
@@ -572,7 +781,7 @@ export default function DashboardScreen(): React.JSX.Element {
                       accessible={true}
                       style={({ focused }) => [
                         styles.fullscreenBtn,
-                        focused && styles.focusHighlight,
+                        (activePane === 'preview' || focused) && styles.focusHighlight,
                       ]}
                       onPress={() => handleOpenFullScreen(previewChannel)}
                     >
@@ -620,10 +829,10 @@ export default function DashboardScreen(): React.JSX.Element {
                       <Text style={styles.remoteTipsTitle}>إرشادات ريموت التلفاز:</Text>
                     </View>
                     <Text style={styles.remoteTipsDesc}>
-                      • اضغط <Text style={{ color: '#38bdf8', fontWeight: '700' }}>OK</Text> مرة لتشغيل المعاينة، ومرتين لملء الشاشة.
+                      • اضغط <Text style={{ color: '#38bdf8', fontWeight: '700' }}>OK</Text> لفتح القناة مباشرة.
                     </Text>
                     <Text style={styles.remoteTipsDesc}>
-                      • سهم <Text style={{ color: '#38bdf8', fontWeight: '700' }}>اليمين</Text> يرجع للأقسام، وسهم <Text style={{ color: '#38bdf8', fontWeight: '700' }}>اليسار</Text> ينتقل لزر ملء الشاشة.
+                      • سهم <Text style={{ color: '#38bdf8', fontWeight: '700' }}>اليمين</Text> يرجع للأقسام، وسهم <Text style={{ color: '#38bdf8', fontWeight: '700' }}>اليسار</Text> ينتقل للمعاينة.
                     </Text>
                   </View>
                 </View>
@@ -1032,12 +1241,12 @@ const styles = StyleSheet.create({
 
   // نظام التركيز الموحد بالريموت (D-Pad Focus)
   focusHighlight: {
-    borderWidth: 2.5,
+    borderWidth: 2,
     borderColor: '#38bdf8',
     backgroundColor: '#1e293b',
     transform: [{ scale: 1.02 }],
     shadowColor: '#38bdf8',
-    shadowOpacity: 0.5,
+    shadowOpacity: 0.6,
     shadowRadius: 8,
     elevation: 6,
   },
