@@ -463,6 +463,20 @@ export default function ResellerPortalScreen(): React.JSX.Element {
           </View>
 
           <View style={isWide ? styles.formGridWide : styles.formGridCol}>
+            {/* الجهة المالكة للكود (تلقائية للقراءة فقط من الجلسة) */}
+            <View style={styles.formGroup}>
+              <Text style={styles.inputLabel}>الجهة المالكة للكود (تلقائي):</Text>
+              <View style={styles.ownerAutoBadge}>
+                <MaterialIcons name="store" size={20} color="#10b981" />
+                <Text style={styles.ownerAutoBadgeText}>
+                  {reseller?.name ? `الموزع: ${reseller.name}` : 'حساب الموزع المعتمد'}
+                </Text>
+                <View style={styles.autoTag}>
+                  <Text style={styles.autoTagText}>تلقائي من الجلسة</Text>
+                </View>
+              </View>
+            </View>
+
             {/* مدة الاشتراك */}
             <View style={styles.formGroup}>
               <Text style={styles.inputLabel}>مدة الاشتراك:</Text>
@@ -1158,6 +1172,35 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
+  },
+  ownerAutoBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.25)',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignSelf: 'flex-start',
+  },
+  ownerAutoBadgeText: {
+    color: '#34d399',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  autoTag: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    marginRight: 4,
+  },
+  autoTagText: {
+    color: '#6ee7b7',
+    fontSize: 11,
+    fontWeight: '600',
   },
   selectorPill: {
     paddingHorizontal: 14,

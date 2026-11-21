@@ -3075,7 +3075,8 @@ async function handleAdminCreateCodes(request: Request, env: Env): Promise<Respo
     const maxDevices = parseInt(body.maxDevices || '1', 10) || 1;
     const count = Math.min(50, Math.max(1, parseInt(body.count || '1', 10) || 1));
     const note = (body.note || '').trim();
-    const resellerId = body.resellerId ? parseInt(body.resellerId, 10) : null;
+    // الجهة المالكة تؤخذ تلقائياً من جلسة الإدارة المباشرة (null يرمز للإدارة المباشرة) مع تجاهل أي resellerId مرسل لمنع التلاعب
+    const resellerId: number | null = null;
 
     const createdCodes: string[] = [];
     const nowIso = new Date().toISOString();
@@ -3101,7 +3102,8 @@ async function handleAdminCreateCodes(request: Request, env: Env): Promise<Respo
       success: true,
       count: createdCodes.length,
       codes: createdCodes,
-      message: `تم توليد ${createdCodes.length} كود بنجاح`,
+      owner: 'الإدارة المباشرة',
+      message: `تم توليد ${createdCodes.length} كود بنجاح للإدارة المباشرة`,
     });
   } catch (err: any) {
     return jsonResponse({ error: 'فشل توليد الأكواد: ' + (err?.message || '') }, 500);
@@ -3401,6 +3403,8 @@ async function handleResellerCreateCodes(request: Request, env: Env): Promise<Re
     const maxDevices = parseInt(body.maxDevices || '1', 10) || 1;
     const count = Math.min(50, Math.max(1, parseInt(body.count || '1', 10) || 1));
     const note = (body.note || '').trim();
+    // الجهة المالكة تؤخذ تلقائياً من جلسة الموزع المصادق عليها مع تجاهل أي resellerId مرسل لمنع التلاعب
+    const resellerId = auth.reseller.id;
 
     const createdCodes: string[] = [];
     const nowIso = new Date().toISOString();
@@ -3412,7 +3416,7 @@ async function handleResellerCreateCodes(request: Request, env: Env): Promise<Re
           await env.DB.prepare(
             'INSERT INTO subscriptions (reseller_id, code, duration_days, max_devices, status, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
           )
-            .bind(auth.reseller.id, code, durationDays, maxDevices, 'unused', note, nowIso)
+            .bind(resellerId, code, durationDays, maxDevices, 'unused', note, nowIso)
             .run();
           createdCodes.push(code);
           break;
@@ -3426,7 +3430,8 @@ async function handleResellerCreateCodes(request: Request, env: Env): Promise<Re
       success: true,
       count: createdCodes.length,
       codes: createdCodes,
-      message: `تم توليد ${createdCodes.length} كود بنجاح لحسابك`,
+      owner: auth.reseller.name,
+      message: `تم توليد ${createdCodes.length} كود بنجاح لحسابك (${auth.reseller.name})`,
     });
   } catch (err: any) {
     return jsonResponse({ error: 'فشل توليد الأكواد: ' + (err?.message || '') }, 500);

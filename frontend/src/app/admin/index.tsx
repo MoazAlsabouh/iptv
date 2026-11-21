@@ -208,7 +208,6 @@ export default function AdminScreen(): React.JSX.Element {
   const [genMaxDevices, setGenMaxDevices] = useState<number>(1);
   const [genCount, setGenCount] = useState<number>(1);
   const [genNote, setGenNote] = useState<string>('');
-  const [genTargetReseller, setGenTargetReseller] = useState<string>('admin');
   const [generatedBatch, setGeneratedBatch] = useState<string[]>([]);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
@@ -736,9 +735,6 @@ export default function AdminScreen(): React.JSX.Element {
     setGeneratedBatch([]);
 
     try {
-      const targetResellerId =
-        genTargetReseller === 'admin' ? null : parseInt(genTargetReseller, 10) || null;
-
       const res = await fetch(`${BACKEND_BASE_URL}/api/admin/codes`, {
         method: 'POST',
         headers: getAuthHeaders(),
@@ -747,7 +743,6 @@ export default function AdminScreen(): React.JSX.Element {
           maxDevices: genMaxDevices,
           count: genCount,
           note: genNote.trim(),
-          resellerId: targetResellerId,
         }),
       });
 
@@ -1251,45 +1246,15 @@ export default function AdminScreen(): React.JSX.Element {
               </View>
 
               <View style={isWide ? styles.formGridWide : styles.formGridCol}>
-                {/* الجهة المالكة للكود */}
+                {/* الجهة المالكة للكود (تلقائية للقراءة فقط من الجلسة) */}
                 <View style={styles.formGroup}>
-                  <Text style={styles.inputLabel}>الجهة المالكة للكود:</Text>
-                  <View style={styles.pillsRow}>
-                    <Pressable
-                      style={[
-                        styles.selectorPill,
-                        genTargetReseller === 'admin' && styles.selectorPillActive,
-                      ]}
-                      onPress={() => setGenTargetReseller('admin')}
-                    >
-                      <Text
-                        style={[
-                          styles.selectorPillText,
-                          genTargetReseller === 'admin' && styles.selectorPillTextActive,
-                        ]}
-                      >
-                        الإدارة المباشرة
-                      </Text>
-                    </Pressable>
-                    {resellers.map((r) => (
-                      <Pressable
-                        key={r.id}
-                        style={[
-                          styles.selectorPill,
-                          genTargetReseller === String(r.id) && styles.selectorPillActive,
-                        ]}
-                        onPress={() => setGenTargetReseller(String(r.id))}
-                      >
-                        <Text
-                          style={[
-                            styles.selectorPillText,
-                            genTargetReseller === String(r.id) && styles.selectorPillTextActive,
-                          ]}
-                        >
-                          {r.name}
-                        </Text>
-                      </Pressable>
-                    ))}
+                  <Text style={styles.inputLabel}>الجهة المالكة للكود (تلقائي):</Text>
+                  <View style={styles.ownerAutoBadge}>
+                    <MaterialIcons name="admin-panel-settings" size={20} color="#38bdf8" />
+                    <Text style={styles.ownerAutoBadgeText}>الإدارة المباشرة</Text>
+                    <View style={styles.autoTag}>
+                      <Text style={styles.autoTagText}>تلقائي من الجلسة</Text>
+                    </View>
                   </View>
                 </View>
 
@@ -3604,6 +3569,35 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
+  },
+  ownerAutoBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.25)',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignSelf: 'flex-start',
+  },
+  ownerAutoBadgeText: {
+    color: '#38bdf8',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  autoTag: {
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    marginRight: 4,
+  },
+  autoTagText: {
+    color: '#7dd3fc',
+    fontSize: 11,
+    fontWeight: '600',
   },
   selectorPill: {
     paddingHorizontal: 14,
