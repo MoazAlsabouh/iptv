@@ -286,7 +286,15 @@ export async function fetchAndParseM3U(
     }
 
     const content = await response.text();
-    return parseM3U(content);
+    const rawItems = parseM3U(content);
+
+    // تطبيق تخصيصات القنوات المختارة من الخادم
+    try {
+      const overrides = await fetchChannelOverrides();
+      return applyChannelOverrides(rawItems, overrides);
+    } catch {
+      return rawItems;
+    }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'خطأ غير متوقع أثناء معالجة القنوات';
 
@@ -310,4 +318,125 @@ export async function fetchAndParseM3U(
  */
 export async function fetchBackendPlaylist(useProxy: boolean = false, token?: string | null): Promise<MediaItem[]> {
   return fetchAndParseM3U(DEFAULT_BACKEND_M3U_URL, useProxy, undefined, token);
+}
+
+/**
+ * بنية تخصيص القناة المحفوظة في قاعدة بيانات الخادم
+ */
+export interface ChannelOverride {
+  id: string;
+  name?: string | null;
+  logo?: string | null;
+  category?: string | null;
+  streamUrl?: string | null;
+  streamType?: 'auto' | 'hls' | 'youtube' | 'iframe';
+  isHidden?: boolean;
+  isDeleted?: boolean;
+  sortOrder?: number | null;
+  isCustom?: boolean;
+}
+
+/**
+ * جلب قائمة القنوات التي قام الأدمن بتخصيصها أو إضافتها فقط
+ */
+export async function fetchChannelOverrides(): Promise<ChannelOverride[]> {
+  try {
+    const res = await fetch('https://iptv-backend.moaznsm.workers.dev/api/channels/overrides', {
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return Array.isArray(data.overrides) ? data.overrides : [];
+    }
+  } catch (err) {
+    console.warn('[m3uParser] Failed to fetch channel overrides:', err);
+  }
+  return [];
+}
+
+/**
+ * دمج تخصيصات القنوات على القنوات الأصلية:
+ * لا يؤثر إلا على القنوات التي اختارها الأدمن حصراً، بينما تبقى باقي القنوات كما هي تماماً
+ */
+export function applyChannelOverrides(
+  items: MediaItem[],
+  overrides: ChannelOverride[]
+): MediaItem[] {
+  if (!overrides || overrides.length === 0) {
+    return items;
+  }
+
+  const overrideMap = new Map<string, ChannelOverride>();
+  overrides.forEach((o) => {
+    if (o && o.id) {
+      overrideMap.set(o.id.toLowerCase().trim(), o);
+    }
+  });
+
+  const modifiedList: MediaItem[] = [];
+
+  // 1. تطبيق التعديلات على القنوات الأصلية
+  for (const item of items) {
+    const ov =
+      overrideMap.get(item.id.toLowerCase().trim()) ||
+      overrideMap.get(item.name.toLowerCase().trim());
+
+    if (ov) {
+      // إذا كانت القناة محذوفة
+      if (ov.isDeleted) {
+        continue;
+      }
+
+      const updatedItem: MediaItem = {
+        ...item,
+        name: ov.name && ov.name.trim().length > 0 ? ov.name : item.name,
+        logo: ov.logo && ov.logo.trim().length > 0 ? ov.logo : item.logo,
+        groupTitle: ov.category && ov.category.trim().length > 0 ? ov.category : item.groupTitle,
+        url: ov.streamUrl && ov.streamUrl.trim().length > 0 ? ov.streamUrl : item.url,
+        streamType: ov.streamType || item.streamType || 'auto',
+        isHidden: ov.isHidden !== undefined ? ov.isHidden : item.isHidden,
+        sortOrder: ov.sortOrder !== undefined ? ov.sortOrder : item.sortOrder,
+      };
+
+      modifiedList.push(updatedItem);
+    } else {
+      // القناة الأصلية تبقى دون أي تغيير
+      modifiedList.push(item);
+    }
+  }
+
+  // 2. إضافة القنوات المضافة يدوياً (isCustom)
+  for (const ov of overrides) {
+    if (ov.isCustom && !ov.isDeleted) {
+      if (!modifiedList.some((m) => m.id === ov.id)) {
+        modifiedList.push({
+          id: ov.id,
+          name: ov.name || 'قناة مخصصة',
+          logo: ov.logo || '',
+          groupTitle: ov.category || 'قنوات مخصصة',
+          url: ov.streamUrl || '',
+          streamType: ov.streamType || 'auto',
+          isHidden: Boolean(ov.isHidden),
+          isCustom: true,
+          sortOrder: ov.sortOrder,
+          type: 'live',
+        });
+      }
+    }
+  }
+
+  // 3. تقديم القنوات التي حُدد لها ترتيب sortOrder
+  modifiedList.sort((a, b) => {
+    const hasA = a.sortOrder !== null && a.sortOrder !== undefined;
+    const hasB = b.sortOrder !== null && b.sortOrder !== undefined;
+    if (hasA && hasB) {
+      return (a.sortOrder as number) - (b.sortOrder as number);
+    }
+    if (hasA) return -1;
+    if (hasB) return 1;
+    return 0;
+  });
+
+  return modifiedList;
 }

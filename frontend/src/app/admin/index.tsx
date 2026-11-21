@@ -26,6 +26,21 @@ import {
   formatRemainingDaysArabic,
   formatDateStandard,
 } from '../../utils/dateFormat';
+import { MediaItem, fetchBackendPlaylist } from '../../utils/m3uParser';
+
+export interface ChannelOverrideItem {
+  id: string;
+  name?: string | null;
+  logo?: string | null;
+  category?: string | null;
+  streamUrl?: string | null;
+  streamType: 'auto' | 'hls' | 'youtube' | 'iframe';
+  isHidden: boolean;
+  isDeleted: boolean;
+  sortOrder: number | null;
+  isCustom: boolean;
+  updatedAt?: string;
+}
 
 interface SubscriptionCode {
   id: number;
@@ -116,12 +131,48 @@ export default function AdminScreen(): React.JSX.Element {
   const [authLoading, setAuthLoading] = useState<boolean>(false);
 
   // التنقل بين التبويبات الرئيسية
-  const [activeTab, setActiveTab] = useState<'codes' | 'resellers' | 'vod' | 'networks'>('codes');
+  const [activeTab, setActiveTab] = useState<'codes' | 'resellers' | 'vod' | 'networks' | 'channels'>('codes');
 
   // إعدادات وسيرفرات الأفلام والمسلسلات
   const [vodSettings, setVodSettings] = useState<VodSettings>(DEFAULT_VOD_SETTINGS);
   const [vodLoading, setVodLoading] = useState<boolean>(false);
   const [vodSaving, setVodSaving] = useState<boolean>(false);
+
+  // إدارة تخصيص القنوات المختارة والقنوات المضافة يدوياً
+  const [channelOverrides, setChannelOverrides] = useState<ChannelOverrideItem[]>([]);
+  const [channelOverridesLoading, setChannelOverridesLoading] = useState<boolean>(false);
+  const [channelOverridesSaving, setChannelOverridesSaving] = useState<boolean>(false);
+
+  const [showPickChannelModal, setShowPickChannelModal] = useState<boolean>(false);
+  const [allM3uChannels, setAllM3uChannels] = useState<MediaItem[]>([]);
+  const [allChannelsLoading, setAllChannelsLoading] = useState<boolean>(false);
+  const [channelSearchQuery, setChannelSearchQuery] = useState<string>('');
+  const [overrideFilterQuery, setOverrideFilterQuery] = useState<string>('');
+
+  const [showEditChannelModal, setShowEditChannelModal] = useState<boolean>(false);
+  const [editingChannel, setEditingChannel] = useState<{
+    id: string;
+    isCustom: boolean;
+    name: string;
+    logo: string;
+    category: string;
+    streamUrl: string;
+    streamType: 'auto' | 'hls' | 'youtube' | 'iframe';
+    isHidden: boolean;
+    isDeleted: boolean;
+    sortOrder: string;
+  }>({
+    id: '',
+    isCustom: false,
+    name: '',
+    logo: '',
+    category: '',
+    streamUrl: '',
+    streamType: 'auto',
+    isHidden: false,
+    isDeleted: false,
+    sortOrder: '',
+  });
 
   // إدارة سلاسل وباقات القنوات المخصصة
   const [customNetworks, setCustomNetworks] = useState<ChannelNetwork[]>([]);
@@ -383,6 +434,226 @@ export default function AdminScreen(): React.JSX.Element {
     setStatusMessage('تم حذف الباقة بنجاح');
   };
 
+  // ==========================================
+  // وظائف إدارة تخصيص القنوات (Channel Overrides)
+  // ==========================================
+
+  const fetchChannelOverrides = useCallback(async () => {
+    setChannelOverridesLoading(true);
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/channels/overrides`, {
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setChannelOverrides(Array.isArray(data.overrides) ? data.overrides : []);
+      }
+    } catch (err) {
+      console.warn('[Admin] Failed to fetch channel overrides:', err);
+    } finally {
+      setChannelOverridesLoading(false);
+    }
+  }, [getAuthHeaders]);
+
+  const loadAllM3uChannels = useCallback(async () => {
+    if (allM3uChannels.length > 0) return;
+    setAllChannelsLoading(true);
+    try {
+      const items = await fetchBackendPlaylist(false, adminToken);
+      setAllM3uChannels(items.filter((it) => it.type !== 'movie' && it.type !== 'series'));
+    } catch (err) {
+      console.warn('[Admin] Failed to load M3U channels:', err);
+    } finally {
+      setAllChannelsLoading(false);
+    }
+  }, [allM3uChannels.length, adminToken]);
+
+  const handleOpenPickChannelModal = () => {
+    setChannelSearchQuery('');
+    setShowPickChannelModal(true);
+    loadAllM3uChannels();
+  };
+
+  const handleSelectChannelToOverride = (channel: MediaItem) => {
+    const existing = channelOverrides.find((o) => o.id.toLowerCase() === channel.id.toLowerCase());
+    setEditingChannel({
+      id: channel.id,
+      isCustom: false,
+      name: existing?.name || channel.name,
+      logo: existing?.logo || channel.logo || '',
+      category: existing?.category || channel.groupTitle || '',
+      streamUrl: existing?.streamUrl || channel.url || '',
+      streamType: (existing?.streamType as any) || (channel.streamType as any) || 'auto',
+      isHidden: existing?.isHidden ?? false,
+      isDeleted: existing?.isDeleted ?? false,
+      sortOrder: existing?.sortOrder !== null && existing?.sortOrder !== undefined ? String(existing.sortOrder) : '',
+    });
+    setShowPickChannelModal(false);
+    setShowEditChannelModal(true);
+  };
+
+  const handleOpenAddCustomChannel = () => {
+    setEditingChannel({
+      id: '',
+      isCustom: true,
+      name: '',
+      logo: '',
+      category: 'قنوات عامة ومنوعة',
+      streamUrl: '',
+      streamType: 'auto',
+      isHidden: false,
+      isDeleted: false,
+      sortOrder: '',
+    });
+    setShowEditChannelModal(true);
+  };
+
+  const handleSaveChannelOverride = async () => {
+    if (!editingChannel.name.trim()) {
+      setStatusMessage('يرجى إدخال اسم القناة');
+      return;
+    }
+    if (!editingChannel.streamUrl.trim()) {
+      setStatusMessage('يرجى إدخال رابط البث للقناة');
+      return;
+    }
+
+    setChannelOverridesSaving(true);
+    try {
+      const payload = {
+        id: editingChannel.id || undefined,
+        name: editingChannel.name.trim(),
+        logo: editingChannel.logo.trim() || null,
+        category: editingChannel.category.trim() || null,
+        streamUrl: editingChannel.streamUrl.trim(),
+        streamType: editingChannel.streamType,
+        isHidden: editingChannel.isHidden,
+        isDeleted: editingChannel.isDeleted,
+        sortOrder: editingChannel.sortOrder.trim() ? Number(editingChannel.sortOrder.trim()) : null,
+        isCustom: editingChannel.isCustom,
+      };
+
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/channels/overrides`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setShowEditChannelModal(false);
+        setStatusMessage(editingChannel.isCustom ? 'تمت إضافة القناة بنجاح' : 'تم حفظ تخصيص القناة بنجاح');
+        fetchChannelOverrides();
+      } else {
+        setStatusMessage(data.error || 'فشل حفظ القناة');
+      }
+    } catch {
+      setStatusMessage('حدث خطأ أثناء حفظ القناة');
+    } finally {
+      setChannelOverridesSaving(false);
+    }
+  };
+
+  const handleDeleteChannelOverride = async (id: string, isCustom: boolean) => {
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/channels/overrides/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setStatusMessage(isCustom ? 'تم حذف القناة المضافة يدوياً' : 'تم إلغاء التخصيص واستعادة القناة الأصلية بنجاح');
+        fetchChannelOverrides();
+      }
+    } catch {
+      setStatusMessage('فشل إلغاء التخصيص');
+    }
+  };
+
+  const handleToggleChannelHidden = async (item: ChannelOverrideItem) => {
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/channels/overrides/${encodeURIComponent(item.id)}`, {
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ isHidden: !item.isHidden }),
+      });
+      if (res.ok) {
+        setStatusMessage(!item.isHidden ? 'تم إخفاء القناة عن المستخدمين' : 'تم إظهار القناة للمستخدمين');
+        fetchChannelOverrides();
+      }
+    } catch {
+      setStatusMessage('فشل تعديل حالة الإخفاء');
+    }
+  };
+
+  const handleToggleChannelDeleted = async (item: ChannelOverrideItem) => {
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/channels/overrides/${encodeURIComponent(item.id)}`, {
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ isDeleted: !item.isDeleted }),
+      });
+      if (res.ok) {
+        setStatusMessage(!item.isDeleted ? 'تم حذف القناة من العرض' : 'تمت استعادة القناة للعرض');
+        fetchChannelOverrides();
+      }
+    } catch {
+      setStatusMessage('فشل تعديل حالة الحذف');
+    }
+  };
+
+  const handleMoveChannelPriority = async (index: number, direction: 'up' | 'down') => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= channelOverrides.length) return;
+
+    const list = [...channelOverrides];
+    const temp = list[index];
+    list[index] = list[targetIndex];
+    list[targetIndex] = temp;
+
+    const updatedItems = list.map((item, idx) => ({
+      id: item.id,
+      sortOrder: (idx + 1) * 10,
+    }));
+
+    setChannelOverrides(
+      list.map((item, idx) => ({
+        ...item,
+        sortOrder: (idx + 1) * 10,
+      }))
+    );
+
+    try {
+      await fetch(`${BACKEND_BASE_URL}/api/admin/channels/overrides/reorder`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ items: updatedItems }),
+      });
+      setStatusMessage('تم تحديث ترتيب القنوات بنجاح');
+    } catch (err) {
+      console.warn('[Admin] Failed to reorder channel overrides:', err);
+    }
+  };
+
+  const filteredSearchChannels = useMemo(() => {
+    if (!channelSearchQuery.trim()) return allM3uChannels.slice(0, 50);
+    const q = channelSearchQuery.trim().toLowerCase();
+    return allM3uChannels
+      .filter((c) => c.name.toLowerCase().includes(q) || (c.groupTitle && c.groupTitle.toLowerCase().includes(q)))
+      .slice(0, 50);
+  }, [allM3uChannels, channelSearchQuery]);
+
+  const filteredOverridesList = useMemo(() => {
+    if (!overrideFilterQuery.trim()) return channelOverrides;
+    const q = overrideFilterQuery.trim().toLowerCase();
+    return channelOverrides.filter(
+      (c) =>
+        (c.name && c.name.toLowerCase().includes(q)) ||
+        (c.category && c.category.toLowerCase().includes(q)) ||
+        c.id.toLowerCase().includes(q)
+    );
+  }, [channelOverrides, overrideFilterQuery]);
+
   useEffect(() => {
     if (isAuthenticated) {
       if (activeTab === 'codes') {
@@ -392,9 +663,11 @@ export default function AdminScreen(): React.JSX.Element {
         fetchResellers();
       } else if (activeTab === 'vod') {
         fetchVodSettings();
+      } else if (activeTab === 'channels') {
+        fetchChannelOverrides();
       }
     }
-  }, [isAuthenticated, activeTab, fetchCodes, fetchResellers, fetchVodSettings]);
+  }, [isAuthenticated, activeTab, fetchCodes, fetchResellers, fetchVodSettings, fetchChannelOverrides]);
 
   // تسجيل الدخول للإدارة
   const handleLoginSubmit = async () => {
@@ -823,6 +1096,7 @@ export default function AdminScreen(): React.JSX.Element {
               if (activeTab === 'codes') fetchCodes();
               else if (activeTab === 'resellers') fetchResellers();
               else if (activeTab === 'vod') fetchVodSettings();
+              else if (activeTab === 'channels') fetchChannelOverrides();
             }}
           >
             <MaterialIcons name="refresh" size={18} color="#38bdf8" />
@@ -908,6 +1182,25 @@ export default function AdminScreen(): React.JSX.Element {
             ]}
           >
             سلاسل وباقات القنوات ({DEFAULT_NETWORKS.length + customNetworks.length})
+          </Text>
+        </Pressable>
+
+        <Pressable
+          style={[styles.mainNavTab, activeTab === 'channels' && styles.mainNavTabActive]}
+          onPress={() => setActiveTab('channels')}
+        >
+          <MaterialIcons
+            name="live-tv"
+            size={20}
+            color={activeTab === 'channels' ? '#10b981' : '#94a3b8'}
+          />
+          <Text
+            style={[
+              styles.mainNavTabText,
+              activeTab === 'channels' && styles.mainNavTabTextActive,
+            ]}
+          >
+            إدارة القنوات ({channelOverrides.length})
           </Text>
         </Pressable>
       </View>
@@ -1865,7 +2158,7 @@ export default function AdminScreen(): React.JSX.Element {
               </View>
             )}
           </View>
-        ) : (
+        ) : activeTab === 'networks' ? (
           /* ==========================================
              تبويب سلاسل وباقات القنوات (Networks)
              ========================================== */
@@ -2097,6 +2390,313 @@ export default function AdminScreen(): React.JSX.Element {
                 </View>
               ))}
             </View>
+          </View>
+        ) : (
+          /* ==========================================
+             تبويب إدارة وتخصيص القنوات (Channels Overrides)
+             ========================================== */
+          <View style={styles.channelsTabContainer}>
+            {/* الشريط العلوي الخاص بإدارة القنوات */}
+            <View style={styles.resellersHeaderRow}>
+              <View>
+                <Text style={styles.sectionTitle}>تخصيص القنوات المختارة</Text>
+                <Text style={styles.sectionSub}>
+                  تعديل مسارات البث (YouTube / HLS / Iframe) أو إخفاء وترتيب القنوات المختارة فقط، مع إبقاء باقي القنوات الأصلية دون أي مساس.
+                </Text>
+              </View>
+
+              <View style={styles.channelsHeaderActions}>
+                <Pressable
+                  style={styles.pickChannelBtn}
+                  onPress={handleOpenPickChannelModal}
+                >
+                  <MaterialIcons name="search" size={18} color="#ffffff" />
+                  <Text style={styles.pickChannelBtnText}>+ اختيار قناة لتعديلها</Text>
+                </Pressable>
+
+                <Pressable
+                  style={styles.addCustomChannelBtn}
+                  onPress={handleOpenAddCustomChannel}
+                >
+                  <MaterialIcons name="add-circle" size={18} color="#ffffff" />
+                  <Text style={styles.addCustomChannelBtnText}>+ إضافة قناة جديدة</Text>
+                </Pressable>
+              </View>
+            </View>
+
+            {/* شريط البحث في القنوات المخصصة وإحصائيات سريعة */}
+            <View style={styles.channelSearchFilterRow}>
+              <View style={styles.channelSearchInputBox}>
+                <MaterialIcons name="filter-list" size={18} color="#64748b" />
+                <TextInput
+                  style={styles.channelSearchInput}
+                  value={overrideFilterQuery}
+                  onChangeText={setOverrideFilterQuery}
+                  placeholder="تصفية القنوات المخصصة بالاسم أو التصنيف أو المعرّف..."
+                  placeholderTextColor="#64748b"
+                />
+                {overrideFilterQuery.length > 0 && (
+                  <Pressable onPress={() => setOverrideFilterQuery('')}>
+                    <MaterialIcons name="close" size={16} color="#94a3b8" />
+                  </Pressable>
+                )}
+              </View>
+
+              <View style={styles.channelCountsBadge}>
+                <Text style={styles.channelCountsText}>
+                  القنوات المخصصة: {channelOverrides.length}
+                </Text>
+              </View>
+            </View>
+
+            {/* قائمة القنوات المخصصة */}
+            {channelOverridesLoading ? (
+              <View style={styles.loadingBox}>
+                <ActivityIndicator size="large" color="#0EA5E9" />
+                <Text style={styles.loadingText}>جاري تحميل قائمة القنوات المخصصة...</Text>
+              </View>
+            ) : filteredOverridesList.length === 0 ? (
+              <View style={styles.channelsEmptyState}>
+                <View style={styles.channelsEmptyIconBox}>
+                  <MaterialIcons name="live-tv" size={44} color="#38bdf8" />
+                </View>
+                <Text style={styles.channelsEmptyTitle}>
+                  {channelOverrides.length === 0
+                    ? 'لم يتم تخصيص أي قناة بعد'
+                    : 'لا توجد قنوات تطابق البحث'}
+                </Text>
+                <Text style={styles.channelsEmptyDesc}>
+                  {channelOverrides.length === 0
+                    ? 'جميع القنوات الأصلية تعمل بإعداداتها الافتراضية. يمكنك اختيار أي قناة تريد تعديل مسارها (لربطها بيوتيوب أو بث خارجي) أو إضافة قناة جديدة من الأزرار أعلاه.'
+                    : 'جرّب كتابة اسم قناة آخر أو امسح حقل التصفية.'}
+                </Text>
+                {channelOverrides.length === 0 && (
+                  <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
+                    <Pressable
+                      style={styles.pickChannelBtn}
+                      onPress={handleOpenPickChannelModal}
+                    >
+                      <MaterialIcons name="search" size={18} color="#ffffff" />
+                      <Text style={styles.pickChannelBtnText}>اختيار قناة من القائمة</Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.addCustomChannelBtn}
+                      onPress={handleOpenAddCustomChannel}
+                    >
+                      <MaterialIcons name="add" size={18} color="#ffffff" />
+                      <Text style={styles.addCustomChannelBtnText}>إضافة قناة يدوياً</Text>
+                    </Pressable>
+                  </View>
+                )}
+              </View>
+            ) : (
+              <View style={styles.channelsGrid}>
+                {filteredOverridesList.map((item, index) => {
+                  const streamTypeBadgeColor =
+                    item.streamType === 'youtube'
+                      ? '#ef4444'
+                      : item.streamType === 'iframe'
+                      ? '#a855f7'
+                      : item.streamType === 'hls'
+                      ? '#38bdf8'
+                      : '#10b981';
+
+                  const streamTypeLabel =
+                    item.streamType === 'youtube'
+                      ? 'YouTube'
+                      : item.streamType === 'iframe'
+                      ? 'Iframe'
+                      : item.streamType === 'hls'
+                      ? 'HLS'
+                      : 'تلقائي';
+
+                  return (
+                    <View
+                      key={item.id}
+                      style={[
+                        styles.channelOverrideCard,
+                        item.isDeleted && styles.channelCardDeleted,
+                        item.isHidden && !item.isDeleted && styles.channelCardHidden,
+                      ]}
+                    >
+                      {/* رأس بطاقة القناة */}
+                      <View style={styles.channelCardHeader}>
+                        <View style={styles.channelLogoWrapper}>
+                          {item.logo ? (
+                            <Image
+                              source={{ uri: item.logo }}
+                              style={styles.channelLogoImg}
+                              resizeMode="contain"
+                            />
+                          ) : (
+                            <MaterialIcons name="tv" size={24} color="#64748b" />
+                          )}
+                        </View>
+
+                        <View style={styles.channelInfoText}>
+                          <View style={styles.channelNameRow}>
+                            <Text style={styles.channelName} numberOfLines={1}>
+                              {item.name || item.id}
+                            </Text>
+                            {item.isCustom ? (
+                              <View style={[styles.badgePill, { backgroundColor: '#10b98125' }]}>
+                                <Text style={[styles.badgePillText, { color: '#10b981' }]}>يدوية</Text>
+                              </View>
+                            ) : (
+                              <View style={[styles.badgePill, { backgroundColor: '#38bdf825' }]}>
+                                <Text style={[styles.badgePillText, { color: '#38bdf8' }]}>مخصصة</Text>
+                              </View>
+                            )}
+                          </View>
+
+                          <View style={styles.channelMetaRow}>
+                            <Text style={styles.channelCategoryText}>
+                              {item.category || 'عام'}
+                            </Text>
+                            <Text style={styles.channelIdText} numberOfLines={1}>
+                              ID: {item.id}
+                            </Text>
+                          </View>
+                        </View>
+
+                        <View style={styles.channelBadgesRight}>
+                          <View
+                            style={[
+                              styles.streamTypeBadge,
+                              { backgroundColor: `${streamTypeBadgeColor}20`, borderColor: `${streamTypeBadgeColor}50` },
+                            ]}
+                          >
+                            <Text style={[styles.streamTypeBadgeText, { color: streamTypeBadgeColor }]}>
+                              {streamTypeLabel}
+                            </Text>
+                          </View>
+
+                          {item.isHidden && (
+                            <View style={styles.hiddenBadge}>
+                              <MaterialIcons name="visibility-off" size={12} color="#f59e0b" />
+                              <Text style={styles.hiddenBadgeText}>مخفية</Text>
+                            </View>
+                          )}
+
+                          {item.isDeleted && (
+                            <View style={styles.deletedBadge}>
+                              <MaterialIcons name="delete" size={12} color="#ef4444" />
+                              <Text style={styles.deletedBadgeText}>محذوفة</Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+
+                      {/* مسار البث */}
+                      <View style={styles.channelStreamUrlBox}>
+                        <MaterialIcons name="link" size={14} color="#64748b" />
+                        <Text style={styles.channelStreamUrlText} numberOfLines={1}>
+                          {item.streamUrl || '—'}
+                        </Text>
+                      </View>
+
+                      {/* شريط الإجراءات والترتيب */}
+                      <View style={styles.channelCardActionsRow}>
+                        <View style={styles.reorderBtnsRow}>
+                          <Pressable
+                            style={[styles.reorderBtn, index === 0 && { opacity: 0.3 }]}
+                            onPress={() => handleMoveChannelPriority(index, 'up')}
+                            disabled={index === 0}
+                          >
+                            <MaterialIcons name="arrow-upward" size={16} color="#94a3b8" />
+                          </Pressable>
+                          <Pressable
+                            style={[
+                              styles.reorderBtn,
+                              index === filteredOverridesList.length - 1 && { opacity: 0.3 },
+                            ]}
+                            onPress={() => handleMoveChannelPriority(index, 'down')}
+                            disabled={index === filteredOverridesList.length - 1}
+                          >
+                            <MaterialIcons name="arrow-downward" size={16} color="#94a3b8" />
+                          </Pressable>
+                          {item.sortOrder !== null && item.sortOrder !== undefined && (
+                            <Text style={styles.sortOrderVal}>#{item.sortOrder}</Text>
+                          )}
+                        </View>
+
+                        <View style={styles.actionBtnsGroup}>
+                          <Pressable
+                            style={styles.channelActionBtn}
+                            onPress={() => {
+                              setEditingChannel({
+                                id: item.id,
+                                isCustom: item.isCustom,
+                                name: item.name || '',
+                                logo: item.logo || '',
+                                category: item.category || '',
+                                streamUrl: item.streamUrl || '',
+                                streamType: item.streamType,
+                                isHidden: item.isHidden,
+                                isDeleted: item.isDeleted,
+                                sortOrder: item.sortOrder !== null && item.sortOrder !== undefined ? String(item.sortOrder) : '',
+                              });
+                              setShowEditChannelModal(true);
+                            }}
+                          >
+                            <MaterialIcons name="edit" size={16} color="#38bdf8" />
+                            <Text style={[styles.channelActionBtnText, { color: '#38bdf8' }]}>تعديل</Text>
+                          </Pressable>
+
+                          <Pressable
+                            style={styles.channelActionBtn}
+                            onPress={() => handleToggleChannelHidden(item)}
+                          >
+                            <MaterialIcons
+                              name={item.isHidden ? 'visibility' : 'visibility-off'}
+                              size={16}
+                              color={item.isHidden ? '#10b981' : '#f59e0b'}
+                            />
+                            <Text
+                              style={[
+                                styles.channelActionBtnText,
+                                { color: item.isHidden ? '#10b981' : '#f59e0b' },
+                              ]}
+                            >
+                              {item.isHidden ? 'إظهار' : 'إخفاء'}
+                            </Text>
+                          </Pressable>
+
+                          <Pressable
+                            style={styles.channelActionBtn}
+                            onPress={() => handleToggleChannelDeleted(item)}
+                          >
+                            <MaterialIcons
+                              name={item.isDeleted ? 'restore' : 'delete'}
+                              size={16}
+                              color={item.isDeleted ? '#10b981' : '#ef4444'}
+                            />
+                            <Text
+                              style={[
+                                styles.channelActionBtnText,
+                                { color: item.isDeleted ? '#10b981' : '#ef4444' },
+                              ]}
+                            >
+                              {item.isDeleted ? 'استعادة' : 'حذف'}
+                            </Text>
+                          </Pressable>
+
+                          <Pressable
+                            style={[styles.channelActionBtn, { borderColor: 'rgba(255,255,255,0.08)' }]}
+                            onPress={() => handleDeleteChannelOverride(item.id, item.isCustom)}
+                          >
+                            <MaterialIcons name="replay" size={16} color="#94a3b8" />
+                            <Text style={[styles.channelActionBtnText, { color: '#94a3b8' }]}>
+                              {item.isCustom ? 'حذف كلي' : 'استعادة الأصل'}
+                            </Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
           </View>
         )}
       </ScrollView>
@@ -2417,6 +3017,272 @@ export default function AdminScreen(): React.JSX.Element {
                 onPress={handleCreateCustomNetwork}
               >
                 <Text style={styles.modalConfirmBtnText}>حفظ وإضافة الباقة</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ==========================================
+          مودال اختيار قناة من البث لتعديلها
+          ========================================== */}
+      <Modal visible={showPickChannelModal} transparent animationType="fade">
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { maxWidth: 640, maxHeight: '85%' }]}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHeaderTitleRow}>
+                <MaterialIcons name="search" size={24} color="#38bdf8" />
+                <Text style={styles.modalTitle}>اختيار قناة من البث لتعديلها</Text>
+              </View>
+              <Pressable onPress={() => setShowPickChannelModal(false)}>
+                <MaterialIcons name="close" size={22} color="#94a3b8" />
+              </Pressable>
+            </View>
+
+            <View style={{ paddingHorizontal: 20, paddingTop: 16 }}>
+              <View style={styles.searchBox}>
+                <MaterialIcons name="search" size={20} color="#94a3b8" />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="ابحث باسم القناة أو التصنيف (مثال: beIN, الجزيرة, MBC)..."
+                  placeholderTextColor="#64748b"
+                  value={channelSearchQuery}
+                  onChangeText={setChannelSearchQuery}
+                />
+                {channelSearchQuery ? (
+                  <Pressable onPress={() => setChannelSearchQuery('')}>
+                    <MaterialIcons name="clear" size={18} color="#94a3b8" />
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+
+            {allChannelsLoading ? (
+              <View style={[styles.loadingBox, { padding: 40 }]}>
+                <ActivityIndicator size="large" color="#38bdf8" />
+                <Text style={styles.loadingText}>جاري تحميل قائمة القنوات من البث...</Text>
+              </View>
+            ) : (
+              <ScrollView style={[styles.modalBody, { maxHeight: 420 }]}>
+                {filteredSearchChannels.length === 0 ? (
+                  <View style={[styles.emptyBox, { padding: 30 }]}>
+                    <MaterialIcons name="search-off" size={40} color="#475569" />
+                    <Text style={styles.emptyText}>لم يتم العثور على قنوات مطابقة لبحثك</Text>
+                  </View>
+                ) : (
+                  filteredSearchChannels.map((item) => (
+                    <View key={item.id} style={styles.pickChannelItemRow}>
+                      <View style={styles.pickChannelLogoBox}>
+                        {item.logo ? (
+                          <Image
+                            source={{ uri: item.logo }}
+                            style={{ width: 36, height: 36, borderRadius: 8 }}
+                            resizeMode="contain"
+                          />
+                        ) : (
+                          <MaterialIcons name="tv" size={22} color="#38bdf8" />
+                        )}
+                      </View>
+                      <View style={{ flex: 1, marginHorizontal: 12 }}>
+                        <Text style={styles.pickChannelItemName} numberOfLines={1}>
+                          {item.name}
+                        </Text>
+                        <Text style={styles.pickChannelItemCat} numberOfLines={1}>
+                          {item.groupTitle || 'عام'}
+                        </Text>
+                      </View>
+                      <Pressable
+                        style={styles.pickChannelActionBtn}
+                        onPress={() => handleSelectChannelToOverride(item)}
+                      >
+                        <MaterialIcons name="edit" size={16} color="#ffffff" />
+                        <Text style={styles.pickChannelActionBtnText}>تعديل القناة</Text>
+                      </Pressable>
+                    </View>
+                  ))
+                )}
+              </ScrollView>
+            )}
+
+            <View style={styles.modalActions}>
+              <Pressable
+                style={styles.modalCancelBtn}
+                onPress={() => setShowPickChannelModal(false)}
+              >
+                <Text style={styles.modalCancelBtnText}>إغلاق</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ==========================================
+          مودال تعديل تخصيص أو إضافة قناة مخصصة
+          ========================================== */}
+      <Modal visible={showEditChannelModal} transparent animationType="fade">
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { maxWidth: 640, maxHeight: '90%' }]}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHeaderTitleRow}>
+                <MaterialIcons
+                  name={editingChannel.isCustom ? 'add-to-photos' : 'edit-note'}
+                  size={24}
+                  color={editingChannel.isCustom ? '#10b981' : '#38bdf8'}
+                />
+                <Text style={styles.modalTitle}>
+                  {editingChannel.isCustom ? 'إضافة قناة جديدة مخصصة' : 'تخصيص القناة المحددة'}
+                </Text>
+              </View>
+              <Pressable onPress={() => setShowEditChannelModal(false)}>
+                <MaterialIcons name="close" size={22} color="#94a3b8" />
+              </Pressable>
+            </View>
+
+            <ScrollView style={styles.modalBody}>
+              {/* اسم القناة */}
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>اسم القناة: *</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="مثال: beIN SPORTS 1 HD"
+                  placeholderTextColor="#64748b"
+                  value={editingChannel.name}
+                  onChangeText={(val) => setEditingChannel((p) => ({ ...p, name: val }))}
+                />
+              </View>
+
+              {/* رابط الشعار */}
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>رابط الشعار (اختياري):</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="https://example.com/logo.png"
+                  placeholderTextColor="#64748b"
+                  value={editingChannel.logo}
+                  onChangeText={(val) => setEditingChannel((p) => ({ ...p, logo: val }))}
+                />
+              </View>
+
+              {/* التصنيف / الباقة */}
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>التصنيف / الباقة:</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="مثال: قنوات رياضية"
+                  placeholderTextColor="#64748b"
+                  value={editingChannel.category}
+                  onChangeText={(val) => setEditingChannel((p) => ({ ...p, category: val }))}
+                />
+              </View>
+
+              {/* رابط البث */}
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>رابط البث (Stream URL / YouTube / Web): *</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="https://.../stream.m3u8 أو رابط يوتيوب أو صفحة ويب"
+                  placeholderTextColor="#64748b"
+                  value={editingChannel.streamUrl}
+                  onChangeText={(val) => setEditingChannel((p) => ({ ...p, streamUrl: val }))}
+                />
+              </View>
+
+              {/* نوع المشغل */}
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>نوع المشغل (Stream Type):</Text>
+                <View style={styles.streamTypeSelectorRow}>
+                  {[
+                    { key: 'auto', label: 'تلقائي (Auto)' },
+                    { key: 'hls', label: 'HLS (.m3u8)' },
+                    { key: 'youtube', label: 'YouTube Live' },
+                    { key: 'iframe', label: 'موقع ويب (Iframe)' },
+                  ].map((st) => (
+                    <Pressable
+                      key={st.key}
+                      style={[
+                        styles.streamTypeOption,
+                        editingChannel.streamType === st.key && styles.streamTypeOptionActive,
+                      ]}
+                      onPress={() => setEditingChannel((p) => ({ ...p, streamType: st.key as any }))}
+                    >
+                      <Text
+                        style={[
+                          styles.streamTypeOptionText,
+                          editingChannel.streamType === st.key && styles.streamTypeOptionTextActive,
+                        ]}
+                      >
+                        {st.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+
+              {/* ترتيب الظهور */}
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>ترتيب الأولوية (أرقام أصغر تظهر أولاً، اختياري):</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="مثال: 1 أو 10 (اتركه فارغاً للترتيب الافتراضي)"
+                  placeholderTextColor="#64748b"
+                  keyboardType="numeric"
+                  value={editingChannel.sortOrder}
+                  onChangeText={(val) => setEditingChannel((p) => ({ ...p, sortOrder: val }))}
+                />
+              </View>
+
+              {/* خيارات الحالة: إخفاء / حذف */}
+              <View style={styles.toggleRowContainer}>
+                <Pressable
+                  style={[styles.toggleOptionBox, editingChannel.isHidden && { borderColor: '#f59e0b', backgroundColor: 'rgba(245, 158, 11, 0.1)' }]}
+                  onPress={() => setEditingChannel((p) => ({ ...p, isHidden: !p.isHidden }))}
+                >
+                  <MaterialIcons
+                    name={editingChannel.isHidden ? 'visibility-off' : 'visibility'}
+                    size={20}
+                    color={editingChannel.isHidden ? '#f59e0b' : '#94a3b8'}
+                  />
+                  <Text style={[styles.toggleOptionText, editingChannel.isHidden && { color: '#f59e0b' }]}>
+                    {editingChannel.isHidden ? 'القناة مخفية' : 'القناة ظاهرة'}
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  style={[styles.toggleOptionBox, editingChannel.isDeleted && { borderColor: '#ef4444', backgroundColor: 'rgba(239, 68, 68, 0.1)' }]}
+                  onPress={() => setEditingChannel((p) => ({ ...p, isDeleted: !p.isDeleted }))}
+                >
+                  <MaterialIcons
+                    name={editingChannel.isDeleted ? 'delete' : 'delete-outline'}
+                    size={20}
+                    color={editingChannel.isDeleted ? '#ef4444' : '#94a3b8'}
+                  />
+                  <Text style={[styles.toggleOptionText, editingChannel.isDeleted && { color: '#ef4444' }]}>
+                    {editingChannel.isDeleted ? 'محذوفة من العرض' : 'غير محذوفة'}
+                  </Text>
+                </Pressable>
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <Pressable
+                style={styles.modalCancelBtn}
+                onPress={() => setShowEditChannelModal(false)}
+              >
+                <Text style={styles.modalCancelBtnText}>إلغاء</Text>
+              </Pressable>
+
+              <Pressable
+                style={[styles.modalConfirmBtn, { backgroundColor: editingChannel.isCustom ? '#10b981' : '#38bdf8' }]}
+                onPress={handleSaveChannelOverride}
+                disabled={channelOverridesSaving}
+              >
+                {channelOverridesSaving ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text style={styles.modalConfirmBtnText}>
+                    {editingChannel.isCustom ? 'حفظ وإضافة القناة' : 'تطبيق وحفظ التخصيص'}
+                  </Text>
+                )}
               </Pressable>
             </View>
           </View>
@@ -3550,5 +4416,379 @@ const styles = StyleSheet.create({
   reorderBtnDisabled: {
     backgroundColor: 'rgba(255, 255, 255, 0.03)',
     borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  channelsTabContainer: {
+    gap: 20,
+  },
+  channelsHeaderActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    alignItems: 'center',
+  },
+  pickChannelBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#0284c7',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  pickChannelBtnText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  addCustomChannelBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#059669',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  addCustomChannelBtnText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  channelSearchFilterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 16,
+    flexWrap: 'wrap',
+  },
+  channelSearchInputBox: {
+    flex: 1,
+    minWidth: 260,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1e293b',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 44,
+    gap: 8,
+  },
+  channelSearchInput: {
+    flex: 1,
+    color: '#ffffff',
+    fontSize: 13,
+  },
+  channelCountsBadge: {
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.25)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  channelCountsText: {
+    color: '#38bdf8',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  channelsEmptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#111827',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: 16,
+    padding: 40,
+    marginTop: 10,
+  },
+  channelsEmptyIconBox: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  channelsEmptyTitle: {
+    color: '#ffffff',
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  channelsEmptyDesc: {
+    color: '#94a3b8',
+    fontSize: 14,
+    textAlign: 'center',
+    maxWidth: 500,
+    lineHeight: 22,
+  },
+  channelsGrid: {
+    gap: 12,
+  },
+  channelOverrideCard: {
+    backgroundColor: '#111827',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.07)',
+    borderRadius: 14,
+    padding: 16,
+    gap: 12,
+  },
+  channelCardDeleted: {
+    opacity: 0.6,
+    borderColor: 'rgba(239, 68, 68, 0.3)',
+    backgroundColor: 'rgba(239, 68, 68, 0.03)',
+  },
+  channelCardHidden: {
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+  },
+  channelCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  channelLogoWrapper: {
+    width: 46,
+    height: 46,
+    borderRadius: 10,
+    backgroundColor: '#1e293b',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  channelLogoImg: {
+    width: 40,
+    height: 40,
+  },
+  channelInfoText: {
+    flex: 1,
+    gap: 4,
+  },
+  channelNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  channelName: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  badgePill: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  badgePillText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  channelMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  channelCategoryText: {
+    color: '#94a3b8',
+    fontSize: 12,
+  },
+  channelIdText: {
+    color: '#64748b',
+    fontSize: 11,
+  },
+  channelBadgesRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  streamTypeBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  streamTypeBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  hiddenBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  hiddenBadgeText: {
+    color: '#f59e0b',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  deletedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  deletedBadgeText: {
+    color: '#ef4444',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  channelStreamUrlBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#070b14',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.04)',
+  },
+  channelStreamUrlText: {
+    flex: 1,
+    color: '#64748b',
+    fontSize: 12,
+    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
+  },
+  channelCardActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.05)',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  reorderBtnsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  sortOrderVal: {
+    color: '#38bdf8',
+    fontSize: 12,
+    fontWeight: '700',
+    marginRight: 6,
+  },
+  actionBtnsGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  channelActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    backgroundColor: 'rgba(255, 255, 255, 0.02)',
+  },
+  channelActionBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  pickChannelItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  pickChannelLogoBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    backgroundColor: '#1e293b',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pickChannelItemName: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  pickChannelItemCat: {
+    color: '#94a3b8',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  pickChannelActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#0284c7',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  pickChannelActionBtnText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  streamTypeSelectorRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 4,
+  },
+  streamTypeOption: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#1e293b',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  streamTypeOptionActive: {
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    borderColor: '#38bdf8',
+  },
+  streamTypeOptionText: {
+    color: '#94a3b8',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  streamTypeOptionTextActive: {
+    color: '#38bdf8',
+    fontWeight: '700',
+  },
+  toggleRowContainer: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+  },
+  toggleOptionBox: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    backgroundColor: '#1e293b',
+  },
+  toggleOptionText: {
+    color: '#94a3b8',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

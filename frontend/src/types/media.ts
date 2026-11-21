@@ -18,4 +18,8 @@ export interface MediaItem {
   url: string;
   sources?: StreamSource[];
   type?: 'live' | 'movie' | 'series';
+  streamType?: 'auto' | 'hls' | 'youtube' | 'iframe';
+  isHidden?: boolean;
+  isCustom?: boolean;
+  sortOrder?: number | null;
 }

@@ -65,3 +65,20 @@ CREATE TABLE IF NOT EXISTS app_settings (
   value TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+-- جدول تخصيص القنوات المختارة (Channel Overrides)
+CREATE TABLE IF NOT EXISTS channel_overrides (
+  id TEXT PRIMARY KEY,
+  name TEXT,
+  logo TEXT,
+  category TEXT,
+  stream_url TEXT,
+  stream_type TEXT DEFAULT 'auto',
+  is_hidden INTEGER DEFAULT 0,
+  is_deleted INTEGER DEFAULT 0,
+  sort_order INTEGER,
+  is_custom INTEGER DEFAULT 0,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_channel_overrides_sort ON channel_overrides(sort_order);

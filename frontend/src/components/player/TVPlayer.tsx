@@ -4,6 +4,7 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import { MaterialIcons } from '@expo/vector-icons';
 import Hls from 'hls.js';
 import { shouldAutoProxy, getProxyStreamUrl } from '../../utils/proxy';
+import { TVEmbedPlayer } from './TVEmbedPlayer';
 
 export interface HlsLevelOption {
   id: number; // -1 for auto
@@ -14,11 +15,29 @@ export interface HlsLevelOption {
 
 export interface TVPlayerProps {
   streamUrl: string;
+  streamType?: 'auto' | 'hls' | 'youtube' | 'iframe';
   onBuffering?: (isBuffering: boolean) => void;
   onError?: (errorMessage: string) => void;
   onLevelsLoaded?: (levels: HlsLevelOption[]) => void;
   selectedLevel?: number;
   style?: StyleProp<ViewStyle>;
+}
+
+/**
+ * تحويل أي رابط يوتيوب بمختلف صيغه إلى رابط embed جاهز للتشغيل التلقائي
+ */
+export function normalizeYouTubeEmbedUrl(url: string): string {
+  if (!url) return url;
+  try {
+    const match = url.match(
+      /(?:youtube\.com\/(?:watch\?v=|live\/|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i
+    );
+    if (match && match[1]) {
+      const videoId = match[1];
+      return `https://www.youtube.com/embed/${videoId}?autoplay=1&playsinline=1&enablejsapi=1`;
+    }
+  } catch {}
+  return url;
 }
 
 /**
@@ -29,6 +48,7 @@ export interface TVPlayerProps {
  */
 export const TVPlayer: React.FC<TVPlayerProps> = ({
   streamUrl,
+  streamType = 'auto',
   onBuffering,
   onError,
   onLevelsLoaded,
@@ -47,7 +67,15 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
   const onLevelsLoadedRef = useRef(onLevelsLoaded);
   onLevelsLoadedRef.current = onLevelsLoaded;
 
+  const isYouTube =
+    streamType === 'youtube' ||
+    streamUrl.includes('youtube.com') ||
+    streamUrl.includes('youtu.be');
+
   const isEmbedUrl =
+    streamType === 'youtube' ||
+    streamType === 'iframe' ||
+    isYouTube ||
     streamUrl.includes('/embed/') ||
     streamUrl.includes('vidsrc') ||
     streamUrl.includes('vidlink.pro') ||
@@ -55,22 +83,21 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
     streamUrl.includes('autoembed') ||
     streamUrl.includes('2embed') ||
     streamUrl.includes('dailymotion.com') ||
-    streamUrl.includes('youtube.com/embed') ||
-    streamUrl.includes('youtube.com') ||
-    streamUrl.includes('youtu.be') ||
     streamUrl.includes('player.');
-
-  const isYouTube =
-    streamUrl.includes('youtube.com') ||
-    streamUrl.includes('youtu.be');
 
   const finalEmbedUrl = React.useMemo(() => {
     if (!isEmbedUrl) return streamUrl;
     let url = streamUrl;
+
+    if (isYouTube) {
+      url = normalizeYouTubeEmbedUrl(url);
+    }
+
     // إزالة أي معاملات لكتم الصوت مثل mute=1 أو muted=1
     url = url
       .replace(/([?&])(?:mute|muted)=(?:1|true|yes)(&|$)/gi, '$1')
       .replace(/[?&]$/, '');
+
     if (isYouTube && !url.includes('enablejsapi=1')) {
       url = url + (url.includes('?') ? '&' : '?') + 'enablejsapi=1';
     }
@@ -420,7 +447,18 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
     );
   }
 
-  // البيئات الأصلية (Native - Android TV / Fire TV / Mobile) عبر expo-video
+  // البيئات الأصلية (Native - Android TV / Fire TV / Mobile)
+  if (isEmbedUrl) {
+    return (
+      <TVEmbedPlayer
+        url={finalEmbedUrl}
+        style={style}
+        onError={onError}
+      />
+    );
+  }
+
+  // روابط البث التلفزيوني العادية (HLS / m3u8) عبر expo-video
   return (
     <NativeVideoPlayer
       streamUrl={streamUrl}

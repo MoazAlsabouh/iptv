@@ -3627,6 +3627,287 @@ async function handleAdminUpdateVodSettings(request: Request, env: Env): Promise
   }
 }
 
+// ==========================================
+// إدارة تخصيص القنوات المختارة (Channel Overrides)
+// ==========================================
+
+let isOverridesTableReady = false;
+
+async function ensureChannelOverridesTable(db: D1Database): Promise<void> {
+  if (isOverridesTableReady) return;
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS channel_overrides (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        logo TEXT,
+        category TEXT,
+        stream_url TEXT,
+        stream_type TEXT DEFAULT 'auto',
+        is_hidden INTEGER DEFAULT 0,
+        is_deleted INTEGER DEFAULT 0,
+        sort_order INTEGER,
+        is_custom INTEGER DEFAULT 0,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_channel_overrides_sort ON channel_overrides(sort_order);
+    `);
+    isOverridesTableReady = true;
+  } catch (err) {
+    console.warn('[DB] Failed to ensure channel_overrides table:', err);
+  }
+}
+
+async function handleAdminGetChannelOverrides(request: Request, env: Env): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  await ensureChannelOverridesTable(env.DB);
+
+  try {
+    const res = await env.DB.prepare(
+      'SELECT * FROM channel_overrides ORDER BY CASE WHEN sort_order IS NOT NULL THEN sort_order ELSE 999999 END ASC, updated_at DESC'
+    ).all<any>();
+
+    const overrides = (res.results || []).map((r) => ({
+      id: r.id,
+      name: r.name,
+      logo: r.logo,
+      category: r.category,
+      streamUrl: r.stream_url,
+      streamType: r.stream_type || 'auto',
+      isHidden: Boolean(r.is_hidden),
+      isDeleted: Boolean(r.is_deleted),
+      sortOrder: r.sort_order,
+      isCustom: Boolean(r.is_custom),
+      updatedAt: r.updated_at,
+    }));
+
+    return jsonResponse({ overrides });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل جلب تخصيصات القنوات: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminSaveChannelOverride(request: Request, env: Env): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  await ensureChannelOverridesTable(env.DB);
+
+  try {
+    const body = (await request.json()) as any;
+    const isCustom = Boolean(body.isCustom);
+    let id = (body.id || '').trim();
+
+    if (!id) {
+      if (isCustom) {
+        id = `custom_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      } else {
+        return jsonResponse({ error: 'معرّف القناة مطلوب' }, 400);
+      }
+    }
+
+    const name = body.name !== undefined && body.name !== null ? String(body.name).trim() : null;
+    const logo = body.logo !== undefined && body.logo !== null ? String(body.logo).trim() : null;
+    const category = body.category !== undefined && body.category !== null ? String(body.category).trim() : null;
+    const streamUrl = body.streamUrl !== undefined && body.streamUrl !== null ? String(body.streamUrl).trim() : null;
+    const streamType = body.streamType || 'auto';
+    const isHidden = body.isHidden ? 1 : 0;
+    const isDeleted = body.isDeleted ? 1 : 0;
+    const sortOrder = body.sortOrder !== undefined && body.sortOrder !== null ? Number(body.sortOrder) : null;
+    const isCustomInt = isCustom ? 1 : 0;
+    const now = new Date().toISOString();
+
+    await env.DB.prepare(`
+      INSERT INTO channel_overrides (
+        id, name, logo, category, stream_url, stream_type, is_hidden, is_deleted, sort_order, is_custom, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        logo = excluded.logo,
+        category = excluded.category,
+        stream_url = excluded.stream_url,
+        stream_type = excluded.stream_type,
+        is_hidden = excluded.is_hidden,
+        is_deleted = excluded.is_deleted,
+        sort_order = COALESCE(excluded.sort_order, channel_overrides.sort_order),
+        is_custom = excluded.is_custom,
+        updated_at = excluded.updated_at
+    `).bind(
+      id, name, logo, category, streamUrl, streamType, isHidden, isDeleted, sortOrder, isCustomInt, now
+    ).run();
+
+    return jsonResponse({
+      success: true,
+      item: {
+        id,
+        name,
+        logo,
+        category,
+        streamUrl,
+        streamType,
+        isHidden: Boolean(isHidden),
+        isDeleted: Boolean(isDeleted),
+        sortOrder,
+        isCustom,
+        updatedAt: now,
+      },
+    });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل حفظ تخصيص القناة: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminUpdateChannelOverride(request: Request, env: Env, id: string): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  await ensureChannelOverridesTable(env.DB);
+
+  try {
+    const body = (await request.json()) as any;
+    const existing = await env.DB.prepare('SELECT * FROM channel_overrides WHERE id = ?').bind(id).first<any>();
+
+    const name = body.name !== undefined ? (body.name ? String(body.name).trim() : null) : (existing?.name ?? null);
+    const logo = body.logo !== undefined ? (body.logo ? String(body.logo).trim() : null) : (existing?.logo ?? null);
+    const category = body.category !== undefined ? (body.category ? String(body.category).trim() : null) : (existing?.category ?? null);
+    const streamUrl = body.streamUrl !== undefined ? (body.streamUrl ? String(body.streamUrl).trim() : null) : (existing?.stream_url ?? null);
+    const streamType = body.streamType !== undefined ? body.streamType : (existing?.stream_type || 'auto');
+    const isHidden = body.isHidden !== undefined ? (body.isHidden ? 1 : 0) : (existing?.is_hidden ?? 0);
+    const isDeleted = body.isDeleted !== undefined ? (body.isDeleted ? 1 : 0) : (existing?.is_deleted ?? 0);
+    const sortOrder = body.sortOrder !== undefined ? (body.sortOrder !== null ? Number(body.sortOrder) : null) : (existing?.sort_order ?? null);
+    const isCustom = body.isCustom !== undefined ? (body.isCustom ? 1 : 0) : (existing?.is_custom ?? 0);
+    const now = new Date().toISOString();
+
+    await env.DB.prepare(`
+      INSERT INTO channel_overrides (
+        id, name, logo, category, stream_url, stream_type, is_hidden, is_deleted, sort_order, is_custom, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        logo = excluded.logo,
+        category = excluded.category,
+        stream_url = excluded.stream_url,
+        stream_type = excluded.stream_type,
+        is_hidden = excluded.is_hidden,
+        is_deleted = excluded.is_deleted,
+        sort_order = excluded.sort_order,
+        is_custom = excluded.is_custom,
+        updated_at = excluded.updated_at
+    `).bind(
+      id, name, logo, category, streamUrl, streamType, isHidden, isDeleted, sortOrder, isCustom, now
+    ).run();
+
+    return jsonResponse({
+      success: true,
+      item: {
+        id,
+        name,
+        logo,
+        category,
+        streamUrl,
+        streamType,
+        isHidden: Boolean(isHidden),
+        isDeleted: Boolean(isDeleted),
+        sortOrder,
+        isCustom: Boolean(isCustom),
+        updatedAt: now,
+      },
+    });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل تعديل القناة: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminDeleteChannelOverride(request: Request, env: Env, id: string): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  await ensureChannelOverridesTable(env.DB);
+
+  try {
+    await env.DB.prepare('DELETE FROM channel_overrides WHERE id = ?').bind(id).run();
+    return jsonResponse({ success: true, message: 'تم إلغاء التخصيص واستعادة القناة الأصلية بنجاح' });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل حذف التخصيص: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminReorderChannelOverrides(request: Request, env: Env): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  await ensureChannelOverridesTable(env.DB);
+
+  try {
+    const body = (await request.json()) as any;
+    const items = Array.isArray(body.items) ? body.items : [];
+    const now = new Date().toISOString();
+
+    const stmts = items
+      .filter((it: any) => it && typeof it.id === 'string')
+      .map((it: any) =>
+        env.DB.prepare('UPDATE channel_overrides SET sort_order = ?, updated_at = ? WHERE id = ?').bind(
+          it.sortOrder !== null && it.sortOrder !== undefined ? Number(it.sortOrder) : null,
+          now,
+          it.id
+        )
+      );
+
+    if (stmts.length > 0) {
+      await env.DB.batch(stmts);
+    }
+
+    return jsonResponse({ success: true, message: 'تم حفظ ترتيب القنوات بنجاح' });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل إعادة الترتيب: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleGetPublicChannelOverrides(request: Request, env: Env): Promise<Response> {
+  await ensureChannelOverridesTable(env.DB);
+
+  try {
+    const res = await env.DB.prepare(
+      'SELECT * FROM channel_overrides ORDER BY CASE WHEN sort_order IS NOT NULL THEN sort_order ELSE 999999 END ASC, updated_at DESC'
+    ).all<any>();
+
+    const overrides = (res.results || []).map((r) => ({
+      id: r.id,
+      name: r.name,
+      logo: r.logo,
+      category: r.category,
+      streamUrl: r.stream_url,
+      streamType: r.stream_type || 'auto',
+      isHidden: Boolean(r.is_hidden),
+      isDeleted: Boolean(r.is_deleted),
+      sortOrder: r.sort_order,
+      isCustom: Boolean(r.is_custom),
+    }));
+
+    return jsonResponse(
+      { overrides },
+      200,
+      {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+      }
+    );
+  } catch (err: any) {
+    return jsonResponse({ overrides: [] });
+  }
+}
+
 /**
  * 5. نظام HLS Stream Proxy
  * يقوم بإعادة كتابة روابط ملفات .m3u8 ومقاطع .ts/.m4s وحذف ترويسة Origin وتعيين Referer مناسب
@@ -4083,6 +4364,31 @@ export default {
       if (request.method === 'PUT' || request.method === 'POST') {
         return handleAdminUpdateVodSettings(request, env);
       }
+    }
+
+    // نقاط نهاية تخصيص القنوات المختارة (Admin Channel Overrides)
+    if (url.pathname === '/api/admin/channels/overrides' && request.method === 'GET') {
+      return handleAdminGetChannelOverrides(request, env);
+    }
+    if (url.pathname === '/api/admin/channels/overrides' && request.method === 'POST') {
+      return handleAdminSaveChannelOverride(request, env);
+    }
+    if (url.pathname === '/api/admin/channels/overrides/reorder' && request.method === 'POST') {
+      return handleAdminReorderChannelOverrides(request, env);
+    }
+    if (url.pathname.startsWith('/api/admin/channels/overrides/')) {
+      const idParam = decodeURIComponent(url.pathname.substring('/api/admin/channels/overrides/'.length));
+      if (request.method === 'PUT' || request.method === 'POST') {
+        return handleAdminUpdateChannelOverride(request, env, idParam);
+      }
+      if (request.method === 'DELETE') {
+        return handleAdminDeleteChannelOverride(request, env, idParam);
+      }
+    }
+
+    // نقطة نهاية عامة لجلب تخصيصات القنوات للتطبيق
+    if (url.pathname === '/api/channels/overrides' && request.method === 'GET') {
+      return handleGetPublicChannelOverrides(request, env);
     }
 
     // 3. نقاط نهاية بوابة الموزعين (Reseller Portal)
