@@ -143,14 +143,13 @@ function withAndroidTV(config) {
    * إرسال أحداث أزرار ريموت Android TV إلى React Native عبر DeviceEventEmitter (onTVKeyEvent)
    */
   override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
-    val keyCode = event.keyCode
-    val action = event.action
-
     // إذا كان التركيز الحالي على حقل إدخال نصي (EditText)، نمرر الحدث مباشرة للنظام دون إرسال onTVKeyEvent
-    val isEditTextFocused = currentFocus is android.widget.EditText
+    if (currentFocus is android.widget.EditText) {
+      return super.dispatchKeyEvent(event)
+    }
 
-    if (action == android.view.KeyEvent.ACTION_DOWN && !isEditTextFocused) {
-      val eventType = when (keyCode) {
+    if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+      val eventType = when (event.keyCode) {
         android.view.KeyEvent.KEYCODE_DPAD_UP -> "DPAD_UP"
         android.view.KeyEvent.KEYCODE_DPAD_DOWN -> "DPAD_DOWN"
         android.view.KeyEvent.KEYCODE_DPAD_LEFT -> "DPAD_LEFT"
@@ -169,15 +168,22 @@ function withAndroidTV(config) {
 
       if (eventType != null) {
         try {
-          val params: com.facebook.react.bridge.WritableMap = com.facebook.react.bridge.Arguments.createMap().apply {
-            putString("eventType", eventType)
-            putInt("keyCode", keyCode)
-            putInt("action", action)
+          val reactContext = reactHost?.currentReactContext ?: reactInstanceManager?.currentReactContext
+          android.util.Log.d("TelfaziTVKey", "keyCode=\${event.keyCode}, eventType=\$eventType, emitted=\${reactContext != null}")
+
+          if (reactContext != null) {
+            val params: com.facebook.react.bridge.WritableMap = com.facebook.react.bridge.Arguments.createMap().apply {
+              putString("eventType", eventType)
+              putInt("keyCode", event.keyCode)
+              putInt("action", event.action)
+            }
+            reactContext
+              .getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+              ?.emit("onTVKeyEvent", params)
           }
-          reactInstanceManager?.currentReactContext
-            ?.getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-            ?.emit("onTVKeyEvent", params)
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+          android.util.Log.e("TelfaziTVKey", "Error emitting onTVKeyEvent: \${e.message}")
+        }
       }
     }
 

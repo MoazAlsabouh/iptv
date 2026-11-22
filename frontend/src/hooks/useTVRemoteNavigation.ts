@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Platform, BackHandler, DeviceEventEmitter } from 'react-native';
 import { useRouter } from 'expo-router';
 import { safeGoBack } from '../utils/navigation';
@@ -23,14 +23,16 @@ export interface TVKeyHandlers {
  */
 export function useTVRemoteNavigation(handlers: TVKeyHandlers) {
   const router = useRouter();
+  const handlersRef = useRef<TVKeyHandlers>(handlers);
+  handlersRef.current = handlers;
 
   // 1. دعم زر الرجوع الأصلي في أجهزة Android و Android TV
   useEffect(() => {
     if (Platform.OS === 'web') return;
 
     const backAction = () => {
-      if (handlers.onBack) {
-        const handled = handlers.onBack();
+      if (handlersRef.current.onBack) {
+        const handled = handlersRef.current.onBack();
         if (handled === true) return true;
         if (handled === false) return false;
         return true;
@@ -41,7 +43,7 @@ export function useTVRemoteNavigation(handlers: TVKeyHandlers) {
 
     const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
     return () => backHandler.remove();
-  }, [handlers, router]);
+  }, [router]);
 
   // 1.ب. دعم أزرار ريموت Android TV الأصلية (D-Pad, Enter, Channel +/-)
   useEffect(() => {
@@ -50,37 +52,37 @@ export function useTVRemoteNavigation(handlers: TVKeyHandlers) {
     const sub = DeviceEventEmitter.addListener(
       'onTVKeyEvent',
       (event: { eventType: string; keyCode: number }) => {
-        handlers.onAnyKey?.();
+        handlersRef.current.onAnyKey?.();
 
         switch (event?.eventType) {
           case 'DPAD_UP':
-            handlers.onArrowUp?.();
+            handlersRef.current.onArrowUp?.();
             break;
           case 'DPAD_DOWN':
-            handlers.onArrowDown?.();
+            handlersRef.current.onArrowDown?.();
             break;
           case 'DPAD_LEFT':
-            handlers.onArrowLeft?.();
+            handlersRef.current.onArrowLeft?.();
             break;
           case 'DPAD_RIGHT':
-            handlers.onArrowRight?.();
+            handlersRef.current.onArrowRight?.();
             break;
           case 'DPAD_CENTER':
           case 'ENTER':
-            handlers.onEnter?.();
+            handlersRef.current.onEnter?.();
             break;
           case 'CHANNEL_UP':
-            if (handlers.onChannelUp) {
-              handlers.onChannelUp();
+            if (handlersRef.current.onChannelUp) {
+              handlersRef.current.onChannelUp();
             } else {
-              handlers.onArrowUp?.();
+              handlersRef.current.onArrowUp?.();
             }
             break;
           case 'CHANNEL_DOWN':
-            if (handlers.onChannelDown) {
-              handlers.onChannelDown();
+            if (handlersRef.current.onChannelDown) {
+              handlersRef.current.onChannelDown();
             } else {
-              handlers.onArrowDown?.();
+              handlersRef.current.onArrowDown?.();
             }
             break;
         }
@@ -90,7 +92,7 @@ export function useTVRemoteNavigation(handlers: TVKeyHandlers) {
     return () => {
       sub.remove();
     };
-  }, [handlers]);
+  }, []);
 
   // 2. دعم لوحة المفاتيح وريموتات الويب والمتصفحات الذكية
   useEffect(() => {
@@ -113,20 +115,23 @@ export function useTVRemoteNavigation(handlers: TVKeyHandlers) {
         return;
       }
 
-      handlers.onAnyKey?.();
+      handlersRef.current.onAnyKey?.();
 
       switch (event.key) {
         case 'Enter':
         case 'Select':
-          if (handlers.onEnter) {
-            handlers.onEnter();
+        case 'Ok':
+        case 'OK':
+        case 'NumpadEnter':
+          if (handlersRef.current.onEnter) {
+            handlersRef.current.onEnter();
           }
           break;
         case 'Escape':
         case 'Backspace':
         case 'BrowserBack':
-          if (handlers.onBack) {
-            const handled = handlers.onBack();
+          if (handlersRef.current.onBack) {
+            const handled = handlersRef.current.onBack();
             if (handled !== false) {
               event.preventDefault();
             }
@@ -135,43 +140,43 @@ export function useTVRemoteNavigation(handlers: TVKeyHandlers) {
           }
           break;
         case 'ArrowUp':
-          if (handlers.onArrowUp) {
+          if (handlersRef.current.onArrowUp) {
             event.preventDefault();
-            handlers.onArrowUp();
+            handlersRef.current.onArrowUp();
           }
           break;
         case 'ArrowDown':
-          if (handlers.onArrowDown) {
+          if (handlersRef.current.onArrowDown) {
             event.preventDefault();
-            handlers.onArrowDown();
+            handlersRef.current.onArrowDown();
           }
           break;
         case 'ArrowLeft':
-          if (handlers.onArrowLeft) {
+          if (handlersRef.current.onArrowLeft) {
             event.preventDefault();
-            handlers.onArrowLeft();
+            handlersRef.current.onArrowLeft();
           }
           break;
         case 'ArrowRight':
-          if (handlers.onArrowRight) {
+          if (handlersRef.current.onArrowRight) {
             event.preventDefault();
-            handlers.onArrowRight();
+            handlersRef.current.onArrowRight();
           }
           break;
         case 'ChannelUp':
         case 'PageUp':
         case 'MediaTrackNext':
-          if (handlers.onChannelUp) {
+          if (handlersRef.current.onChannelUp) {
             event.preventDefault();
-            handlers.onChannelUp();
+            handlersRef.current.onChannelUp();
           }
           break;
         case 'ChannelDown':
         case 'PageDown':
         case 'MediaTrackPrevious':
-          if (handlers.onChannelDown) {
+          if (handlersRef.current.onChannelDown) {
             event.preventDefault();
-            handlers.onChannelDown();
+            handlersRef.current.onChannelDown();
           }
           break;
         default:
@@ -183,5 +188,5 @@ export function useTVRemoteNavigation(handlers: TVKeyHandlers) {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handlers, router]);
+  }, [router]);
 }

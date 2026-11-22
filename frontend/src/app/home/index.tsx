@@ -376,71 +376,7 @@ export default function DashboardScreen(): React.JSX.Element {
     }
   }, [isWide, router, handleOpenFullScreen]);
 
-  // استماع لأزرار لوحة المفاتيح والريموت على الويب مع حماية حقول الإدخال
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      const activeEl = document.activeElement;
-      const isInput =
-        activeEl &&
-        (activeEl.tagName === 'INPUT' ||
-          activeEl.tagName === 'TEXTAREA' ||
-          (activeEl as HTMLElement).isContentEditable);
-
-      if (isInput) {
-        if (e.key === 'Escape' || e.key === 'ArrowDown') {
-          (activeEl as HTMLElement).blur();
-          setActivePane('channels');
-          setFocusedChannelIndex(0);
-          e.preventDefault();
-        }
-        return;
-      }
-
-      const isConfirm =
-        e.key === 'Enter' ||
-        e.key === 'NumpadEnter' ||
-        e.key === 'Select' ||
-        e.key === 'Ok' ||
-        e.key === 'OK' ||
-        e.keyCode === 13 ||
-        e.keyCode === 23 ||
-        e.which === 13 ||
-        e.which === 23;
-
-      if (isConfirm) {
-        e.preventDefault();
-        e.stopPropagation();
-        handleEnterKey();
-        return;
-      }
-
-      switch (e.key) {
-        case 'ArrowUp':
-          e.preventDefault();
-          handleArrowUp();
-          break;
-        case 'ArrowDown':
-          e.preventDefault();
-          handleArrowDown();
-          break;
-        case 'ArrowRight':
-          e.preventDefault();
-          handleArrowRight();
-          break;
-        case 'ArrowLeft':
-          e.preventDefault();
-          handleArrowLeft();
-          break;
-      }
-    };
-
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleArrowUp, handleArrowDown, handleArrowRight, handleArrowLeft, handleEnterKey]);
-
-  // التنقل السريع بريموت أجهزة Android TV
+  // التنقل الموحد بريموت أجهزة Android TV ولوحة المفاتيح
   useTVRemoteNavigation({
     onArrowUp: handleArrowUp,
     onArrowDown: handleArrowDown,

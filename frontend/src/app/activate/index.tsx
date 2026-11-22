@@ -74,18 +74,19 @@ export default function ActivateScreen(): React.JSX.Element {
   // تنسيق كود التفعيل بنمط (XX-XXXX-XXXX) بحد أقصى 12 محرفاً
   const formatActivationCode = (input: string, prevCode: string): string => {
     if (!input) return '';
+    const upperInput = input.toUpperCase();
 
     // إذا كان المستخدم يحذف (Backspace)
-    if (input.length < prevCode.length) {
+    if (upperInput.length < prevCode.length) {
       // إذا كان النص السابق ينتهي بشرطة وتم حذفها، نحذف المحرف السابق للشرطة أيضاً لتسهيل الحذف
-      if (prevCode.endsWith('-') && input === prevCode.slice(0, -1)) {
-        return input.slice(0, -1).toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 12);
+      if (prevCode.endsWith('-') && upperInput === prevCode.slice(0, -1)) {
+        return upperInput.slice(0, -1).replace(/[^A-Z0-9-]/g, '').slice(0, 12);
       }
-      return input.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 12);
+      return upperInput.replace(/[^A-Z0-9-]/g, '').slice(0, 12);
     }
 
     // استخراج جميع المحارف الأبجدية والرقمية فقط (تنظيف المسافات والرموز)
-    const raw = input.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10);
+    const raw = upperInput.replace(/[^A-Z0-9]/g, '').slice(0, 10);
     if (!raw) return '';
 
     // تطبيق التنسيق التلقائي XX-XXXX-XXXX
@@ -105,13 +106,14 @@ export default function ActivateScreen(): React.JSX.Element {
 
   const handleCodeChange = (text: string) => {
     setErrorMessage(null);
-    const formatted = formatActivationCode(text, codeRef.current || '');
+    const upperText = (text || '').toUpperCase();
+    const formatted = formatActivationCode(upperText, codeRef.current || '');
     codeRef.current = formatted;
     setCode(formatted);
   };
 
   const handleActivate = async () => {
-    const currentCode = (codeRef.current || code || '').trim();
+    const currentCode = (codeRef.current || code || '').trim().toUpperCase();
     if (!currentCode) {
       setErrorMessage('يرجى إدخال كود التفعيل للمتابعة');
       return;
@@ -482,6 +484,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     letterSpacing: 2,
     textAlign: 'center',
+    textTransform: 'uppercase',
     fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
   },
   deviceInfoBox: {

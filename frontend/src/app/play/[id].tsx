@@ -754,195 +754,15 @@ export function PlayerScreen(): React.JSX.Element {
     return true;
   }, [isVod, switchLiveChannel, resetSideMenuTimer]);
 
-  // مستمع لوحة المفاتيح والريموت على الويب لشاشة المشغّل والقائمة المنبثقة
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      resetOverlayTimer();
-
-      const isConfirm =
-        e.key === 'Enter' ||
-        e.key === 'NumpadEnter' ||
-        e.key === 'Select' ||
-        e.key === 'Ok' ||
-        e.key === 'OK' ||
-        e.keyCode === 13 ||
-        e.keyCode === 23 ||
-        e.which === 13 ||
-        e.which === 23;
-
-      if (showSideMenu && !isVod) {
-        if (isConfirm) {
-          e.preventDefault();
-          e.stopPropagation();
-          handleDrawerEnter();
-          return;
-        }
-
-        switch (e.key) {
-          case 'ArrowUp':
-            e.preventDefault();
-            e.stopPropagation();
-            handleDrawerArrowUp();
-            break;
-          case 'ArrowDown':
-            e.preventDefault();
-            e.stopPropagation();
-            handleDrawerArrowDown();
-            break;
-          case 'ArrowRight':
-            e.preventDefault();
-            e.stopPropagation();
-            handleDrawerArrowRight();
-            break;
-          case 'ArrowLeft':
-            e.preventDefault();
-            e.stopPropagation();
-            handleDrawerArrowLeft();
-            break;
-          case 'Escape':
-          case 'Backspace':
-          case 'BrowserBack':
-            e.preventDefault();
-            e.stopPropagation();
-            if (sideMenuLevel === 'channels') {
-              setSideMenuLevel('categories');
-            } else {
-              setShowSideMenu(false);
-            }
-            break;
-        }
-        return;
-      }
-
-      // القائمة مغلقة: Zapping أو فتح القائمة
-      if (!isVod && !showQualityModal && !showEpisodesModal) {
-        if (isConfirm || e.key === 'ArrowRight') {
-          e.preventDefault();
-          e.stopPropagation();
-          const curIdx = activeChannelListRef.current.findIndex((c) => c.id === effectiveChannelId);
-          setFocusedDrawerChannelIndex(curIdx >= 0 ? curIdx : 0);
-          setSideMenuLevel('channels');
-          setShowSideMenu(true);
-          return;
-        }
-
-        switch (e.key) {
-          case 'ArrowUp':
-            e.preventDefault();
-            handleZapNext();
-            break;
-          case 'ArrowDown':
-            e.preventDefault();
-            handleZapPrev();
-            break;
-        }
-      }
-    };
-
-    window.addEventListener('keydown', onKeyDown, true);
-    return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [
-    showSideMenu,
-    isVod,
-    sideMenuLevel,
-    showQualityModal,
-    showEpisodesModal,
-    handleDrawerArrowUp,
-    handleDrawerArrowDown,
-    handleDrawerArrowRight,
-    handleDrawerArrowLeft,
-    handleDrawerEnter,
-    handleZapNext,
-    handleZapPrev,
-    effectiveChannelId,
-    resetOverlayTimer,
-  ]);
-
-  // مستمع أحداث ريموت Android TV عبر حدث Native (onTVKeyEvent)
-  useEffect(() => {
-    if (Platform.OS === 'web') return;
-
-    const sub = DeviceEventEmitter.addListener(
-      'onTVKeyEvent',
-      (event: { eventType: string; keyCode: number }) => {
-        resetOverlayTimer();
-
-        if (!event || !event.eventType) return;
-
-        if (showSideMenu && !isVod) {
-          switch (event.eventType) {
-            case 'DPAD_UP':
-              handleDrawerArrowUp();
-              break;
-            case 'DPAD_DOWN':
-              handleDrawerArrowDown();
-              break;
-            case 'DPAD_RIGHT':
-              handleDrawerArrowRight();
-              break;
-            case 'DPAD_LEFT':
-              handleDrawerArrowLeft();
-              break;
-            case 'DPAD_CENTER':
-            case 'ENTER':
-              handleDrawerEnter();
-              break;
-          }
-          return;
-        }
-
-        // عندما تكون قائمة القنوات مغلقة
-        if (!isVod && !showQualityModal && !showEpisodesModal) {
-          switch (event.eventType) {
-            case 'DPAD_UP':
-            case 'CHANNEL_UP':
-              handleZapNext();
-              break;
-            case 'DPAD_DOWN':
-            case 'CHANNEL_DOWN':
-              handleZapPrev();
-              break;
-            case 'DPAD_CENTER':
-            case 'ENTER':
-            case 'DPAD_RIGHT': {
-              const curIdx = activeChannelListRef.current.findIndex(
-                (c) => c.id === effectiveChannelId
-              );
-              setFocusedDrawerChannelIndex(curIdx >= 0 ? curIdx : 0);
-              setSideMenuLevel('channels');
-              setShowSideMenu(true);
-              break;
-            }
-          }
-        }
-      }
-    );
-
-    return () => {
-      sub.remove();
-    };
-  }, [
-    showSideMenu,
-    isVod,
-    showQualityModal,
-    showEpisodesModal,
-    handleDrawerArrowUp,
-    handleDrawerArrowDown,
-    handleDrawerArrowRight,
-    handleDrawerArrowLeft,
-    handleDrawerEnter,
-    handleZapNext,
-    handleZapPrev,
-    effectiveChannelId,
-    resetOverlayTimer,
-  ]);
-
+  // إدارة التنقل الموحد بالريموت كنترول ولوحة المفاتيح عبر useTVRemoteNavigation
   useTVRemoteNavigation({
     onBack: () => {
       if (showSideMenu) {
-        setShowSideMenu(false);
+        if (sideMenuLevel === 'channels') {
+          setSideMenuLevel('categories');
+        } else {
+          setShowSideMenu(false);
+        }
         return true;
       }
       if (showEpisodesModal) {
@@ -990,7 +810,7 @@ export function PlayerScreen(): React.JSX.Element {
         return;
       }
       if (!isVod && !showQualityModal && !showEpisodesModal) {
-        const curIdx = activeChannelList.findIndex((c) => c.id === effectiveChannelId);
+        const curIdx = activeChannelListRef.current.findIndex((c) => c.id === effectiveChannelId);
         setFocusedDrawerChannelIndex(curIdx >= 0 ? curIdx : 0);
         setSideMenuLevel('channels');
         setShowSideMenu(true);
@@ -1008,7 +828,7 @@ export function PlayerScreen(): React.JSX.Element {
         return;
       }
       if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal) {
-        const curIdx = activeChannelList.findIndex((c) => c.id === effectiveChannelId);
+        const curIdx = activeChannelListRef.current.findIndex((c) => c.id === effectiveChannelId);
         setFocusedDrawerChannelIndex(curIdx >= 0 ? curIdx : 0);
         setSideMenuLevel('channels');
         setShowSideMenu(true);
