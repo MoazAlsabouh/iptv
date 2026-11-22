@@ -20,7 +20,7 @@ import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 export default function ActivateScreen(): React.JSX.Element {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { activate, deviceId, deviceName } = useAuth();
+  const { activate, deviceId, deviceName, activationCode } = useAuth();
   const { width } = useWindowDimensions();
 
   const defaultDeviceName = React.useMemo(() => {
@@ -30,7 +30,7 @@ export default function ActivateScreen(): React.JSX.Element {
     return deviceName || 'متصفح ويب';
   }, [deviceName]);
 
-  const [code, setCode] = useState<string>('');
+  const [code, setCode] = useState<string>(() => activationCode || '');
   const [customDeviceName, setCustomDeviceName] = useState<string>(defaultDeviceName);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -40,6 +40,12 @@ export default function ActivateScreen(): React.JSX.Element {
   React.useEffect(() => {
     setCustomDeviceName(defaultDeviceName);
   }, [defaultDeviceName]);
+
+  React.useEffect(() => {
+    if (activationCode && !code) {
+      setCode(activationCode);
+    }
+  }, [activationCode]);
 
   const isWide = width >= 768;
 

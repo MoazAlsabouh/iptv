@@ -17,7 +17,8 @@ import {
 export default function SettingsScreen(): React.JSX.Element {
   const router = useRouter();
   const { isChildMode, pinCode, setChildMode, setPinCode } = useAppStore();
-  const { subscription, logout } = useAuth();
+  const { subscription, logout, activationCode } = useAuth();
+  const displayCode = subscription?.code || activationCode;
 
   const [inputPin, setInputPin] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -32,17 +33,17 @@ export default function SettingsScreen(): React.JSX.Element {
   const setFocusedSidebarIndex = useAppStore((state) => state.setFocusedSidebarIndex);
 
   const handleCopyCode = useCallback(async () => {
-    if (!subscription?.code) return;
+    if (!displayCode) return;
     try {
       if (typeof navigator !== 'undefined' && navigator.clipboard) {
-        await navigator.clipboard.writeText(subscription.code);
+        await navigator.clipboard.writeText(displayCode);
         setCopiedCode(true);
         setTimeout(() => setCopiedCode(false), 2500);
       }
     } catch {
       // ignore
     }
-  }, [subscription?.code]);
+  }, [displayCode]);
 
   const handleLogout = useCallback(async () => {
     await logout();
@@ -98,10 +99,10 @@ export default function SettingsScreen(): React.JSX.Element {
       setFocusedElement('pin');
     } else if (focusedElement === 'pin') {
       setFocusedElement('logout');
-    } else if (focusedElement === 'logout' && subscription?.code) {
+    } else if (focusedElement === 'logout' && displayCode) {
       setFocusedElement('copy');
     }
-  }, [focusedElement, subscription?.code]);
+  }, [focusedElement, displayCode]);
 
   const handleArrowLeft = useCallback(() => {
     if (focusedElement === 'copy') {
@@ -269,8 +270,8 @@ export default function SettingsScreen(): React.JSX.Element {
           <View style={styles.subDetailBox}>
             <Text style={styles.subDetailLabel}>كود التفعيل الحالي:</Text>
             <View style={styles.subCodeRow}>
-              <Text style={styles.subCodeVal}>{subscription?.code || '—'}</Text>
-              {subscription?.code && (
+              <Text style={styles.subCodeVal}>{displayCode || '—'}</Text>
+              {displayCode && (
                 <Pressable
                   onPress={handleCopyCode}
                   style={({ focused }) => [

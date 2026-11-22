@@ -722,7 +722,7 @@ interface VodItem {
   sources: { label: string; url: string; type?: 'embed' | 'direct' }[];
 }
 
-function jsonResponse(data: any, status: number = 200): Response {
+function jsonResponse(data: any, status: number = 200, extraHeaders?: Record<string, string>): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
@@ -730,6 +730,7 @@ function jsonResponse(data: any, status: number = 200): Response {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Key, Cache-Control, Pragma, *',
+      ...(extraHeaders || {}),
     },
   });
 }
@@ -2846,27 +2847,39 @@ async function handleAuthActivate(request: Request, env: Env): Promise<Response>
     const remainingMs = expiresAt ? new Date(expiresAt).getTime() - now.getTime() : sub.duration_days * 86400 * 1000;
     const remainingDays = Math.max(0, Math.ceil(remainingMs / (86400 * 1000)));
 
+    // تمديد صلاحية التوكن إلى سنة كاملة (365 يوماً = 31536000 ثانية) أو مطابقة لتاريخ انتهاء الاشتراك إن كان أطول
+    const ONE_YEAR_SECONDS = 365 * 24 * 60 * 60; // 31536000
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const subExpSeconds = expiresAt ? Math.floor(new Date(expiresAt).getTime() / 1000) : 0;
+    const tokenExp = Math.max(nowSeconds + ONE_YEAR_SECONDS, subExpSeconds);
+
     const token = await signJwt(
       {
         subId: sub.id,
         code: sub.code,
         deviceId,
-        exp: expiresAt ? Math.floor(new Date(expiresAt).getTime() / 1000) : Math.floor(Date.now() / 1000) + 86400 * 30,
+        exp: tokenExp,
       },
       env.JWT_SECRET || DEFAULT_JWT_SECRET
     );
 
-    return jsonResponse({
-      token,
-      subscription: {
-        code: sub.code,
-        expiresAt,
-        remainingDays,
-        maxDevices: sub.max_devices,
-        status,
-        note: sub.note,
+    return jsonResponse(
+      {
+        token,
+        subscription: {
+          code: sub.code,
+          expiresAt,
+          remainingDays,
+          maxDevices: sub.max_devices,
+          status,
+          note: sub.note,
+        },
       },
-    });
+      200,
+      {
+        'Set-Cookie': `iptv_auth_token=${encodeURIComponent(token)}; Path=/; Max-Age=31536000; SameSite=Lax`,
+      }
+    );
   } catch (err: any) {
     return jsonResponse({ error: 'حدث خطأ أثناء التفعيل: ' + (err?.message || '') }, 500);
   }
