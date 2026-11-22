@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -49,56 +49,51 @@ export default function ActivateScreen(): React.JSX.Element {
 
   const isWide = width >= 768;
   const [inputFocused, setInputFocused] = useState<boolean>(false);
+  const codeRef = useRef<string>(code);
+  codeRef.current = code;
 
-  // تنسيق الكود تلقائياً (XX-XXXX-XXXX) بحد أقصى 12 محرفاً
+  // تنسيق كود التفعيل بنمط (XX-XXXX-XXXX) بحد أقصى 12 محرفاً
+  const formatActivationCode = (input: string, prevCode: string): string => {
+    if (!input) return '';
+
+    // إذا كان المستخدم يحذف (Backspace)
+    if (input.length < prevCode.length) {
+      // إذا كان النص السابق ينتهي بشرطة وتم حذفها، نحذف المحرف السابق للشرطة أيضاً لتسهيل الحذف
+      if (prevCode.endsWith('-') && input === prevCode.slice(0, -1)) {
+        return input.slice(0, -1).toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 12);
+      }
+      return input.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 12);
+    }
+
+    // استخراج جميع المحارف الأبجدية والرقمية فقط (تنظيف المسافات والرموز)
+    const raw = input.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10);
+    if (!raw) return '';
+
+    // تطبيق التنسيق التلقائي XX-XXXX-XXXX
+    if (raw.length <= 2) {
+      return raw.length === 2 ? `${raw}-` : raw;
+    } else if (raw.length <= 6) {
+      const part1 = raw.slice(0, 2);
+      const part2 = raw.slice(2);
+      return raw.length === 6 ? `${part1}-${part2}-` : `${part1}-${part2}`;
+    } else {
+      const part1 = raw.slice(0, 2);
+      const part2 = raw.slice(2, 6);
+      const part3 = raw.slice(6, 10);
+      return `${part1}-${part2}-${part3}`;
+    }
+  };
+
   const handleCodeChange = (text: string) => {
     setErrorMessage(null);
-
-    const prev = code || '';
-    // تنظيف المدخلات (أحرف إنجليزية كبيرة وأرقام وشرطات فقط)
-    let cleaned = text.toUpperCase().replace(/[^A-Z0-9-]/g, '');
-
-    // حالة 1: الحذف (Backspace)
-    if (cleaned.length < prev.length) {
-      // إذا كان النص السابق ينتهي بشرطة وتم حذفها، نحذف المحرف السابق أيضاً لتسهيل المسح
-      if (prev.endsWith('-') && cleaned === prev.slice(0, -1)) {
-        cleaned = cleaned.slice(0, -1);
-      }
-      setCode(cleaned.slice(0, 12));
-      return;
-    }
-
-    // حالة 2: اللصق (تغيّر النص بأكثر من محرف واحد دفعة واحدة)
-    if (cleaned.length > prev.length + 1) {
-      cleaned = cleaned.trim();
-      const rawAlphanumeric = cleaned.replace(/[^A-Z0-9]/g, '');
-      // إذا كان النص الملصوق بدون شرطات وكان بطول كافٍ، نقوم بتنسيقه
-      if (!cleaned.includes('-') && rawAlphanumeric.length >= 6) {
-        if (rawAlphanumeric.length <= 6) {
-          cleaned = `${rawAlphanumeric.slice(0, 2)}-${rawAlphanumeric.slice(2, 6)}`;
-        } else {
-          cleaned = `${rawAlphanumeric.slice(0, 2)}-${rawAlphanumeric.slice(2, 6)}-${rawAlphanumeric.slice(6, 10)}`;
-        }
-      }
-      setCode(cleaned.slice(0, 12));
-      return;
-    }
-
-    // حالة 3: الكتابة اليدوية (إضافة محرف واحد في كل مرة)
-    // إذا وصل المستخدم للمحرف الثاني (ولم يضع شرطة بعد) نضيف الشرطة تلقائياً: XX-
-    if (cleaned.length === 2 && !cleaned.includes('-')) {
-      cleaned = `${cleaned}-`;
-    }
-    // إذا وصل للمحرف السابع (2 + 1 شرطة + 4 = 7 محارف) ولم يضع شرطة ثانية: XX-XXXX-
-    else if (cleaned.length === 7 && cleaned.charAt(2) === '-' && cleaned.charAt(6) !== '-') {
-      cleaned = `${cleaned}-`;
-    }
-
-    setCode(cleaned.slice(0, 12));
+    const formatted = formatActivationCode(text, codeRef.current || '');
+    codeRef.current = formatted;
+    setCode(formatted);
   };
 
   const handleActivate = async () => {
-    if (!code.trim()) {
+    const currentCode = (codeRef.current || code || '').trim();
+    if (!currentCode) {
       setErrorMessage('يرجى إدخال كود التفعيل للمتابعة');
       return;
     }
@@ -107,7 +102,7 @@ export default function ActivateScreen(): React.JSX.Element {
     setErrorMessage(null);
     setSuccessMessage(null);
 
-    const result = await activate(code.trim(), customDeviceName.trim());
+    const result = await activate(currentCode, customDeviceName.trim());
     setIsSubmitting(false);
 
     if (result.success) {
@@ -141,6 +136,7 @@ export default function ActivateScreen(): React.JSX.Element {
           },
         ]}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         <View style={[styles.card, isWide && styles.cardWide]}>
           {/* الشعار والعنوان */}
@@ -178,6 +174,7 @@ export default function ActivateScreen(): React.JSX.Element {
               />
               <TextInput
                 focusable={true}
+                editable={!isSubmitting}
                 hasTVPreferredFocus={!code}
                 style={styles.input}
                 value={code}
@@ -188,9 +185,14 @@ export default function ActivateScreen(): React.JSX.Element {
                 placeholderTextColor="#64748b"
                 autoCapitalize="characters"
                 autoCorrect={false}
-                maxLength={12}
+                autoComplete="off"
+                spellCheck={false}
+                importantForAutofill="no"
+                textContentType="none"
+                keyboardType={Platform.OS === 'android' ? 'visible-password' : 'default'}
                 returnKeyType="done"
                 onSubmitEditing={handleActivate}
+                selectionColor="#38bdf8"
               />
             </View>
           </View>
@@ -405,6 +407,7 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 52,
     color: '#ffffff',
+    backgroundColor: 'transparent',
     fontSize: 18,
     fontWeight: 'bold',
     letterSpacing: 2,
