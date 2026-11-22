@@ -413,6 +413,8 @@ export default function SettingsScreen(): React.JSX.Element {
           </View>
 
           <Pressable
+            focusable={true}
+            accessible={true}
             hasTVPreferredFocus
             onPress={handleToggleChildMode}
             style={({ focused }) => [

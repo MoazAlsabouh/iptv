@@ -181,7 +181,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               return (
                 <Pressable
                   key={item.id}
-                  hasTVPreferredFocus={index === 0}
+                  focusable={true}
+                  accessible={true}
+                  hasTVPreferredFocus={isSidebarFocused && focusedSidebarIndex === index}
                   onPress={() => router.push(item.route as any)}
                   style={({ focused }) => [
                     styles.navItem,

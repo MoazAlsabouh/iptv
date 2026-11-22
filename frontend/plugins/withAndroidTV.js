@@ -1,4 +1,4 @@
-const { withAndroidManifest, withGradleProperties } = require('@expo/config-plugins');
+const { withAndroidManifest, withGradleProperties, withMainActivity } = require('@expo/config-plugins');
 
 /**
  * Expo Config Plugin لإعداد أندرويد وشاشات Android TV وتقليص حجم الـ APK:
@@ -130,6 +130,66 @@ function withAndroidTV(config) {
         value: 'arm64-v8a,armeabi-v7a',
       });
     }
+    return config;
+  });
+
+  // 3. تعديل MainActivity لإرسال أحداث ريموت Android TV عبر onTVKeyEvent
+  config = withMainActivity(config, (config) => {
+    let contents = config.modResults.contents;
+
+    if (!contents.includes('onTVKeyEvent')) {
+      const dispatchKeyEventCode = `
+  /**
+   * إرسال أحداث أزرار ريموت Android TV إلى React Native عبر DeviceEventEmitter (onTVKeyEvent)
+   */
+  override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+    val keyCode = event.keyCode
+    val action = event.action
+
+    if (action == android.view.KeyEvent.ACTION_DOWN) {
+      val eventType = when (keyCode) {
+        android.view.KeyEvent.KEYCODE_DPAD_UP -> "DPAD_UP"
+        android.view.KeyEvent.KEYCODE_DPAD_DOWN -> "DPAD_DOWN"
+        android.view.KeyEvent.KEYCODE_DPAD_LEFT -> "DPAD_LEFT"
+        android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> "DPAD_RIGHT"
+        android.view.KeyEvent.KEYCODE_DPAD_CENTER -> "DPAD_CENTER"
+        android.view.KeyEvent.KEYCODE_ENTER, android.view.KeyEvent.KEYCODE_NUMPAD_ENTER -> "ENTER"
+        android.view.KeyEvent.KEYCODE_CHANNEL_UP -> "CHANNEL_UP"
+        android.view.KeyEvent.KEYCODE_CHANNEL_DOWN -> "CHANNEL_DOWN"
+        android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> "PLAY_PAUSE"
+        android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> "PLAY"
+        android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> "PAUSE"
+        android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> "FAST_FORWARD"
+        android.view.KeyEvent.KEYCODE_MEDIA_REWIND -> "REWIND"
+        else -> null
+      }
+
+      if (eventType != null) {
+        try {
+          val params: com.facebook.react.bridge.WritableMap = com.facebook.react.bridge.Arguments.createMap().apply {
+            putString("eventType", eventType)
+            putInt("keyCode", keyCode)
+            putInt("action", action)
+          }
+          reactInstanceManager?.currentReactContext
+            ?.getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            ?.emit("onTVKeyEvent", params)
+        } catch (_: Exception) {}
+      }
+    }
+
+    return super.dispatchKeyEvent(event)
+  }
+`;
+
+      contents = contents.replace(
+        'class MainActivity : ReactActivity() {',
+        `class MainActivity : ReactActivity() {\n${dispatchKeyEventCode}`
+      );
+
+      config.modResults.contents = contents;
+    }
+
     return config;
   });
 

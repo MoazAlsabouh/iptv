@@ -21,15 +21,20 @@ interface FavoriteChannelCardProps {
   item: MediaItem;
   onSelect: (item: MediaItem) => void;
   isControlledFocused?: boolean;
+  hasTVPreferredFocus?: boolean;
 }
 
 const FavoriteChannelCard: React.FC<FavoriteChannelCardProps> = ({
   item,
   onSelect,
   isControlledFocused,
+  hasTVPreferredFocus,
 }) => {
   return (
     <Pressable
+      focusable={true}
+      accessible={true}
+      hasTVPreferredFocus={hasTVPreferredFocus}
       onPress={() => onSelect(item)}
       style={({ focused }) => [
         styles.favCard,
@@ -272,6 +277,7 @@ export default function FavoritesScreen(): React.JSX.Element {
                 item={item}
                 onSelect={handleChannelPress}
                 isControlledFocused={focusedIndex === index}
+                hasTVPreferredFocus={index === 0}
               />
             </View>
           )}

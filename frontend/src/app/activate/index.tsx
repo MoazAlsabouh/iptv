@@ -48,12 +48,53 @@ export default function ActivateScreen(): React.JSX.Element {
   }, [activationCode]);
 
   const isWide = width >= 768;
+  const [inputFocused, setInputFocused] = useState<boolean>(false);
 
-  // تنسيق الكود تلقائياً
+  // تنسيق الكود تلقائياً (XX-XXXX-XXXX) بحد أقصى 12 محرفاً
   const handleCodeChange = (text: string) => {
     setErrorMessage(null);
+
+    const prev = code || '';
+    // تنظيف المدخلات (أحرف إنجليزية كبيرة وأرقام وشرطات فقط)
     let cleaned = text.toUpperCase().replace(/[^A-Z0-9-]/g, '');
-    setCode(cleaned);
+
+    // حالة 1: الحذف (Backspace)
+    if (cleaned.length < prev.length) {
+      // إذا كان النص السابق ينتهي بشرطة وتم حذفها، نحذف المحرف السابق أيضاً لتسهيل المسح
+      if (prev.endsWith('-') && cleaned === prev.slice(0, -1)) {
+        cleaned = cleaned.slice(0, -1);
+      }
+      setCode(cleaned.slice(0, 12));
+      return;
+    }
+
+    // حالة 2: اللصق (تغيّر النص بأكثر من محرف واحد دفعة واحدة)
+    if (cleaned.length > prev.length + 1) {
+      cleaned = cleaned.trim();
+      const rawAlphanumeric = cleaned.replace(/[^A-Z0-9]/g, '');
+      // إذا كان النص الملصوق بدون شرطات وكان بطول كافٍ، نقوم بتنسيقه
+      if (!cleaned.includes('-') && rawAlphanumeric.length >= 6) {
+        if (rawAlphanumeric.length <= 6) {
+          cleaned = `${rawAlphanumeric.slice(0, 2)}-${rawAlphanumeric.slice(2, 6)}`;
+        } else {
+          cleaned = `${rawAlphanumeric.slice(0, 2)}-${rawAlphanumeric.slice(2, 6)}-${rawAlphanumeric.slice(6, 10)}`;
+        }
+      }
+      setCode(cleaned.slice(0, 12));
+      return;
+    }
+
+    // حالة 3: الكتابة اليدوية (إضافة محرف واحد في كل مرة)
+    // إذا وصل المستخدم للمحرف الثاني (ولم يضع شرطة بعد) نضيف الشرطة تلقائياً: XX-
+    if (cleaned.length === 2 && !cleaned.includes('-')) {
+      cleaned = `${cleaned}-`;
+    }
+    // إذا وصل للمحرف السابع (2 + 1 شرطة + 4 = 7 محارف) ولم يضع شرطة ثانية: XX-XXXX-
+    else if (cleaned.length === 7 && cleaned.charAt(2) === '-' && cleaned.charAt(6) !== '-') {
+      cleaned = `${cleaned}-`;
+    }
+
+    setCode(cleaned.slice(0, 12));
   };
 
   const handleActivate = async () => {
@@ -123,21 +164,31 @@ export default function ActivateScreen(): React.JSX.Element {
           {/* حقل إدخال الكود */}
           <View style={styles.formGroup}>
             <Text style={styles.label}>كود التفعيل (Activation Code):</Text>
-            <View style={styles.inputWrapper}>
+            <View
+              style={[
+                styles.inputWrapper,
+                inputFocused && styles.inputWrapperFocused,
+              ]}
+            >
               <MaterialIcons
                 name="vpn-key"
                 size={22}
-                color="#38bdf8"
+                color={inputFocused ? '#38bdf8' : '#38bdf8'}
                 style={styles.inputIcon}
               />
               <TextInput
+                focusable={true}
+                hasTVPreferredFocus={!code}
                 style={styles.input}
                 value={code}
                 onChangeText={handleCodeChange}
+                onFocus={() => setInputFocused(true)}
+                onBlur={() => setInputFocused(false)}
                 placeholder="مثال: TV-8492-XK9P"
                 placeholderTextColor="#64748b"
                 autoCapitalize="characters"
                 autoCorrect={false}
+                maxLength={12}
                 returnKeyType="done"
                 onSubmitEditing={handleActivate}
               />
@@ -177,7 +228,9 @@ export default function ActivateScreen(): React.JSX.Element {
 
           {/* زر التفعيل الرئيسي */}
           <Pressable
-            hasTVPreferredFocus
+            focusable={true}
+            accessible={true}
+            hasTVPreferredFocus={Boolean(code)}
             disabled={isSubmitting}
             onPress={handleActivate}
             style={({ focused }) => [
@@ -335,6 +388,15 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(14, 165, 233, 0.3)',
     borderRadius: 16,
     paddingHorizontal: 16,
+  },
+  inputWrapperFocused: {
+    borderColor: '#38bdf8',
+    borderWidth: 2.5,
+    backgroundColor: 'rgba(56, 189, 248, 0.08)',
+    shadowColor: '#38bdf8',
+    shadowOpacity: 0.8,
+    shadowRadius: 12,
+    elevation: 6,
   },
   inputIcon: {
     marginLeft: 10,

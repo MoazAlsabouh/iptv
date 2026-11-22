@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Platform, BackHandler } from 'react-native';
+import { Platform, BackHandler, DeviceEventEmitter } from 'react-native';
 import { useRouter } from 'expo-router';
 import { safeGoBack } from '../utils/navigation';
 
@@ -42,6 +42,55 @@ export function useTVRemoteNavigation(handlers: TVKeyHandlers) {
     const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
     return () => backHandler.remove();
   }, [handlers, router]);
+
+  // 1.ب. دعم أزرار ريموت Android TV الأصلية (D-Pad, Enter, Channel +/-)
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+
+    const sub = DeviceEventEmitter.addListener(
+      'onTVKeyEvent',
+      (event: { eventType: string; keyCode: number }) => {
+        handlers.onAnyKey?.();
+
+        switch (event?.eventType) {
+          case 'DPAD_UP':
+            handlers.onArrowUp?.();
+            break;
+          case 'DPAD_DOWN':
+            handlers.onArrowDown?.();
+            break;
+          case 'DPAD_LEFT':
+            handlers.onArrowLeft?.();
+            break;
+          case 'DPAD_RIGHT':
+            handlers.onArrowRight?.();
+            break;
+          case 'DPAD_CENTER':
+          case 'ENTER':
+            handlers.onEnter?.();
+            break;
+          case 'CHANNEL_UP':
+            if (handlers.onChannelUp) {
+              handlers.onChannelUp();
+            } else {
+              handlers.onArrowUp?.();
+            }
+            break;
+          case 'CHANNEL_DOWN':
+            if (handlers.onChannelDown) {
+              handlers.onChannelDown();
+            } else {
+              handlers.onArrowDown?.();
+            }
+            break;
+        }
+      }
+    );
+
+    return () => {
+      sub.remove();
+    };
+  }, [handlers]);
 
   // 2. دعم لوحة المفاتيح وريموتات الويب والمتصفحات الذكية
   useEffect(() => {

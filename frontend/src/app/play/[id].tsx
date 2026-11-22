@@ -7,6 +7,7 @@ import {
   StyleSheet,
   ScrollView,
   Platform,
+  DeviceEventEmitter,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -859,6 +860,85 @@ export function PlayerScreen(): React.JSX.Element {
     resetOverlayTimer,
   ]);
 
+  // مستمع أحداث ريموت Android TV عبر حدث Native (onTVKeyEvent)
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+
+    const sub = DeviceEventEmitter.addListener(
+      'onTVKeyEvent',
+      (event: { eventType: string; keyCode: number }) => {
+        resetOverlayTimer();
+
+        if (!event || !event.eventType) return;
+
+        if (showSideMenu && !isVod) {
+          switch (event.eventType) {
+            case 'DPAD_UP':
+              handleDrawerArrowUp();
+              break;
+            case 'DPAD_DOWN':
+              handleDrawerArrowDown();
+              break;
+            case 'DPAD_RIGHT':
+              handleDrawerArrowRight();
+              break;
+            case 'DPAD_LEFT':
+              handleDrawerArrowLeft();
+              break;
+            case 'DPAD_CENTER':
+            case 'ENTER':
+              handleDrawerEnter();
+              break;
+          }
+          return;
+        }
+
+        // عندما تكون قائمة القنوات مغلقة
+        if (!isVod && !showQualityModal && !showEpisodesModal) {
+          switch (event.eventType) {
+            case 'DPAD_UP':
+            case 'CHANNEL_UP':
+              handleZapNext();
+              break;
+            case 'DPAD_DOWN':
+            case 'CHANNEL_DOWN':
+              handleZapPrev();
+              break;
+            case 'DPAD_CENTER':
+            case 'ENTER':
+            case 'DPAD_RIGHT': {
+              const curIdx = activeChannelListRef.current.findIndex(
+                (c) => c.id === effectiveChannelId
+              );
+              setFocusedDrawerChannelIndex(curIdx >= 0 ? curIdx : 0);
+              setSideMenuLevel('channels');
+              setShowSideMenu(true);
+              break;
+            }
+          }
+        }
+      }
+    );
+
+    return () => {
+      sub.remove();
+    };
+  }, [
+    showSideMenu,
+    isVod,
+    showQualityModal,
+    showEpisodesModal,
+    handleDrawerArrowUp,
+    handleDrawerArrowDown,
+    handleDrawerArrowRight,
+    handleDrawerArrowLeft,
+    handleDrawerEnter,
+    handleZapNext,
+    handleZapPrev,
+    effectiveChannelId,
+    resetOverlayTimer,
+  ]);
+
   useTVRemoteNavigation({
     onBack: () => {
       if (showSideMenu) {
@@ -891,7 +971,7 @@ export function PlayerScreen(): React.JSX.Element {
         handleDrawerArrowUp();
         return;
       }
-      if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal && !showOverlay) {
+      if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal) {
         handleZapNext();
       }
     },
@@ -900,7 +980,7 @@ export function PlayerScreen(): React.JSX.Element {
         handleDrawerArrowDown();
         return;
       }
-      if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal && !showOverlay) {
+      if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal) {
         handleZapPrev();
       }
     },
@@ -927,7 +1007,7 @@ export function PlayerScreen(): React.JSX.Element {
         handleDrawerEnter();
         return;
       }
-      if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal && !showOverlay) {
+      if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal) {
         const curIdx = activeChannelList.findIndex((c) => c.id === effectiveChannelId);
         setFocusedDrawerChannelIndex(curIdx >= 0 ? curIdx : 0);
         setSideMenuLevel('channels');
@@ -1003,10 +1083,11 @@ export function PlayerScreen(): React.JSX.Element {
       )}
 
       {/* 2. طبقة حساسة للنقر لاستعادة الواجهة عند اختفائها وفتح قائمة القنوات بالريموت */}
-      {!showOverlay && !playbackError && !showQualityModal && !showSideMenu && (
+      {!showSideMenu && !playbackError && !showQualityModal && (
         <Pressable
-          hasTVPreferredFocus={!showSideMenu && !showOverlay && !playbackError}
+          hasTVPreferredFocus={!showSideMenu && !playbackError}
           focusable={true}
+          accessible={true}
           onPress={() => {
             resetOverlayTimer();
             if (!isVod && !showSideMenu) {
