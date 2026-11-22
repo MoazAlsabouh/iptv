@@ -7,3 +7,10 @@ npm-debug.*
 Thumbs.db
 android/
 ios/
+
+# Keystore & Signing Credentials
+*.jks
+*.keystore
+android/keystore.properties
+keystore.properties
+credentials.json

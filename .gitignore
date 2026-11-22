@@ -13,3 +13,11 @@ android/
 ios/
 frontend/android/
 frontend/ios/
+
+# Keystore & Signing Credentials
+*.jks
+*.keystore
+android/keystore.properties
+frontend/android/keystore.properties
+keystore.properties
+credentials.json
