@@ -78,11 +78,20 @@ export default function SettingsScreen(): React.JSX.Element {
     }
   }, [inputPin, isChildMode, pinCode, setChildMode, setPinCode]);
 
-  const handleArrowRight = useCallback(() => {
-    // في واجهة RTL: الرجوع للشريط الجانبي عند الضغط على سهم اليمين
+  const handleArrowLeft = useCallback(() => {
+    // التحرك يساراً بصرياً: الرجوع للشريط الجانبي (في أقصى اليسار)
     setIsSidebarFocused(true);
-    setFocusedSidebarIndex(3); // الإعدادات هي العنصر 3
+    setFocusedSidebarIndex(3); // الإعدادات هي العنصر 3 في NAV_ITEMS
   }, [setIsSidebarFocused, setFocusedSidebarIndex]);
+
+  const handleArrowRight = useCallback(() => {
+    // التحرك يميناً بصرياً داخل عناصر الإعدادات
+    if (focusedElement === 'copy') {
+      setFocusedElement('logout');
+    } else if (focusedElement === 'logout') {
+      setFocusedElement('pin');
+    }
+  }, [focusedElement]);
 
   const handleArrowDown = useCallback(() => {
     if (focusedElement === 'copy') {
@@ -104,14 +113,6 @@ export default function SettingsScreen(): React.JSX.Element {
     }
   }, [focusedElement, displayCode]);
 
-  const handleArrowLeft = useCallback(() => {
-    if (focusedElement === 'copy') {
-      setFocusedElement('logout');
-    } else if (focusedElement === 'logout') {
-      setFocusedElement('pin');
-    }
-  }, [focusedElement]);
-
   const handleEnterKey = useCallback(() => {
     if (focusedElement === 'copy') {
       handleCopyCode();
@@ -123,89 +124,6 @@ export default function SettingsScreen(): React.JSX.Element {
       handleToggleChildMode();
     }
   }, [focusedElement, handleCopyCode, handleLogout, handleToggleChildMode]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    if (isSidebarFocused) return;
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      const activeEl = document.activeElement;
-      const isInput =
-        activeEl &&
-        (activeEl.tagName === 'INPUT' ||
-          activeEl.tagName === 'TEXTAREA' ||
-          (activeEl as HTMLElement).isContentEditable);
-
-      if (isInput) {
-        if (e.key === 'Escape' || e.key === 'ArrowDown') {
-          (activeEl as HTMLElement).blur();
-          setFocusedElement('toggleChild');
-          e.preventDefault();
-        } else if (e.key === 'ArrowRight') {
-          (activeEl as HTMLElement).blur();
-          setIsSidebarFocused(true);
-          setFocusedSidebarIndex(3);
-          e.preventDefault();
-        }
-        return;
-      }
-
-      const isConfirm =
-        e.key === 'Enter' ||
-        e.key === 'NumpadEnter' ||
-        e.key === 'Select' ||
-        e.key === 'Ok' ||
-        e.key === 'OK' ||
-        e.keyCode === 13 ||
-        e.keyCode === 23 ||
-        e.which === 13 ||
-        e.which === 23;
-
-      if (isConfirm) {
-        e.preventDefault();
-        e.stopPropagation();
-        handleEnterKey();
-        return;
-      }
-
-      switch (e.key) {
-        case 'ArrowUp':
-          e.preventDefault();
-          handleArrowUp();
-          break;
-        case 'ArrowDown':
-          e.preventDefault();
-          handleArrowDown();
-          break;
-        case 'ArrowRight':
-          e.preventDefault();
-          handleArrowRight();
-          break;
-        case 'ArrowLeft':
-          e.preventDefault();
-          handleArrowLeft();
-          break;
-        case 'Escape':
-        case 'Back':
-          e.preventDefault();
-          setIsSidebarFocused(true);
-          setFocusedSidebarIndex(3);
-          break;
-      }
-    };
-
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [
-    isSidebarFocused,
-    handleArrowUp,
-    handleArrowDown,
-    handleArrowRight,
-    handleArrowLeft,
-    handleEnterKey,
-    setIsSidebarFocused,
-    setFocusedSidebarIndex,
-  ]);
 
   useTVRemoteNavigation({
     onArrowUp: handleArrowUp,

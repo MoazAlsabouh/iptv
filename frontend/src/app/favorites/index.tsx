@@ -116,17 +116,18 @@ export default function FavoritesScreen(): React.JSX.Element {
     setFocusedIndex((prev) => Math.min(favoriteChannels.length - 1, prev + numCols));
   }, [favoriteChannels.length]);
 
-  const handleArrowRight = useCallback(() => {
-    // في واجهة RTL: التحرك يميناً، وعند الحافة اليمنى الانتقال للشريط الجانبي
+  const handleArrowLeft = useCallback(() => {
+    // التحرك يساراً بصرياً، وعند الحافة اليسرى الانتقال للشريط الجانبي (في أقصى اليسار)
     if (favoriteChannels.length === 0 || focusedIndex % numCols === 0) {
       setIsSidebarFocused(true);
       setFocusedSidebarIndex(2); // 'favorites' هو العنصر رقم 2 في NAV_ITEMS
     } else {
       setFocusedIndex((prev) => Math.max(0, prev - 1));
     }
-  }, [favoriteChannels.length, focusedIndex, setIsSidebarFocused, setFocusedSidebarIndex]);
+  }, [favoriteChannels.length, focusedIndex, numCols, setIsSidebarFocused, setFocusedSidebarIndex]);
 
-  const handleArrowLeft = useCallback(() => {
+  const handleArrowRight = useCallback(() => {
+    // التحرك يميناً بصرياً نحو البطاقة التالية
     setFocusedIndex((prev) => Math.min(favoriteChannels.length - 1, prev + 1));
   }, [favoriteChannels.length]);
 
@@ -153,69 +154,7 @@ export default function FavoritesScreen(): React.JSX.Element {
         });
       }
     }
-  }, [focusedIndex, favoriteChannels.length]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    if (isSidebarFocused) return;
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      const isConfirm =
-        e.key === 'Enter' ||
-        e.key === 'NumpadEnter' ||
-        e.key === 'Select' ||
-        e.key === 'Ok' ||
-        e.key === 'OK' ||
-        e.keyCode === 13 ||
-        e.keyCode === 23 ||
-        e.which === 13 ||
-        e.which === 23;
-
-      if (isConfirm) {
-        e.preventDefault();
-        e.stopPropagation();
-        handleEnterKey();
-        return;
-      }
-
-      switch (e.key) {
-        case 'ArrowUp':
-          e.preventDefault();
-          handleArrowUp();
-          break;
-        case 'ArrowDown':
-          e.preventDefault();
-          handleArrowDown();
-          break;
-        case 'ArrowRight':
-          e.preventDefault();
-          handleArrowRight();
-          break;
-        case 'ArrowLeft':
-          e.preventDefault();
-          handleArrowLeft();
-          break;
-        case 'Escape':
-        case 'Back':
-          e.preventDefault();
-          setIsSidebarFocused(true);
-          setFocusedSidebarIndex(2);
-          break;
-      }
-    };
-
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [
-    isSidebarFocused,
-    handleArrowUp,
-    handleArrowDown,
-    handleArrowRight,
-    handleArrowLeft,
-    handleEnterKey,
-    setIsSidebarFocused,
-    setFocusedSidebarIndex,
-  ]);
+  }, [focusedIndex, favoriteChannels.length, numCols]);
 
   useTVRemoteNavigation({
     onArrowUp: handleArrowUp,

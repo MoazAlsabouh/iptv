@@ -66,7 +66,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
 
       // إذا لم يكن التركيز على الشريط الجانبي: لا تعترض زر Enter أو غيره أبداً، دعه يمر للصفحة النشطة!
       if (!isSidebarFocusedRef.current) {
-        // شبكة أمان: في أي صفحة غير /home و /movies و /play، سهم اليمين يفعّل الشريط الجانبي
+        // شبكة أمان: في أي صفحة غير /home و /movies و /play، سهم اليسار يفعّل الشريط الجانبي (الموجود بصرياً في أقصى اليسار)
         const isExcluded =
           currentPath === '/home' ||
           currentPath === '/' ||
@@ -74,7 +74,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           currentPath.startsWith('/play') ||
           currentPath.startsWith('/player');
 
-        if (!isExcluded && (e.key === 'ArrowRight' || e.key === 'Escape')) {
+        if (!isExcluded && (e.key === 'ArrowLeft' || e.key === 'Escape')) {
           e.preventDefault();
           setIsSidebarFocused(true);
           const currentIdx = NAV_ITEMS.findIndex((item) =>
@@ -117,8 +117,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           e.preventDefault();
           setFocusedSidebarIndex(Math.min(NAV_ITEMS.length - 1, focusedSidebarIndexRef.current + 1));
           break;
-        case 'ArrowLeft':
-          // سهم اليسار يرجع للمحتوى في واجهة RTL
+        case 'ArrowRight':
+          // سهم اليمين يخرج من الشريط الجانبي عائداً للمحتوى على اليمين
           e.preventDefault();
           setIsSidebarFocused(false);
           break;

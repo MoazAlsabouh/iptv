@@ -50,9 +50,9 @@ export interface Env {
 // إعدادات إصدار تطبيق أندرويد وتلفاز (App Version)
 // ==========================================
 export const DEFAULT_APP_VERSION = {
-  latestVersionCode: 4,
-  minSupportedVersionCode: 4,
-  latestVersionName: '1.0.4',
+  latestVersionCode: 5,
+  minSupportedVersionCode: 5,
+  latestVersionName: '1.0.5',
   downloadUrl: 'https://github.com/MoazAlsabouh/iptv/releases/latest/download/telfazi.apk',
   message: 'يتوفر تحديث جديد ومهم لتحسين استقرار البث وإصلاح الأخطاء، يرجى التحديث للمتابعة.',
   forceUpdate: true,

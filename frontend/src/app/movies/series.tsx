@@ -296,20 +296,7 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
   }, [focusedSection, seasons.length, currentEpisodes.length, numCols]);
 
   const handleArrowRight = useCallback(() => {
-    // في واجهة RTL: التحرك يميناً
-    if (focusedSection === 'seasons') {
-      setFocusedSeasonIndex((prev) => Math.max(0, prev - 1));
-    } else if (focusedSection === 'episodes') {
-      if (focusedEpisodeIndex % numCols === 0) {
-        // الحافة اليمنى
-      } else {
-        setFocusedEpisodeIndex((prev) => Math.max(0, prev - 1));
-      }
-    }
-  }, [focusedSection, numCols, focusedEpisodeIndex]);
-
-  const handleArrowLeft = useCallback(() => {
-    // في واجهة RTL: التحرك يساراً
+    // التحرك يميناً بصرياً
     if (focusedSection === 'seasons') {
       setFocusedSeasonIndex((prev) => Math.min(seasons.length - 1, prev + 1));
     } else if (focusedSection === 'episodes') {
@@ -318,6 +305,19 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
       );
     }
   }, [focusedSection, seasons.length, currentEpisodes.length]);
+
+  const handleArrowLeft = useCallback(() => {
+    // التحرك يساراً بصرياً
+    if (focusedSection === 'seasons') {
+      setFocusedSeasonIndex((prev) => Math.max(0, prev - 1));
+    } else if (focusedSection === 'episodes') {
+      if (focusedEpisodeIndex % numCols === 0) {
+        // الحافة اليسرى
+      } else {
+        setFocusedEpisodeIndex((prev) => Math.max(0, prev - 1));
+      }
+    }
+  }, [focusedSection, numCols, focusedEpisodeIndex]);
 
   const handleEnterKey = useCallback(() => {
     if (focusedSection === 'back') {
@@ -344,46 +344,6 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
     focusedEpisodeIndex,
     handlePlayEpisode,
   ]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      switch (e.key) {
-        case 'ArrowUp':
-          e.preventDefault();
-          handleArrowUp();
-          break;
-        case 'ArrowDown':
-          e.preventDefault();
-          handleArrowDown();
-          break;
-        case 'ArrowRight':
-          e.preventDefault();
-          handleArrowRight();
-          break;
-        case 'ArrowLeft':
-          e.preventDefault();
-          handleArrowLeft();
-          break;
-        case 'Enter':
-        case 'NumpadEnter':
-        case ' ':
-        case 'Select':
-          e.preventDefault();
-          handleEnterKey();
-          break;
-        case 'Escape':
-        case 'Back':
-          e.preventDefault();
-          handleGoBack();
-          break;
-      }
-    };
-
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleArrowUp, handleArrowDown, handleArrowRight, handleArrowLeft, handleEnterKey, handleGoBack]);
 
   useTVRemoteNavigation({
     onArrowUp: handleArrowUp,

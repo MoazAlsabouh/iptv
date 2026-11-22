@@ -19,7 +19,7 @@ import { useAuth, BACKEND_BASE_URL } from '../context/AuthContext';
  * رابط تحميل ملف APK الافتراضي ورقم الإصدار
  */
 export const DEFAULT_DOWNLOAD_URL = 'https://github.com/MoazAlsabouh/iptv/releases/latest/download/telfazi.apk';
-export const DEFAULT_VERSION_NAME = '1.0.4';
+export const DEFAULT_VERSION_NAME = '1.0.5';
 
 export default function LandingPage(): React.JSX.Element {
   const router = useRouter();

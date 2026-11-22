@@ -302,19 +302,7 @@ export default function DashboardScreen(): React.JSX.Element {
   }, [activePane, navGroups.length, activeChannels.length]);
 
   const handleArrowRight = useCallback(() => {
-    // في واجهة RTL: التحرك يميناً يعني الانتقال من المعاينة (اليسار) -> القنوات (الوسط) -> الأقسام (اليمين) -> الشريط الجانبي (أقصى اليمين)
-    if (activePane === 'preview') {
-      setActivePane('channels');
-    } else if (activePane === 'channels') {
-      setActivePane('categories');
-    } else if (activePane === 'categories') {
-      setActivePane('sidebar');
-      setFocusedSidebarIndex(0);
-    }
-  }, [activePane]);
-
-  const handleArrowLeft = useCallback(() => {
-    // في واجهة RTL: التحرك يساراً يعني الانتقال من الشريط الجانبي -> الأقسام -> القنوات -> المعاينة
+    // التحرك يميناً بصرياً: الشريط الجانبي (أقصى اليسار) -> الأقسام -> القنوات -> المعاينة (أقصى اليمين)
     if (activePane === 'sidebar') {
       setActivePane('categories');
     } else if (activePane === 'categories') {
@@ -325,6 +313,18 @@ export default function DashboardScreen(): React.JSX.Element {
       }
     }
   }, [activePane, isWide, previewChannel]);
+
+  const handleArrowLeft = useCallback(() => {
+    // التحرك يساراً بصرياً: المعاينة (أقصى اليمين) -> القنوات -> الأقسام -> الشريط الجانبي (أقصى اليسار)
+    if (activePane === 'preview') {
+      setActivePane('channels');
+    } else if (activePane === 'channels') {
+      setActivePane('categories');
+    } else if (activePane === 'categories') {
+      setActivePane('sidebar');
+      setFocusedSidebarIndex(0);
+    }
+  }, [activePane]);
 
   // مراجع حية لمنع Stale Closures نهائياً في مستمع الأحداث
   const activePaneRef = useRef(activePane);

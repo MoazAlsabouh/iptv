@@ -700,7 +700,7 @@ const PosterSlider: React.FC<PosterSliderProps> = ({
             contentContainerStyle={styles.railScrollContent}
             style={
               Platform.OS === 'web'
-                ? ({ scrollBehavior: 'smooth', overflowX: 'auto', overflowY: 'hidden' } as any)
+                ? ({ scrollBehavior: 'smooth' } as any)
                 : undefined
             }
           >
@@ -844,6 +844,7 @@ export default function MoviesScreen(): React.JSX.Element {
   const setIsSidebarFocused = useAppStore((state) => state.setIsSidebarFocused);
   const setFocusedSidebarIndex = useAppStore((state) => state.setFocusedSidebarIndex);
   const contentScrollRef = useRef<any>(null);
+  const topCategoriesScrollRef = useRef<any>(null);
   const rowScrollRefs = useRef<Record<number, any>>({});
 
   // مراجع حية لمنع Stale Closures نهائياً في مستمع الأحداث
@@ -1048,6 +1049,16 @@ export default function MoviesScreen(): React.JSX.Element {
     }
   }, [focusedArea, focusedRailIndex, focusedCardIndex, focusedGridIndex, isSearchMode, isFavoritesMode]);
 
+  // تمرير شريط التصنيفات تلقائياً ليبقى التصنيف المحدد مرئياً
+  useEffect(() => {
+    if (focusedArea === 'categories' && focusedCategoryIndex >= 0) {
+      topCategoriesScrollRef.current?.scrollTo({
+        x: Math.max(0, (focusedCategoryIndex - 1) * 140),
+        animated: true,
+      });
+    }
+  }, [focusedArea, focusedCategoryIndex]);
+
   const handleArrowUp = useCallback(() => {
     if (focusedArea === 'items') {
       if (isSearchMode || isFavoritesMode) {
@@ -1089,14 +1100,14 @@ export default function MoviesScreen(): React.JSX.Element {
     }
   }, [focusedArea, isSearchOpen, searchQuery.length, isSearchMode, isFavoritesMode, gridItems.length, numColumns, currentRails.length]);
 
-  const handleArrowRight = useCallback(() => {
-    // في واجهة RTL: التحرك يميناً
+  const handleArrowLeft = useCallback(() => {
+    // التحرك يساراً بصرياً (نحو الشريط الجانبي في أقصى اليسار أو البطاقة السابقة)
     if (focusedArea === 'search') {
       setIsSidebarFocused(true);
       setFocusedSidebarIndex(1);
     } else if (focusedArea === 'categories') {
       if (focusedCategoryIndex === 0) {
-        // عند أقصى اليمين: الانتقال للشريط الجانبي
+        // عند أقصى اليسار: الانتقال للشريط الجانبي
         setIsSidebarFocused(true);
         setFocusedSidebarIndex(1);
       } else {
@@ -1131,8 +1142,13 @@ export default function MoviesScreen(): React.JSX.Element {
     setFocusedSidebarIndex,
   ]);
 
-  const handleArrowLeft = useCallback(() => {
-    // في واجهة RTL: التحرك يساراً
+  const handleArrowRight = useCallback(() => {
+    // التحرك يميناً بصرياً (نحو البطاقات أو التصنيفات التالية)
+    if (isSidebarFocusedRef.current) {
+      setIsSidebarFocused(false);
+      return;
+    }
+
     if (focusedArea === 'categories') {
       setFocusedCategoryIndex((prev) => Math.min(CATEGORIES.length - 1, prev + 1));
     } else if (focusedArea === 'items') {
@@ -1145,11 +1161,9 @@ export default function MoviesScreen(): React.JSX.Element {
     }
   }, [
     focusedArea,
-    focusedCategoryIndex,
-    isSearchMode,
-    isFavoritesMode,
     gridItems.length,
     activeRailItems.length,
+    setIsSidebarFocused,
   ]);
 
   const handleEnterKey = useCallback(() => {
@@ -1192,84 +1206,6 @@ export default function MoviesScreen(): React.JSX.Element {
       }
     }
   }, [debouncedQuery, selectedCategory, searchResults, vodFavorites, currentRails, railItemsMap, handleSelect]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      // إذا كان التركيز على الشريط الجانبي: دعه للشريط الجانبي
-      if (isSidebarFocusedRef.current) return;
-
-      const activeEl = document.activeElement;
-      const isInput =
-        activeEl &&
-        (activeEl.tagName === 'INPUT' ||
-          activeEl.tagName === 'TEXTAREA' ||
-          (activeEl as HTMLElement).isContentEditable);
-
-      if (isInput) {
-        if (e.key === 'Escape' || e.key === 'ArrowDown') {
-          (activeEl as HTMLElement).blur();
-          setFocusedArea('categories');
-          e.preventDefault();
-        }
-        return;
-      }
-
-      const isConfirm =
-        e.key === 'Enter' ||
-        e.key === 'NumpadEnter' ||
-        e.key === 'Select' ||
-        e.key === 'Ok' ||
-        e.key === 'OK' ||
-        e.keyCode === 13 ||
-        e.keyCode === 23 ||
-        e.which === 13 ||
-        e.which === 23;
-
-      if (isConfirm) {
-        e.preventDefault();
-        e.stopPropagation();
-        handleEnterKey();
-        return;
-      }
-
-      switch (e.key) {
-        case 'ArrowUp':
-          e.preventDefault();
-          handleArrowUp();
-          break;
-        case 'ArrowDown':
-          e.preventDefault();
-          handleArrowDown();
-          break;
-        case 'ArrowRight':
-          e.preventDefault();
-          handleArrowRight();
-          break;
-        case 'ArrowLeft':
-          e.preventDefault();
-          handleArrowLeft();
-          break;
-        case 'Escape':
-        case 'Back':
-        case 'Backspace':
-          e.preventDefault();
-          handleGoBack();
-          break;
-      }
-    };
-
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [
-    handleArrowUp,
-    handleArrowDown,
-    handleArrowRight,
-    handleArrowLeft,
-    handleEnterKey,
-    handleGoBack,
-  ]);
 
   useTVRemoteNavigation({
     onArrowUp: handleArrowUp,
@@ -1358,6 +1294,7 @@ export default function MoviesScreen(): React.JSX.Element {
       {/* 2. شريط «تصفح حسب التصنيف» في أعلى الصفحة مباشرة تحت الشريط العلوي */}
       <View style={styles.topCategoriesRow}>
         <ScrollView
+          ref={topCategoriesScrollRef}
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.topCategoriesScrollContent}
@@ -1708,12 +1645,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#0B1120',
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255, 255, 255, 0.05)',
-    paddingVertical: 12,
+    paddingVertical: 14,
     zIndex: 10,
+    overflow: 'visible',
   },
   topCategoriesScrollContent: {
     paddingHorizontal: 24,
     gap: 12,
+    paddingVertical: 6,
   },
   categoryCard: {
     height: 52,
@@ -1825,9 +1764,9 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   railScrollContent: {
-    paddingHorizontal: 24,
-    gap: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 28,
+    gap: 18,
+    paddingVertical: 20, // حشوة كافية لمنع اقتصاص إطار التركيز المضيء عند التكبير
   },
 
   // أزرار التنقل الجانبية للسلايدر
@@ -1871,6 +1810,8 @@ const styles = StyleSheet.create({
   // بطاقة البوستر
   cardContainer: {
     position: 'relative',
+    paddingVertical: 4,
+    paddingHorizontal: 2,
   },
   cardFixedRailWidth: {
     width: 175,
