@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   useWindowDimensions,
   ScrollView,
   Platform,
+  Keyboard,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -54,6 +55,21 @@ export default function ActivateScreen(): React.JSX.Element {
   const submitRef = useRef<any>(null);
   const codeRef = useRef<string>(code);
   codeRef.current = code;
+  const isKeyboardVisibleRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', () => {
+      isKeyboardVisibleRef.current = true;
+    });
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+      isKeyboardVisibleRef.current = false;
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   // تنسيق كود التفعيل بنمط (XX-XXXX-XXXX) بحد أقصى 12 محرفاً
   const formatActivationCode = (input: string, prevCode: string): string => {
@@ -109,6 +125,8 @@ export default function ActivateScreen(): React.JSX.Element {
     setIsSubmitting(false);
 
     if (result.success) {
+      Keyboard.dismiss();
+      inputRef.current?.blur();
       setSuccessMessage('تم تفعيل الاشتراك بنجاح! جاري تحويلك للمنصة...');
       setTimeout(() => {
         router.replace('/home');
@@ -120,18 +138,27 @@ export default function ActivateScreen(): React.JSX.Element {
 
   useTVRemoteNavigation({
     onArrowDown: () => {
+      if (isKeyboardVisibleRef.current || inputFocused) {
+        return;
+      }
       if (activeFocus === 'input') {
         inputRef.current?.blur();
         setActiveFocus('submit');
       }
     },
     onArrowUp: () => {
+      if (isKeyboardVisibleRef.current || inputFocused) {
+        return;
+      }
       if (activeFocus === 'submit') {
         setActiveFocus('input');
         inputRef.current?.focus();
       }
     },
     onEnter: () => {
+      if (isKeyboardVisibleRef.current) {
+        return;
+      }
       if (activeFocus === 'submit') {
         handleActivate();
       } else {
@@ -142,6 +169,11 @@ export default function ActivateScreen(): React.JSX.Element {
       }
     },
     onBack: () => {
+      if (isKeyboardVisibleRef.current) {
+        Keyboard.dismiss();
+        inputRef.current?.blur();
+        return true;
+      }
       // لا نرجع إذا كان غير مفعل
     },
   });
@@ -161,7 +193,7 @@ export default function ActivateScreen(): React.JSX.Element {
           },
         ]}
         showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps="always"
       >
         <View style={[styles.card, isWide && styles.cardWide]}>
           {/* الشعار والعنوان */}
@@ -201,7 +233,8 @@ export default function ActivateScreen(): React.JSX.Element {
                 ref={inputRef}
                 focusable={true}
                 editable={!isSubmitting}
-                hasTVPreferredFocus={activeFocus === 'input'}
+                hasTVPreferredFocus={true}
+                blurOnSubmit={false}
                 style={styles.input}
                 value={code}
                 onChangeText={handleCodeChange}
@@ -264,7 +297,6 @@ export default function ActivateScreen(): React.JSX.Element {
             ref={submitRef}
             focusable={true}
             accessible={true}
-            hasTVPreferredFocus={activeFocus === 'submit'}
             disabled={isSubmitting}
             onFocus={() => {
               setActiveFocus('submit');

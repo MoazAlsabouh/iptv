@@ -146,7 +146,10 @@ function withAndroidTV(config) {
     val keyCode = event.keyCode
     val action = event.action
 
-    if (action == android.view.KeyEvent.ACTION_DOWN) {
+    // إذا كان التركيز الحالي على حقل إدخال نصي (EditText)، نمرر الحدث مباشرة للنظام دون إرسال onTVKeyEvent
+    val isEditTextFocused = currentFocus is android.widget.EditText
+
+    if (action == android.view.KeyEvent.ACTION_DOWN && !isEditTextFocused) {
       val eventType = when (keyCode) {
         android.view.KeyEvent.KEYCODE_DPAD_UP -> "DPAD_UP"
         android.view.KeyEvent.KEYCODE_DPAD_DOWN -> "DPAD_DOWN"
