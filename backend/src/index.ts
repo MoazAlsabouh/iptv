@@ -1169,7 +1169,7 @@ async function handleVodEpisodes(url: URL, env: Env): Promise<Response> {
         for (const res of seasonResults) {
           if (res.status === 'fulfilled' && res.value && res.value.data) {
             const sNum = res.value.season;
-            const rawEps = (res.value.data.episodes || []) as any[];
+            const rawEps = ((res.value.data as any)?.episodes || []) as any[];
             const mappedEpisodes = rawEps.map((ep) => ({
               id: ep.id,
               season: ep.season_number || sNum,
@@ -4973,26 +4973,37 @@ async function handleGetPublicNetworks(env: Env): Promise<Response> {
  * يقوم بإعادة كتابة روابط ملفات .m3u8 ومقاطع .ts/.m4s وحذف ترويسة Origin وتعيين Referer مناسب
  * لتمكين المشاهدة من المتصفح دون حظر 403 لقنوات MBC وغيرها
  */
+const PROXY_CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+  'Access-Control-Allow-Headers': '*',
+  'Access-Control-Expose-Headers':
+    'Content-Length, Content-Range, Content-Type, Accept-Ranges, X-Proxy-Source, X-Proxy-Origin-Status, X-Proxy-Target-Host',
+  'Access-Control-Max-Age': '86400',
+};
+
 function rewriteM3u8Playlist(content: string, baseOriginUrl: string, proxyOrigin: string): string {
   const proxyBase = `${proxyOrigin}/api/proxy`;
   const parentUrl = new URL(baseOriginUrl);
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
 
   const rewrittenLines = lines.map((line) => {
     const trimmed = line.trim();
     if (!trimmed) return line;
 
-    // 1. معالجة التوجيهات التي تحتوي على سمات URI="..."
-    // مثل #EXT-X-KEY:METHOD=...,URI="..." أو #EXT-X-MAP:URI="..." أو #EXT-X-MEDIA:...URI="..."
+    // 1. معالجة التوجيهات التي تحتوي على سمات URI="..." أو URI='...' أو URI=...
+    // مثل #EXT-X-KEY, #EXT-X-MAP, #EXT-X-MEDIA, #EXT-X-PRELOAD-HINT, #EXT-X-PART
     if (trimmed.startsWith('#')) {
-      if (trimmed.includes('URI="')) {
-        return line.replace(/URI="([^"]+)"/g, (match, uriValue) => {
+      if (/URI=/i.test(trimmed)) {
+        return line.replace(/URI=(["']?)([^"'\s,>]+)(["']?)/gi, (match, quoteStart, uriValue, quoteEnd) => {
+          if (uriValue.includes('/api/proxy')) return match;
           try {
-            let resolved = new URL(uriValue, baseOriginUrl);
+            const resolved = new URL(uriValue, baseOriginUrl);
             if (!resolved.search && parentUrl.search) {
               resolved.search = parentUrl.search;
             }
-            return `URI="${proxyBase}?url=${encodeURIComponent(resolved.toString())}"`;
+            const q = quoteStart || quoteEnd || '"';
+            return `URI=${q}${proxyBase}?url=${encodeURIComponent(resolved.toString())}${q}`;
           } catch {
             return match;
           }
@@ -5002,8 +5013,12 @@ function rewriteM3u8Playlist(content: string, baseOriginUrl: string, proxyOrigin
     }
 
     // 2. معالجة سطور روابط المقاطع وقوائم التشغيل الفرعية (lines not starting with #)
+    if (trimmed.includes('/api/proxy')) {
+      return line;
+    }
+
     try {
-      let resolved = new URL(trimmed, baseOriginUrl);
+      const resolved = new URL(trimmed, baseOriginUrl);
       if (!resolved.search && parentUrl.search) {
         resolved.search = parentUrl.search;
       }
@@ -5017,13 +5032,20 @@ function rewriteM3u8Playlist(content: string, baseOriginUrl: string, proxyOrigin
 }
 
 async function handleHlsProxy(request: Request, url: URL): Promise<Response> {
+  if (request.method === 'OPTIONS') {
+    return new Response(null, {
+      status: 204,
+      headers: PROXY_CORS_HEADERS,
+    });
+  }
+
   const targetUrlStr = url.searchParams.get('url');
   if (!targetUrlStr) {
     return new Response('معلمة الرابط url مطلوبة للبروكسي', {
       status: 400,
       headers: {
+        ...PROXY_CORS_HEADERS,
         'Content-Type': 'text/plain; charset=utf-8',
-        'Access-Control-Allow-Origin': '*',
         'X-Proxy-Source': 'cloudflare-worker',
       },
     });
@@ -5036,8 +5058,8 @@ async function handleHlsProxy(request: Request, url: URL): Promise<Response> {
     return new Response('رابط غير صالح', {
       status: 400,
       headers: {
+        ...PROXY_CORS_HEADERS,
         'Content-Type': 'text/plain; charset=utf-8',
-        'Access-Control-Allow-Origin': '*',
         'X-Proxy-Source': 'cloudflare-worker',
       },
     });
@@ -5047,8 +5069,8 @@ async function handleHlsProxy(request: Request, url: URL): Promise<Response> {
     return new Response('البروتوكول غير مدعوم في البروكسي (يسمح فقط بـ http و https)', {
       status: 400,
       headers: {
+        ...PROXY_CORS_HEADERS,
         'Content-Type': 'text/plain; charset=utf-8',
-        'Access-Control-Allow-Origin': '*',
         'X-Proxy-Source': 'cloudflare-worker',
       },
     });
@@ -5065,8 +5087,8 @@ async function handleHlsProxy(request: Request, url: URL): Promise<Response> {
       return new Response('عنوان IP غير صالح', {
         status: 400,
         headers: {
+          ...PROXY_CORS_HEADERS,
           'Content-Type': 'text/plain; charset=utf-8',
-          'Access-Control-Allow-Origin': '*',
           'X-Proxy-Source': 'cloudflare-worker',
         },
       });
@@ -5084,8 +5106,8 @@ async function handleHlsProxy(request: Request, url: URL): Promise<Response> {
       return new Response('العناوين المحلية والشبكات الخاصة غير مسموح بها في البروكسي', {
         status: 403,
         headers: {
+          ...PROXY_CORS_HEADERS,
           'Content-Type': 'text/plain; charset=utf-8',
-          'Access-Control-Allow-Origin': '*',
           'X-Proxy-Source': 'cloudflare-worker',
         },
       });
@@ -5101,8 +5123,8 @@ async function handleHlsProxy(request: Request, url: URL): Promise<Response> {
       return new Response('العناوين المحلية والشبكات الخاصة غير مسموح بها في البروكسي', {
         status: 403,
         headers: {
+          ...PROXY_CORS_HEADERS,
           'Content-Type': 'text/plain; charset=utf-8',
-          'Access-Control-Allow-Origin': '*',
           'X-Proxy-Source': 'cloudflare-worker',
         },
       });
@@ -5129,10 +5151,10 @@ async function handleHlsProxy(request: Request, url: URL): Promise<Response> {
     if (browserUa) {
       headers.set(
         'User-Agent',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
       );
     } else {
-      headers.set('User-Agent', 'VLC/3.0.20 LibVLC/3.0.20');
+      headers.set('User-Agent', 'AppleCoreMedia/1.0.0.20K5364a (Apple TV; tvOS/16.5)');
     }
 
     if (sendReferer) {
@@ -5157,13 +5179,13 @@ async function handleHlsProxy(request: Request, url: URL): Promise<Response> {
   try {
     originRes = await fetch(outboundFetchUrl, {
       method: isHead ? 'HEAD' : 'GET',
-      headers: createRequestHeaders(isMbcOrShahid, isMbcOrShahid),
+      headers: createRequestHeaders(true, true),
       redirect: 'follow',
     });
 
-    // إذا أعاد السيرفر الأصلي 403 أو 401، نحاول محاولة ثانية بترويسات بديلة
-    if ((originRes.status === 403 || originRes.status === 401) && !isMbcOrShahid) {
-      const retryHeaders = createRequestHeaders(true, true);
+    // إذا أعاد السيرفر الأصلي 403 أو 401 أو 503، نحاول محاولة ثانية بترويسات بديلة
+    if ((originRes.status === 403 || originRes.status === 401 || originRes.status === 503) && !isMbcOrShahid) {
+      const retryHeaders = createRequestHeaders(false, false);
       const retryRes = await fetch(outboundFetchUrl, {
         method: isHead ? 'HEAD' : 'GET',
         headers: retryHeaders,
@@ -5181,7 +5203,7 @@ async function handleHlsProxy(request: Request, url: URL): Promise<Response> {
         fallbackUrl.hostname = `${rawHostname.replace(/\./g, '-')}.sslip.io`;
         originRes = await fetch(fallbackUrl.toString(), {
           method: isHead ? 'HEAD' : 'GET',
-          headers: createRequestHeaders(isMbcOrShahid, isMbcOrShahid),
+          headers: createRequestHeaders(true, true),
           redirect: 'follow',
         });
       } catch (fallbackErr: any) {
@@ -5190,11 +5212,8 @@ async function handleHlsProxy(request: Request, url: URL): Promise<Response> {
           {
             status: 502,
             headers: {
+              ...PROXY_CORS_HEADERS,
               'Content-Type': 'text/plain; charset=utf-8',
-              'Access-Control-Allow-Origin': '*',
-              'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-              'Access-Control-Allow-Headers': '*',
-              'Access-Control-Expose-Headers': '*',
               'X-Proxy-Source': 'cloudflare-worker',
               'X-Proxy-Origin-Status': '502',
               'X-Proxy-Target-Host': targetUrl.host,
@@ -5208,11 +5227,8 @@ async function handleHlsProxy(request: Request, url: URL): Promise<Response> {
         {
           status: 502,
           headers: {
+            ...PROXY_CORS_HEADERS,
             'Content-Type': 'text/plain; charset=utf-8',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-            'Access-Control-Allow-Headers': '*',
-            'Access-Control-Expose-Headers': '*',
             'X-Proxy-Source': 'cloudflare-worker',
             'X-Proxy-Origin-Status': '502',
             'X-Proxy-Target-Host': targetUrl.host,
@@ -5222,15 +5238,12 @@ async function handleHlsProxy(request: Request, url: URL): Promise<Response> {
     }
   }
 
-  // إذا لم تكن الاستجابة ناجحة (ليست 200 أو 206)
+  // إذا كانت استجابة السيرفر الأصلي خطأ (مثل 404 أو 403)
   if (originRes.status !== 200 && originRes.status !== 206) {
     return new Response(originRes.body, {
       status: originRes.status,
       headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-        'Access-Control-Allow-Headers': '*',
-        'Access-Control-Expose-Headers': '*',
+        ...PROXY_CORS_HEADERS,
         'Content-Type': originRes.headers.get('Content-Type') || 'text/plain; charset=utf-8',
         'X-Proxy-Source': 'cloudflare-worker',
         'X-Proxy-Origin-Status': String(originRes.status),
@@ -5257,25 +5270,25 @@ async function handleHlsProxy(request: Request, url: URL): Promise<Response> {
 
   const finalUrl = originRes.url || outboundFetchUrl;
   const contentType = (originRes.headers.get('Content-Type') || '').toLowerCase();
-  const isM3u8Url =
+  const isM3u8Ext =
+    targetUrl.pathname.toLowerCase().endsWith('.m3u8') ||
     targetUrl.pathname.toLowerCase().includes('.m3u8') ||
-    finalUrl.toLowerCase().includes('.m3u8') ||
+    targetUrl.search.toLowerCase().includes('.m3u8') ||
+    finalUrl.toLowerCase().includes('.m3u8');
+  const isM3u8Mime =
     contentType.includes('mpegurl') ||
     contentType.includes('application/x-mpegurl') ||
     contentType.includes('application/vnd.apple.mpegurl');
 
-  if (isM3u8Url) {
+  if (isM3u8Ext || isM3u8Mime || contentType.includes('text/plain') || !contentType) {
     const text = await originRes.text();
     if (text.trim().startsWith('#EXTM3U')) {
       const rewritten = rewriteM3u8Playlist(text, baseForRewriting, url.origin);
       return new Response(rewritten, {
         status: 200,
         headers: {
+          ...PROXY_CORS_HEADERS,
           'Content-Type': 'application/vnd.apple.mpegurl; charset=utf-8',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-          'Access-Control-Allow-Headers': '*',
-          'Access-Control-Expose-Headers': '*',
           'Cache-Control': 'no-cache, no-store, must-revalidate',
           'Pragma': 'no-cache',
           'Expires': '0',
@@ -5284,14 +5297,11 @@ async function handleHlsProxy(request: Request, url: URL): Promise<Response> {
           'X-Proxy-Target-Host': targetUrl.host,
         },
       });
-    } else {
+    } else if (isM3u8Ext || isM3u8Mime) {
       return new Response(text, {
         status: originRes.status,
         headers: {
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-          'Access-Control-Allow-Headers': '*',
-          'Access-Control-Expose-Headers': '*',
+          ...PROXY_CORS_HEADERS,
           'Content-Type': originRes.headers.get('Content-Type') || 'text/plain; charset=utf-8',
           'X-Proxy-Source': 'cloudflare-worker',
           'X-Proxy-Origin-Status': String(originRes.status),
@@ -5303,13 +5313,9 @@ async function handleHlsProxy(request: Request, url: URL): Promise<Response> {
 
   // للمقاطع الثنائية (TS / M4S / مفاتيح التشفير)
   const respHeaders = new Headers();
-  respHeaders.set('Access-Control-Allow-Origin', '*');
-  respHeaders.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-  respHeaders.set('Access-Control-Allow-Headers', '*');
-  respHeaders.set(
-    'Access-Control-Expose-Headers',
-    'Content-Length, Content-Range, Content-Type, Accept-Ranges, X-Proxy-Source, X-Proxy-Origin-Status, X-Proxy-Target-Host'
-  );
+  for (const [key, val] of Object.entries(PROXY_CORS_HEADERS)) {
+    respHeaders.set(key, val);
+  }
   respHeaders.set('X-Proxy-Source', 'cloudflare-worker');
   respHeaders.set('X-Proxy-Origin-Status', String(originRes.status));
   respHeaders.set('X-Proxy-Target-Host', targetUrl.host);
@@ -5375,7 +5381,7 @@ export default {
     }
 
     // نقطة نهاية بروكسي بث HLS المباشر (تخطي حظر 403 للمتصفحات)
-    if (url.pathname === '/api/proxy' && (request.method === 'GET' || request.method === 'HEAD')) {
+    if (url.pathname === '/api/proxy' && (request.method === 'GET' || request.method === 'HEAD' || request.method === 'OPTIONS')) {
       return handleHlsProxy(request, url);
     }
 

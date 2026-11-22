@@ -336,12 +336,28 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
         const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: true,
-          backBufferLength: 90,
+          backBufferLength: 60,
+          manifestLoadingMaxRetry: 1,
+          manifestLoadingRetryDelay: 1000,
+          manifestLoadingMaxRetryTimeout: 4000,
+          levelLoadingMaxRetry: 2,
+          levelLoadingRetryDelay: 1000,
+          levelLoadingMaxRetryTimeout: 4000,
+          fragLoadingMaxRetry: 2,
+          fragLoadingRetryDelay: 1000,
+          fragLoadingMaxRetryTimeout: 4000,
         });
 
         hlsRef.current = hls;
+        let consecutiveFragErrors = 0;
+        let mediaRecoveryAttempts = 0;
+
         hls.loadSource(urlToLoad);
         hls.attachMedia(videoEl);
+
+        hls.on(Hls.Events.FRAG_LOADED, () => {
+          consecutiveFragErrors = 0;
+        });
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           safePlay();
@@ -365,13 +381,80 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
         });
 
         hls.on(Hls.Events.ERROR, (_event, data) => {
+          const httpStatus =
+            data.response?.code ||
+            (data.context as any)?.xhr?.status ||
+            (data.context as any)?.response?.status ||
+            0;
+
+          // 1. معالجة خطأ 404 المباشر (البث غير متاح نهائياً - عدم إعادة المحاولة عبر البروكسي)
+          if (httpStatus === 404) {
+            console.warn('[TVPlayer] Stream 404 Not Found. Aborting immediately without retry.');
+            clearPlaybackTimeout();
+            hls.destroy();
+            hlsRef.current = null;
+            onErrorRef.current?.('البث غير متاح حالياً (404 Not Found)');
+            return;
+          }
+
+          // 2. مراقبة تكرار فشل تحميل المقاطع (FRAG_LOAD_ERROR) لمنع الحلقات اللانهائية
+          if (data.details === Hls.ErrorDetails.FRAG_LOAD_ERROR) {
+            consecutiveFragErrors++;
+            if (httpStatus === 403 || consecutiveFragErrors >= 2) {
+              if (!hasTriedProxy) {
+                console.log('[TVPlayer] Fragment 403/Blocked. Switching to HLS proxy...');
+                hasTriedProxy = true;
+                clearPlaybackTimeout();
+                hls.destroy();
+                hlsRef.current = null;
+                loadHlsStream(getProxyStreamUrl(streamUrl));
+                return;
+              } else {
+                clearPlaybackTimeout();
+                hls.destroy();
+                hlsRef.current = null;
+                onErrorRef.current?.('تعذر تحميل مقاطع البث، القناة غير متاحة حالياً');
+                return;
+              }
+            }
+          }
+
+          // 3. مراقبة فشل تحميل مستويات الجودة (LEVEL_LOAD_ERROR)
+          if (data.details === Hls.ErrorDetails.LEVEL_LOAD_ERROR) {
+            if (httpStatus === 403 || !hasTriedProxy) {
+              console.log('[TVPlayer] Level load error. Switching to HLS proxy...');
+              hasTriedProxy = true;
+              clearPlaybackTimeout();
+              hls.destroy();
+              hlsRef.current = null;
+              loadHlsStream(getProxyStreamUrl(streamUrl));
+              return;
+            } else {
+              clearPlaybackTimeout();
+              hls.destroy();
+              hlsRef.current = null;
+              onErrorRef.current?.('تعذر تحميل قائمة الجودات، القناة غير متاحة حالياً');
+              return;
+            }
+          }
+
+          // 4. معالجة الأخطاء القاتلة (data.fatal)
           if (data.fatal) {
+            if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+              if (mediaRecoveryAttempts < 1) {
+                mediaRecoveryAttempts++;
+                console.log('[TVPlayer] Media error encountered, attempting recovery...');
+                hls.recoverMediaError();
+                return;
+              }
+            }
+
             const isNetworkOrBlocked =
               data.type === Hls.ErrorTypes.NETWORK_ERROR ||
               data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR ||
               data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT ||
-              data.details === Hls.ErrorDetails.LEVEL_LOAD_ERROR ||
-              (data.response && (data.response.code === 403 || data.response.code === 0));
+              httpStatus === 403 ||
+              httpStatus === 0;
 
             if (isNetworkOrBlocked && !hasTriedProxy) {
               console.log(
@@ -388,7 +471,7 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
             clearPlaybackTimeout();
             hls.destroy();
             hlsRef.current = null;
-            onErrorRef.current?.('تعذر الاتصال بمصدر البث، يرجى إعادة المحاولة أو اختيار مصدر آخر');
+            onErrorRef.current?.('تعذر الاتصال بمصدر البث، القناة غير متاحة حالياً');
           }
         });
       } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
@@ -416,6 +499,9 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
       if (videoEl) {
         videoEl.pause();
         videoEl.removeAttribute('src');
+        try {
+          videoEl.load();
+        } catch {}
       }
     };
   }, [streamUrl]);

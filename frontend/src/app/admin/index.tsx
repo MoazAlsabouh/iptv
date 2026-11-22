@@ -30,6 +30,7 @@ import {
 import { fetchBackendPlaylist } from '../../utils/m3uParser';
 import { MediaItem } from '../../types/media';
 import { toYouTubeEmbedUrl } from '../../components/player/TVPlayer';
+import { ChannelLogo } from '../../components/ChannelLogo';
 
 export interface VodOverrideItem {
   tmdbId: string;
@@ -4425,15 +4426,7 @@ export default function AdminScreen(): React.JSX.Element {
                       {/* رأس بطاقة القناة */}
                       <View style={styles.channelCardHeader}>
                         <View style={styles.channelLogoWrapper}>
-                          {item.logo ? (
-                            <Image
-                              source={{ uri: item.logo }}
-                              style={styles.channelLogoImg}
-                              resizeMode="contain"
-                            />
-                          ) : (
-                            <MaterialIcons name="tv" size={24} color="#64748b" />
-                          )}
+                          <ChannelLogo uri={item.logo} name={item.name} size={36} />
                         </View>
 
                         <View style={styles.channelInfoText}>
@@ -4976,15 +4969,7 @@ export default function AdminScreen(): React.JSX.Element {
                   filteredSearchChannels.map((item) => (
                     <View key={item.id} style={styles.pickChannelItemRow}>
                       <View style={styles.pickChannelLogoBox}>
-                        {item.logo ? (
-                          <Image
-                            source={{ uri: item.logo }}
-                            style={{ width: 36, height: 36, borderRadius: 8 }}
-                            resizeMode="contain"
-                          />
-                        ) : (
-                          <MaterialIcons name="tv" size={22} color="#38bdf8" />
-                        )}
+                        <ChannelLogo uri={item.logo} name={item.name} size={36} />
                       </View>
                       <View style={{ flex: 1, marginHorizontal: 12 }}>
                         <Text style={styles.pickChannelItemName} numberOfLines={1}>
@@ -5262,11 +5247,7 @@ export default function AdminScreen(): React.JSX.Element {
                         >
                           <View style={styles.channelCardHeader}>
                             <View style={styles.channelLogoBox}>
-                              {ch.logo ? (
-                                <Image source={{ uri: ch.logo }} style={styles.channelLogo} resizeMode="contain" />
-                              ) : (
-                                <MaterialIcons name="live-tv" size={20} color="#64748b" />
-                              )}
+                              <ChannelLogo uri={ch.logo} name={ch.name} size={32} />
                             </View>
 
                             <View style={styles.channelInfoText}>

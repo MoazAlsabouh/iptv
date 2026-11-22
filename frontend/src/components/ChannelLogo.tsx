@@ -10,6 +10,9 @@ export interface ChannelLogoProps {
   style?: StyleProp<ViewStyle>;
 }
 
+// ذاكرة تخزين دائمة على مستوى الجلسة لعناوين الشعارات المعطلة (404) لمنع تكرار طلبها وإغراق الشبكة والـ Console
+const brokenLogosCache = new Set<string>();
+
 /**
  * مكون ذكي وموحد لعرض شعارات القنوات
  * في حال كان الرابط مفقوداً أو تالفاً (404 / onError)، يعرض بديلاً أنيقاً بخلفية داكنة وأيقونة تلفاز/حروف القناة.
@@ -21,22 +24,35 @@ export const ChannelLogo: React.FC<ChannelLogoProps> = ({
   focused = false,
   style,
 }) => {
-  const [hasError, setHasError] = useState<boolean>(false);
-
-  // إعادة ضبط حالة الخطأ عند تغير رابط الشعار
-  useEffect(() => {
-    setHasError(false);
-  }, [uri]);
-
   const cleanUri = String(uri || '').trim();
+  const isKnownBroken = cleanUri ? brokenLogosCache.has(cleanUri) : false;
+  const [hasError, setHasError] = useState<boolean>(isKnownBroken);
+
+  // تحديث حالة الخطأ عند تغير رابط الشعار أو التحقق من الكاش
+  useEffect(() => {
+    if (cleanUri && brokenLogosCache.has(cleanUri)) {
+      setHasError(true);
+    } else {
+      setHasError(false);
+    }
+  }, [cleanUri]);
+
   const isValidUrl = Boolean(
     cleanUri &&
       cleanUri.length > 8 &&
       (cleanUri.startsWith('http://') || cleanUri.startsWith('https://')) &&
-      !cleanUri.includes('twimg.com')
+      !cleanUri.includes('twimg.com') &&
+      !brokenLogosCache.has(cleanUri)
   );
 
   const showFallback = !isValidUrl || hasError;
+
+  const handleImageError = () => {
+    if (cleanUri) {
+      brokenLogosCache.add(cleanUri);
+    }
+    setHasError(true);
+  };
 
   // استخراج أول حرفين من اسم القناة للبديل النصي
   const initials = name
@@ -80,7 +96,7 @@ export const ChannelLogo: React.FC<ChannelLogoProps> = ({
     <View style={[styles.imageContainer, containerSize, style]}>
       <Image
         source={{ uri: cleanUri }}
-        onError={() => setHasError(true)}
+        onError={handleImageError}
         resizeMode="contain"
         style={styles.image}
       />
