@@ -50,23 +50,45 @@ export interface Env {
 // إعدادات إصدار تطبيق أندرويد وتلفاز (App Version)
 // ==========================================
 export const DEFAULT_APP_VERSION = {
-  latestVersionCode: 3,
-  minSupportedVersionCode: 3,
-  latestVersionName: '1.0.3',
+  latestVersionCode: 4,
+  minSupportedVersionCode: 4,
+  latestVersionName: '1.0.4',
   downloadUrl: 'https://github.com/MoazAlsabouh/iptv/releases/latest/download/telfazi.apk',
-  message: 'يتوفر إصدار جديد من تلفازي يتضمن تحسينات في الأداء والمشغّل.',
+  message: 'يتوفر تحديث جديد ومهم لتحسين استقرار البث وإصلاح الأخطاء، يرجى التحديث للمتابعة.',
+  forceUpdate: true,
+  mandatory: true,
 };
 
-function handleAppVersion(env: Env): Response {
-  const latestVersionCode = env.LATEST_VERSION_CODE
+async function handleAppVersion(env: Env): Promise<Response> {
+  let latestVersionCode = env.LATEST_VERSION_CODE
     ? Number(env.LATEST_VERSION_CODE)
     : DEFAULT_APP_VERSION.latestVersionCode;
-  const minSupportedVersionCode = env.MIN_SUPPORTED_VERSION_CODE
+  let minSupportedVersionCode = env.MIN_SUPPORTED_VERSION_CODE
     ? Number(env.MIN_SUPPORTED_VERSION_CODE)
     : DEFAULT_APP_VERSION.minSupportedVersionCode;
-  const latestVersionName = env.LATEST_VERSION_NAME || DEFAULT_APP_VERSION.latestVersionName;
-  const downloadUrl = env.APP_DOWNLOAD_URL || DEFAULT_APP_VERSION.downloadUrl;
-  const message = env.APP_UPDATE_MESSAGE || DEFAULT_APP_VERSION.message;
+  let latestVersionName = env.LATEST_VERSION_NAME || DEFAULT_APP_VERSION.latestVersionName;
+  let downloadUrl = env.APP_DOWNLOAD_URL || DEFAULT_APP_VERSION.downloadUrl;
+  let message = env.APP_UPDATE_MESSAGE || DEFAULT_APP_VERSION.message;
+  let forceUpdate = true;
+  let mandatory = true;
+
+  if (env.DB) {
+    try {
+      const row = await env.DB.prepare('SELECT value FROM app_settings WHERE key = ?')
+        .bind('app_version')
+        .first<any>();
+      if (row && row.value) {
+        const parsed = JSON.parse(row.value);
+        if (parsed.latestVersionCode) latestVersionCode = Number(parsed.latestVersionCode);
+        if (parsed.minSupportedVersionCode) minSupportedVersionCode = Number(parsed.minSupportedVersionCode);
+        if (parsed.latestVersionName) latestVersionName = String(parsed.latestVersionName);
+        if (parsed.downloadUrl) downloadUrl = String(parsed.downloadUrl);
+        if (parsed.message) message = String(parsed.message);
+        if (parsed.forceUpdate !== undefined) forceUpdate = Boolean(parsed.forceUpdate);
+        if (parsed.mandatory !== undefined) mandatory = Boolean(parsed.mandatory);
+      }
+    } catch {}
+  }
 
   return new Response(
     JSON.stringify({
@@ -75,6 +97,8 @@ function handleAppVersion(env: Env): Response {
       latestVersionName,
       downloadUrl,
       message,
+      forceUpdate,
+      mandatory,
     }),
     {
       status: 200,
@@ -5376,7 +5400,12 @@ export default {
     }
 
     // نقطة نهاية فحص إصدار التطبيق (Android / Android TV)
-    if (url.pathname === '/api/app-version' && request.method === 'GET') {
+    if (
+      (url.pathname === '/api/app-version' ||
+        url.pathname === '/api/version' ||
+        url.pathname === '/api/app-config') &&
+      (request.method === 'GET' || request.method === 'HEAD')
+    ) {
       return handleAppVersion(env);
     }
 

@@ -2,7 +2,7 @@
   "expo": {
     "name": "تلفازي",
     "slug": "telfazi",
-    "version": "1.0.0",
+    "version": "1.0.4",
     "isTV": true,
     "orientation": "landscape",
     "scheme": "telfazi",
@@ -15,7 +15,7 @@
     },
     "android": {
       "package": "sy.moazns.telfazi",
-      "versionCode": 3,
+      "versionCode": 4,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#0B1120"

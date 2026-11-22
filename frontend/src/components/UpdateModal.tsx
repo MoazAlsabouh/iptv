@@ -20,6 +20,8 @@ interface AppVersionResponse {
   latestVersionName: string;
   downloadUrl: string;
   message: string;
+  forceUpdate?: boolean;
+  mandatory?: boolean;
 }
 
 export function UpdateModal(): React.JSX.Element | null {
@@ -60,7 +62,12 @@ export function UpdateModal(): React.JSX.Element | null {
         setUpdateInfo(data);
 
         // 1. فحص التحديث الإجباري
-        if (currentVersionCode < data.minSupportedVersionCode) {
+        const isForce =
+          Boolean(data.forceUpdate) ||
+          Boolean(data.mandatory) ||
+          currentVersionCode < data.minSupportedVersionCode;
+
+        if (isForce && (currentVersionCode < data.latestVersionCode || currentVersionCode < data.minSupportedVersionCode)) {
           setIsMandatory(true);
           setModalVisible(true);
         }
