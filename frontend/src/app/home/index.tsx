@@ -325,9 +325,26 @@ export default function DashboardScreen(): React.JSX.Element {
     }
   }, [activePane, isWide, previewChannel]);
 
+  // مراجع حية لمنع Stale Closures نهائياً في مستمع الأحداث
+  const activePaneRef = useRef(activePane);
+  activePaneRef.current = activePane;
+  const focusedSidebarIndexRef = useRef(focusedSidebarIndex);
+  focusedSidebarIndexRef.current = focusedSidebarIndex;
+  const focusedCategoryIndexRef = useRef(focusedCategoryIndex);
+  focusedCategoryIndexRef.current = focusedCategoryIndex;
+  const focusedChannelIndexRef = useRef(focusedChannelIndex);
+  focusedChannelIndexRef.current = focusedChannelIndex;
+  const activeChannelsRef = useRef(activeChannels);
+  activeChannelsRef.current = activeChannels;
+  const previewChannelRef = useRef(previewChannel);
+  previewChannelRef.current = previewChannel;
+  const navGroupsRef = useRef(navGroups);
+  navGroupsRef.current = navGroups;
+
   const handleEnterKey = useCallback(() => {
-    if (activePane === 'sidebar') {
-      const target = NAV_ITEMS[focusedSidebarIndex];
+    const pane = activePaneRef.current;
+    if (pane === 'sidebar') {
+      const target = NAV_ITEMS[focusedSidebarIndexRef.current];
       if (target) {
         if (target.route !== '/home') {
           router.push(target.route as any);
@@ -335,8 +352,8 @@ export default function DashboardScreen(): React.JSX.Element {
           setActivePane('categories');
         }
       }
-    } else if (activePane === 'categories') {
-      const targetGroup = navGroups[focusedCategoryIndex];
+    } else if (pane === 'categories') {
+      const targetGroup = navGroupsRef.current[focusedCategoryIndexRef.current];
       if (targetGroup) {
         setSelectedGroupId(targetGroup.id);
         setActivePane('channels');
@@ -345,28 +362,18 @@ export default function DashboardScreen(): React.JSX.Element {
           setMobileTab('channels');
         }
       }
-    } else if (activePane === 'channels') {
-      const targetChannel = activeChannels[focusedChannelIndex];
+    } else if (pane === 'channels') {
+      const targetChannel = activeChannelsRef.current[focusedChannelIndexRef.current];
       if (targetChannel) {
         handleOpenFullScreen(targetChannel);
       }
-    } else if (activePane === 'preview') {
-      if (previewChannel) {
-        handleOpenFullScreen(previewChannel);
+    } else if (pane === 'preview') {
+      const targetChannel = previewChannelRef.current;
+      if (targetChannel) {
+        handleOpenFullScreen(targetChannel);
       }
     }
-  }, [
-    activePane,
-    focusedSidebarIndex,
-    focusedCategoryIndex,
-    focusedChannelIndex,
-    navGroups,
-    activeChannels,
-    previewChannel,
-    isWide,
-    router,
-    handleOpenFullScreen,
-  ]);
+  }, [isWide, router, handleOpenFullScreen]);
 
   // استماع لأزرار لوحة المفاتيح والريموت على الويب مع حماية حقول الإدخال
   useEffect(() => {
@@ -390,6 +397,24 @@ export default function DashboardScreen(): React.JSX.Element {
         return;
       }
 
+      const isConfirm =
+        e.key === 'Enter' ||
+        e.key === 'NumpadEnter' ||
+        e.key === 'Select' ||
+        e.key === 'Ok' ||
+        e.key === 'OK' ||
+        e.keyCode === 13 ||
+        e.keyCode === 23 ||
+        e.which === 13 ||
+        e.which === 23;
+
+      if (isConfirm) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleEnterKey();
+        return;
+      }
+
       switch (e.key) {
         case 'ArrowUp':
           e.preventDefault();
@@ -406,13 +431,6 @@ export default function DashboardScreen(): React.JSX.Element {
         case 'ArrowLeft':
           e.preventDefault();
           handleArrowLeft();
-          break;
-        case 'Enter':
-        case 'NumpadEnter':
-        case ' ':
-        case 'Select':
-          e.preventDefault();
-          handleEnterKey();
           break;
       }
     };

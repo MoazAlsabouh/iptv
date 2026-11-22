@@ -846,6 +846,25 @@ export default function MoviesScreen(): React.JSX.Element {
   const contentScrollRef = useRef<any>(null);
   const rowScrollRefs = useRef<Record<number, any>>({});
 
+  // مراجع حية لمنع Stale Closures نهائياً في مستمع الأحداث
+  const focusedAreaRef = useRef(focusedArea);
+  focusedAreaRef.current = focusedArea;
+  const focusedCategoryIndexRef = useRef(focusedCategoryIndex);
+  focusedCategoryIndexRef.current = focusedCategoryIndex;
+  const focusedRailIndexRef = useRef(focusedRailIndex);
+  focusedRailIndexRef.current = focusedRailIndex;
+  const focusedCardIndexRef = useRef(focusedCardIndex);
+  focusedCardIndexRef.current = focusedCardIndex;
+  const focusedGridIndexRef = useRef(focusedGridIndex);
+  focusedGridIndexRef.current = focusedGridIndex;
+  const isSidebarFocusedRef = useRef(isSidebarFocused);
+  isSidebarFocusedRef.current = isSidebarFocused;
+
+  // إعادة ضبط تركيز الشريط الجانبي عند الدخول لصفحة الأفلام
+  useEffect(() => {
+    setIsSidebarFocused(false);
+  }, [setIsSidebarFocused]);
+
   // التنقل والريموت
   const handleGoBack = useCallback(() => {
     if (unreleasedNotice?.visible) {
@@ -1134,11 +1153,16 @@ export default function MoviesScreen(): React.JSX.Element {
   ]);
 
   const handleEnterKey = useCallback(() => {
-    if (focusedArea === 'search') {
+    const area = focusedAreaRef.current;
+    if (area === 'search') {
       setIsSearchOpen(true);
       setTimeout(() => searchInputRef.current?.focus(), 50);
-    } else if (focusedArea === 'categories') {
-      const cat = CATEGORIES[focusedCategoryIndex];
+      return;
+    }
+
+    if (area === 'categories') {
+      const catIdx = focusedCategoryIndexRef.current;
+      const cat = CATEGORIES[catIdx];
       if (cat) {
         setSearchQuery('');
         setSelectedCategory(cat.id);
@@ -1146,32 +1170,36 @@ export default function MoviesScreen(): React.JSX.Element {
         setFocusedCardIndex(0);
         setFocusedGridIndex(0);
       }
-    } else if (focusedArea === 'items') {
-      if (isSearchMode || isFavoritesMode) {
-        const item = gridItems[focusedGridIndex];
+      return;
+    }
+
+    if (area === 'items') {
+      if (debouncedQuery.length > 0 || (selectedCategory === 'favorites' && debouncedQuery.length === 0)) {
+        const item = (debouncedQuery.length > 0 ? searchResults : vodFavorites || [])[focusedGridIndexRef.current];
         if (item) handleSelect(item);
       } else {
-        const item = activeRailItems[focusedCardIndex];
-        if (item) handleSelect(item);
+        const rIndex = focusedRailIndexRef.current;
+        const cIndex = focusedCardIndexRef.current;
+        const rails = currentRails;
+        const rail = rails[rIndex];
+        const cached = rail ? railMemoryCache.get(rail.id) : null;
+        const reported = rail ? railItemsMap[rail.id] : null;
+        const items = cached || reported || [];
+        const item = items[cIndex];
+        if (item) {
+          handleSelect(item);
+        }
       }
     }
-  }, [
-    focusedArea,
-    focusedCategoryIndex,
-    isSearchMode,
-    isFavoritesMode,
-    gridItems,
-    focusedGridIndex,
-    activeRailItems,
-    focusedCardIndex,
-    handleSelect,
-  ]);
+  }, [debouncedQuery, selectedCategory, searchResults, vodFavorites, currentRails, railItemsMap, handleSelect]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    if (isSidebarFocused) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
+      // إذا كان التركيز على الشريط الجانبي: دعه للشريط الجانبي
+      if (isSidebarFocusedRef.current) return;
+
       const activeEl = document.activeElement;
       const isInput =
         activeEl &&
@@ -1185,6 +1213,24 @@ export default function MoviesScreen(): React.JSX.Element {
           setFocusedArea('categories');
           e.preventDefault();
         }
+        return;
+      }
+
+      const isConfirm =
+        e.key === 'Enter' ||
+        e.key === 'NumpadEnter' ||
+        e.key === 'Select' ||
+        e.key === 'Ok' ||
+        e.key === 'OK' ||
+        e.keyCode === 13 ||
+        e.keyCode === 23 ||
+        e.which === 13 ||
+        e.which === 23;
+
+      if (isConfirm) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleEnterKey();
         return;
       }
 
@@ -1205,15 +1251,9 @@ export default function MoviesScreen(): React.JSX.Element {
           e.preventDefault();
           handleArrowLeft();
           break;
-        case 'Enter':
-        case 'NumpadEnter':
-        case ' ':
-        case 'Select':
-          e.preventDefault();
-          handleEnterKey();
-          break;
         case 'Escape':
         case 'Back':
+        case 'Backspace':
           e.preventDefault();
           handleGoBack();
           break;
@@ -1223,7 +1263,6 @@ export default function MoviesScreen(): React.JSX.Element {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
-    isSidebarFocused,
     handleArrowUp,
     handleArrowDown,
     handleArrowRight,

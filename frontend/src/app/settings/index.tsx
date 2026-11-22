@@ -150,6 +150,24 @@ export default function SettingsScreen(): React.JSX.Element {
         return;
       }
 
+      const isConfirm =
+        e.key === 'Enter' ||
+        e.key === 'NumpadEnter' ||
+        e.key === 'Select' ||
+        e.key === 'Ok' ||
+        e.key === 'OK' ||
+        e.keyCode === 13 ||
+        e.keyCode === 23 ||
+        e.which === 13 ||
+        e.which === 23;
+
+      if (isConfirm) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleEnterKey();
+        return;
+      }
+
       switch (e.key) {
         case 'ArrowUp':
           e.preventDefault();
@@ -166,13 +184,6 @@ export default function SettingsScreen(): React.JSX.Element {
         case 'ArrowLeft':
           e.preventDefault();
           handleArrowLeft();
-          break;
-        case 'Enter':
-        case 'NumpadEnter':
-        case ' ':
-        case 'Select':
-          e.preventDefault();
-          handleEnterKey();
           break;
         case 'Escape':
         case 'Back':

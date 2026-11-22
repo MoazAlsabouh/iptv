@@ -434,6 +434,20 @@ export function PlayerScreen(): React.JSX.Element {
   const drawerChannelsScrollRef = useRef<any>(null);
   const drawerCategoriesScrollRef = useRef<any>(null);
 
+  // مراجع حية لتفادي Stale Closures في مشغل البث
+  const showSideMenuRef = useRef(showSideMenu);
+  showSideMenuRef.current = showSideMenu;
+  const sideMenuLevelRef = useRef(sideMenuLevel);
+  sideMenuLevelRef.current = sideMenuLevel;
+  const focusedDrawerChannelIndexRef = useRef(focusedDrawerChannelIndex);
+  focusedDrawerChannelIndexRef.current = focusedDrawerChannelIndex;
+  const focusedDrawerCategoryIndexRef = useRef(focusedDrawerCategoryIndex);
+  focusedDrawerCategoryIndexRef.current = focusedDrawerCategoryIndex;
+  const activeChannelListRef = useRef(activeChannelList);
+  activeChannelListRef.current = activeChannelList;
+  const navGroupsRef = useRef(navGroups);
+  navGroupsRef.current = navGroups;
+
   // مصادر البث المتعددة للقناة أو العمل
   const channelSources: StreamSource[] = useMemo(() => {
     if (vodSources && vodSources.length > 0) {
@@ -692,15 +706,15 @@ export function PlayerScreen(): React.JSX.Element {
   }, [showSideMenu, isVod, sideMenuLevel, navGroups, focusedDrawerCategoryIndex, resetSideMenuTimer]);
 
   const handleDrawerEnter = useCallback(() => {
-    if (!showSideMenu || isVod) return false;
-    if (sideMenuLevel === 'channels') {
-      const targetCh = activeChannelList[focusedDrawerChannelIndex];
+    if (!showSideMenuRef.current || isVod) return false;
+    if (sideMenuLevelRef.current === 'channels') {
+      const targetCh = activeChannelListRef.current[focusedDrawerChannelIndexRef.current];
       if (targetCh) {
         switchLiveChannel(targetCh);
         setShowSideMenu(false); // إغلاق القائمة فوراً ليعود البث بملء الشاشة مباشرة
       }
     } else {
-      const targetGrp = navGroups[focusedDrawerCategoryIndex];
+      const targetGrp = navGroupsRef.current[focusedDrawerCategoryIndexRef.current];
       if (targetGrp) {
         setActiveCategoryName(targetGrp.name);
         setActiveCategoryType(targetGrp.type);
@@ -710,17 +724,7 @@ export function PlayerScreen(): React.JSX.Element {
       }
     }
     return true;
-  }, [
-    showSideMenu,
-    isVod,
-    sideMenuLevel,
-    activeChannelList,
-    focusedDrawerChannelIndex,
-    navGroups,
-    focusedDrawerCategoryIndex,
-    switchLiveChannel,
-    resetSideMenuTimer,
-  ]);
+  }, [isVod, switchLiveChannel, resetSideMenuTimer]);
 
   // مستمع لوحة المفاتيح والريموت على الويب لشاشة المشغّل والقائمة المنبثقة
   useEffect(() => {
@@ -729,7 +733,25 @@ export function PlayerScreen(): React.JSX.Element {
     const onKeyDown = (e: KeyboardEvent) => {
       resetOverlayTimer();
 
+      const isConfirm =
+        e.key === 'Enter' ||
+        e.key === 'NumpadEnter' ||
+        e.key === 'Select' ||
+        e.key === 'Ok' ||
+        e.key === 'OK' ||
+        e.keyCode === 13 ||
+        e.keyCode === 23 ||
+        e.which === 13 ||
+        e.which === 23;
+
       if (showSideMenu && !isVod) {
+        if (isConfirm) {
+          e.preventDefault();
+          e.stopPropagation();
+          handleDrawerEnter();
+          return;
+        }
+
         switch (e.key) {
           case 'ArrowUp':
             e.preventDefault();
@@ -751,14 +773,6 @@ export function PlayerScreen(): React.JSX.Element {
             e.stopPropagation();
             handleDrawerArrowLeft();
             break;
-          case 'Enter':
-          case 'NumpadEnter':
-          case ' ':
-          case 'Select':
-            e.preventDefault();
-            e.stopPropagation();
-            handleDrawerEnter();
-            break;
           case 'Escape':
           case 'Backspace':
           case 'BrowserBack':
@@ -776,6 +790,16 @@ export function PlayerScreen(): React.JSX.Element {
 
       // القائمة مغلقة: Zapping أو فتح القائمة
       if (!isVod && !showQualityModal && !showEpisodesModal) {
+        if (isConfirm || e.key === 'ArrowRight') {
+          e.preventDefault();
+          e.stopPropagation();
+          const curIdx = activeChannelListRef.current.findIndex((c) => c.id === effectiveChannelId);
+          setFocusedDrawerChannelIndex(curIdx >= 0 ? curIdx : 0);
+          setSideMenuLevel('channels');
+          setShowSideMenu(true);
+          return;
+        }
+
         switch (e.key) {
           case 'ArrowUp':
             e.preventDefault();
@@ -784,16 +808,6 @@ export function PlayerScreen(): React.JSX.Element {
           case 'ArrowDown':
             e.preventDefault();
             handleZapPrev();
-            break;
-          case 'Enter':
-          case 'NumpadEnter':
-          case 'Select':
-          case 'ArrowRight':
-            e.preventDefault();
-            const curIdx = activeChannelList.findIndex((c) => c.id === effectiveChannelId);
-            setFocusedDrawerChannelIndex(curIdx >= 0 ? curIdx : 0);
-            setSideMenuLevel('channels');
-            setShowSideMenu(true);
             break;
         }
       }
@@ -814,7 +828,6 @@ export function PlayerScreen(): React.JSX.Element {
     handleDrawerEnter,
     handleZapNext,
     handleZapPrev,
-    activeChannelList,
     effectiveChannelId,
     resetOverlayTimer,
   ]);

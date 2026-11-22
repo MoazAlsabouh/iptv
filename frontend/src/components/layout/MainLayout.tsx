@@ -40,12 +40,17 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const setIsSidebarFocused = useAppStore((state) => state.setIsSidebarFocused);
   const setFocusedSidebarIndex = useAppStore((state) => state.setFocusedSidebarIndex);
 
+  const isSidebarFocusedRef = useRef(isSidebarFocused);
+  isSidebarFocusedRef.current = isSidebarFocused;
+  const focusedSidebarIndexRef = useRef(focusedSidebarIndex);
+  focusedSidebarIndexRef.current = focusedSidebarIndex;
+
   // إعادة تعيين تركيز الشريط الجانبي عند تغيير المسار
   useEffect(() => {
     setIsSidebarFocused(false);
   }, [currentPath, setIsSidebarFocused]);
 
-  // دعم التنقل بالريموت للشريط الجانبي عند تفعيله (isSidebarFocused) مع شبكة أمان لصفحات التطبيق الأخرى
+  // دعم التنقل بالريموت للشريط الجانبي عند تفعيله فقط مع شبكة أمان لصفحات التطبيق الأخرى
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
 
@@ -59,8 +64,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
 
       if (isInput) return;
 
-      if (!isSidebarFocused) {
-        // شبكة أمان: في أي صفحة غير /home و /movies و /play
+      // إذا لم يكن التركيز على الشريط الجانبي: لا تعترض زر Enter أو غيره أبداً، دعه يمر للصفحة النشطة!
+      if (!isSidebarFocusedRef.current) {
+        // شبكة أمان: في أي صفحة غير /home و /movies و /play، سهم اليمين يفعّل الشريط الجانبي
         const isExcluded =
           currentPath === '/home' ||
           currentPath === '/' ||
@@ -79,30 +85,42 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         return;
       }
 
+      // إذا كان التركيز على الشريط الجانبي فعلياً فقط:
+      const isConfirm =
+        e.key === 'Enter' ||
+        e.key === 'NumpadEnter' ||
+        e.key === 'Select' ||
+        e.key === 'Ok' ||
+        e.key === 'OK' ||
+        e.keyCode === 13 ||
+        e.keyCode === 23 ||
+        e.which === 13 ||
+        e.which === 23;
+
+      if (isConfirm) {
+        e.preventDefault();
+        e.stopPropagation();
+        const target = NAV_ITEMS[focusedSidebarIndexRef.current];
+        if (target) {
+          setIsSidebarFocused(false);
+          router.push(target.route as any);
+        }
+        return;
+      }
+
       switch (e.key) {
         case 'ArrowUp':
           e.preventDefault();
-          setFocusedSidebarIndex(Math.max(0, focusedSidebarIndex - 1));
+          setFocusedSidebarIndex(Math.max(0, focusedSidebarIndexRef.current - 1));
           break;
         case 'ArrowDown':
           e.preventDefault();
-          setFocusedSidebarIndex(Math.min(NAV_ITEMS.length - 1, focusedSidebarIndex + 1));
+          setFocusedSidebarIndex(Math.min(NAV_ITEMS.length - 1, focusedSidebarIndexRef.current + 1));
           break;
         case 'ArrowLeft':
           // سهم اليسار يرجع للمحتوى في واجهة RTL
           e.preventDefault();
           setIsSidebarFocused(false);
-          break;
-        case 'Enter':
-        case 'NumpadEnter':
-        case ' ':
-        case 'Select':
-          e.preventDefault();
-          const target = NAV_ITEMS[focusedSidebarIndex];
-          if (target) {
-            setIsSidebarFocused(false);
-            router.push(target.route as any);
-          }
           break;
       }
     };
@@ -111,8 +129,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
     currentPath,
-    isSidebarFocused,
-    focusedSidebarIndex,
     setIsSidebarFocused,
     setFocusedSidebarIndex,
     router,
