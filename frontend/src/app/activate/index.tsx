@@ -48,7 +48,10 @@ export default function ActivateScreen(): React.JSX.Element {
   }, [activationCode]);
 
   const isWide = width >= 768;
+  const [activeFocus, setActiveFocus] = useState<'input' | 'submit'>('input');
   const [inputFocused, setInputFocused] = useState<boolean>(false);
+  const inputRef = useRef<any>(null);
+  const submitRef = useRef<any>(null);
   const codeRef = useRef<string>(code);
   codeRef.current = code;
 
@@ -116,6 +119,28 @@ export default function ActivateScreen(): React.JSX.Element {
   };
 
   useTVRemoteNavigation({
+    onArrowDown: () => {
+      if (activeFocus === 'input') {
+        inputRef.current?.blur();
+        setActiveFocus('submit');
+      }
+    },
+    onArrowUp: () => {
+      if (activeFocus === 'submit') {
+        setActiveFocus('input');
+        inputRef.current?.focus();
+      }
+    },
+    onEnter: () => {
+      if (activeFocus === 'submit') {
+        handleActivate();
+      } else {
+        const c = (codeRef.current || code || '').trim();
+        if (c.length >= 2) {
+          handleActivate();
+        }
+      }
+    },
     onBack: () => {
       // لا نرجع إذا كان غير مفعل
     },
@@ -163,24 +188,30 @@ export default function ActivateScreen(): React.JSX.Element {
             <View
               style={[
                 styles.inputWrapper,
-                inputFocused && styles.inputWrapperFocused,
+                (activeFocus === 'input' || inputFocused) && styles.inputWrapperFocused,
               ]}
             >
               <MaterialIcons
                 name="vpn-key"
                 size={22}
-                color={inputFocused ? '#38bdf8' : '#38bdf8'}
+                color={activeFocus === 'input' || inputFocused ? '#38bdf8' : '#94a3b8'}
                 style={styles.inputIcon}
               />
               <TextInput
+                ref={inputRef}
                 focusable={true}
                 editable={!isSubmitting}
-                hasTVPreferredFocus={!code}
+                hasTVPreferredFocus={activeFocus === 'input'}
                 style={styles.input}
                 value={code}
                 onChangeText={handleCodeChange}
-                onFocus={() => setInputFocused(true)}
-                onBlur={() => setInputFocused(false)}
+                onFocus={() => {
+                  setInputFocused(true);
+                  setActiveFocus('input');
+                }}
+                onBlur={() => {
+                  setInputFocused(false);
+                }}
                 placeholder="مثال: TV-8492-XK9P"
                 placeholderTextColor="#64748b"
                 autoCapitalize="characters"
@@ -230,40 +261,47 @@ export default function ActivateScreen(): React.JSX.Element {
 
           {/* زر التفعيل الرئيسي */}
           <Pressable
+            ref={submitRef}
             focusable={true}
             accessible={true}
-            hasTVPreferredFocus={Boolean(code)}
+            hasTVPreferredFocus={activeFocus === 'submit'}
             disabled={isSubmitting}
+            onFocus={() => {
+              setActiveFocus('submit');
+            }}
             onPress={handleActivate}
             style={({ focused }) => [
               styles.submitBtn,
-              focused && styles.submitBtnFocused,
+              (activeFocus === 'submit' || focused) && styles.submitBtnFocused,
               isSubmitting && { opacity: 0.7 },
             ]}
           >
-            {({ focused }) => (
-              <View style={styles.submitBtnContent}>
-                {isSubmitting ? (
-                  <ActivityIndicator size="small" color={focused ? '#000000' : '#ffffff'} />
-                ) : (
-                  <>
-                    <MaterialIcons
-                      name="lock-open"
-                      size={22}
-                      color={focused ? '#000000' : '#ffffff'}
-                    />
-                    <Text
-                      style={[
-                        styles.submitBtnText,
-                        focused && styles.submitBtnTextFocused,
-                      ]}
-                    >
-                      تفعيل الاشتراك والبدء
-                    </Text>
-                  </>
-                )}
-              </View>
-            )}
+            {({ focused }) => {
+              const isFocused = activeFocus === 'submit' || focused;
+              return (
+                <View style={styles.submitBtnContent}>
+                  {isSubmitting ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <>
+                      <MaterialIcons
+                        name="lock-open"
+                        size={22}
+                        color={isFocused ? '#0369a1' : '#ffffff'}
+                      />
+                      <Text
+                        style={[
+                          styles.submitBtnText,
+                          isFocused && styles.submitBtnTextFocused,
+                        ]}
+                      >
+                        تفعيل الاشتراك والبدء
+                      </Text>
+                    </>
+                  )}
+                </View>
+              );
+            }}
           </Pressable>
 
           {/* مساعدة وطلب كود */}
@@ -386,19 +424,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#0B1120',
-    borderWidth: 1.5,
+    borderWidth: 2,
     borderColor: 'rgba(14, 165, 233, 0.3)',
     borderRadius: 16,
     paddingHorizontal: 16,
   },
   inputWrapperFocused: {
     borderColor: '#38bdf8',
-    borderWidth: 2.5,
-    backgroundColor: 'rgba(56, 189, 248, 0.08)',
+    borderWidth: 3,
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
     shadowColor: '#38bdf8',
-    shadowOpacity: 0.8,
-    shadowRadius: 12,
-    elevation: 6,
+    shadowOpacity: 1,
+    shadowRadius: 16,
+    elevation: 8,
   },
   inputIcon: {
     marginLeft: 10,
@@ -479,17 +517,18 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#38bdf8',
+    borderWidth: 3,
+    borderColor: '#0284c7',
   },
   submitBtnFocused: {
     backgroundColor: '#ffffff',
-    borderColor: '#ffffff',
+    borderColor: '#38bdf8',
+    borderWidth: 3,
     transform: [{ scale: 1.03 }],
-    shadowColor: '#0EA5E9',
-    shadowOpacity: 0.9,
-    shadowRadius: 16,
-    elevation: 8,
+    shadowColor: '#38bdf8',
+    shadowOpacity: 1,
+    shadowRadius: 18,
+    elevation: 10,
   },
   submitBtnContent: {
     flexDirection: 'row',
@@ -502,7 +541,8 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   submitBtnTextFocused: {
-    color: '#000000',
+    color: '#0369a1',
+    fontWeight: '900',
   },
   footerNote: {
     marginTop: 22,
