@@ -16,7 +16,6 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../../store/useAppStore';
 import { useMediaData, CategoryGroup } from '../../hooks/useMediaData';
 import { ChannelLogo } from '../../components/ChannelLogo';
-import { TVPlayer } from '../../components/player/TVPlayer';
 import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 import { MediaItem } from '../../types/media';
 import { DEFAULT_BACKEND_M3U_URL } from '../../utils/m3uParser';
@@ -218,17 +217,14 @@ export default function DashboardScreen(): React.JSX.Element {
     setFocusedChannelIndex(0);
   }, [selectedGroupId]);
 
-  // معاينة تلقائية عند الوقوف بالأسهم على أي قناة مع تأخير 400ms لتجنب الضغط أثناء التمرير السريع
+  // تحديث معلومات القناة المحددة في العمود الأيسر فوراً دون تشغيل أي بث في الخلفية
   useEffect(() => {
-    if (activeChannels.length === 0) return;
-    const targetChannel = activeChannels[focusedChannelIndex];
-    if (!targetChannel) return;
-
-    const timer = setTimeout(() => {
-      setPreviewChannel(targetChannel);
-    }, 400);
-
-    return () => clearTimeout(timer);
+    if (activeChannels.length === 0) {
+      setPreviewChannel(null);
+      return;
+    }
+    const targetChannel = activeChannels[focusedChannelIndex] || activeChannels[0] || null;
+    setPreviewChannel(targetChannel);
   }, [focusedChannelIndex, activeChannels]);
 
   // تمرير قائمة الأقسام تلقائياً ليبقى العنصر المحدد ظاهراً
@@ -764,27 +760,39 @@ export default function DashboardScreen(): React.JSX.Element {
         )}
 
         {/* ========================================================
-            العمود الأيسر (~38%): نافذة المعاينة المباشرة (Live Preview)
+            العمود الأيسر (~38%): بطاقة معلومات ومعاينة القناة
             ======================================================== */}
         {(isWide || mobileTab === 'preview') && (
           <View style={[styles.column, styles.previewColumn]}>
             {previewChannel ? (
               <View style={styles.previewContainer}>
-                {/* 1. نافذة مشغل الفيديو المباشر المصغرة (16:9) */}
-                <View style={styles.videoPlayerBox}>
-                  <TVPlayer
-                    streamUrl={previewChannel.streamUrl}
-                    streamType={previewChannel.streamType || 'auto'}
-                    style={styles.playerInner}
-                  />
-
-                  {/* تلميح الضغط المباشر للشاشات */}
-                  <View style={styles.playerOverlayHint}>
-                    <Text style={styles.playerOverlayHintText}>معاينة حية • اضغط OK لفتح القناة مباشرة</Text>
+                {/* 1. لوحة المعاينة التفاعلية الأنيقة بدون تشغيل بث في الخلفية */}
+                <Pressable
+                  focusable={true}
+                  accessible={true}
+                  onPress={() => handleOpenFullScreen(previewChannel)}
+                  style={({ focused }) => [
+                    styles.videoPlayerBox,
+                    (activePane === 'preview' || focused) && styles.focusHighlight,
+                  ]}
+                >
+                  <View style={styles.channelHeroCenter}>
+                    <ChannelLogo
+                      uri={previewChannel.logo}
+                      name={previewChannel.name}
+                      size={80}
+                      style={{ borderRadius: 16, backgroundColor: '#0f172a' }}
+                    />
+                    <View style={styles.playCenterOverlay}>
+                      <View style={styles.playCircleIcon}>
+                        <MaterialIcons name="play-arrow" size={38} color="#070b14" />
+                      </View>
+                      <Text style={styles.playNowLabel}>اضغط OK للمشاهدة بملء الشاشة</Text>
+                    </View>
                   </View>
-                </View>
+                </Pressable>
 
-                {/* 2. بيانات القناة الحالية المشغلة */}
+                {/* 2. بيانات القناة المحددة */}
                 <View style={styles.previewInfoCard}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
                     <ChannelLogo
@@ -1151,9 +1159,44 @@ const styles = StyleSheet.create({
   videoPlayerBox: {
     width: '100%',
     aspectRatio: 16 / 9,
-    backgroundColor: '#000000',
+    backgroundColor: '#070b14',
     position: 'relative',
     overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1e293b',
+  },
+  channelHeroCenter: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    gap: 12,
+  },
+  playCenterOverlay: {
+    alignItems: 'center',
+    gap: 8,
+  },
+  playCircleIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#38bdf8',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#38bdf8',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  playNowLabel: {
+    color: '#e2e8f0',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   playerInner: {
     width: '100%',

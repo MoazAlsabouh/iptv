@@ -272,13 +272,15 @@ function NavigationGuard(): React.JSX.Element {
     );
   }
 
-  // المسارات العامة والمشغل تعمل بملء الشاشة دون الشريط الجانبي
+  // المسارات التي تعمل بملء الشاشة دون الشريط الجانبي (المشغل، صفحة البداية، وصفحات الإدارة/التفعيل)
   const isFullscreen =
-    isPublic ||
-    firstSegment === 'play' ||
-    firstSegment === 'player' ||
     rawExpoPath.startsWith('/play') ||
-    browserPath.startsWith('/play');
+    rawExpoPath.startsWith('/player') ||
+    rawExpoPath === '/' ||
+    rawExpoPath === '/activate' ||
+    rawExpoPath === '/login' ||
+    rawExpoPath.startsWith('/admin') ||
+    rawExpoPath.startsWith('/reseller');
 
   return isFullscreen ? (
     <Slot />

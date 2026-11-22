@@ -352,11 +352,23 @@ const VodCard: React.FC<VodCardProps> = ({
   const [imageError, setImageError] = useState<boolean>(false);
   const [isHovered, setIsHovered] = useState<boolean>(false);
   const [isFocused, setIsFocused] = useState<boolean>(false);
+  const cardRef = useRef<any>(null);
 
   const isActive = Boolean(isControlledFocused) || isHovered || isFocused;
 
+  // تمرير تلقائي في السلايدر الأفقي ليبقى الكرت دائماً في منتصف الشاشة عند التركيز
+  useEffect(() => {
+    if (isControlledFocused && cardRef.current) {
+      const node = cardRef.current.getScrollableNode?.() || cardRef.current;
+      if (node && typeof node.scrollIntoView === 'function') {
+        node.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      }
+    }
+  }, [isControlledFocused]);
+
   return (
     <Pressable
+      ref={cardRef}
       hasTVPreferredFocus={hasTVPreferredFocus}
       onPress={() => onSelect(item)}
       onFocus={() => setIsFocused(true)}
@@ -497,6 +509,7 @@ interface PosterSliderProps {
   isRailFocused?: boolean;
   focusedCardIndex?: number;
   onReportItems?: (railId: string, items: VodItem[]) => void;
+  rowScrollRef?: (node: any) => void;
 }
 
 const PosterSlider: React.FC<PosterSliderProps> = ({
@@ -508,6 +521,7 @@ const PosterSlider: React.FC<PosterSliderProps> = ({
   isRailFocused = false,
   focusedCardIndex = 0,
   onReportItems,
+  rowScrollRef,
 }) => {
   const [items, setItems] = useState<VodItem[]>(() => railMemoryCache.get(config.id) || []);
   const [isLoading, setIsLoading] = useState<boolean>(!railMemoryCache.has(config.id));
@@ -522,12 +536,14 @@ const PosterSlider: React.FC<PosterSliderProps> = ({
 
   useEffect(() => {
     if (isRailFocused && scrollRef.current) {
+      const node = (scrollRef.current as any).getScrollableNode?.() || scrollRef.current;
       const CARD_WIDTH = 191; // 175 عرض البطاقة + 16 تباعد
-      const targetX = Math.max(0, focusedCardIndex * CARD_WIDTH - 200);
-      (scrollRef.current as any).scrollTo?.({
-        x: targetX,
-        animated: true,
-      });
+      const targetOffset = Math.max(0, focusedCardIndex * CARD_WIDTH - 250);
+      if (node && typeof node.scrollTo === 'function') {
+        node.scrollTo({ left: targetOffset, behavior: 'smooth' });
+      } else if (typeof (scrollRef.current as any).scrollTo === 'function') {
+        (scrollRef.current as any).scrollTo({ x: targetOffset, animated: true });
+      }
     }
   }, [isRailFocused, focusedCardIndex]);
 
@@ -651,7 +667,10 @@ const PosterSlider: React.FC<PosterSliderProps> = ({
           </ScrollView>
         ) : (
           <ScrollView
-            ref={scrollRef}
+            ref={(r) => {
+              scrollRef.current = r;
+              rowScrollRef?.(r);
+            }}
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.railScrollContent}
@@ -778,7 +797,7 @@ export default function MoviesScreen(): React.JSX.Element {
   };
 
   // إدارة التركيز والتنقل بالريموت للتلفاز
-  const [focusedArea, setFocusedArea] = useState<'categories' | 'items'>('categories');
+  const [focusedArea, setFocusedArea] = useState<'search' | 'categories' | 'items'>('categories');
   const [focusedCategoryIndex, setFocusedCategoryIndex] = useState<number>(0);
   const [focusedRailIndex, setFocusedRailIndex] = useState<number>(0);
   const [focusedCardIndex, setFocusedCardIndex] = useState<number>(0);
@@ -796,11 +815,20 @@ export default function MoviesScreen(): React.JSX.Element {
   const setIsSidebarFocused = useAppStore((state) => state.setIsSidebarFocused);
   const setFocusedSidebarIndex = useAppStore((state) => state.setFocusedSidebarIndex);
   const contentScrollRef = useRef<any>(null);
+  const rowScrollRefs = useRef<Record<number, any>>({});
 
   // التنقل والريموت
   const handleGoBack = useCallback(() => {
     if (unreleasedNotice?.visible) {
       setUnreleasedNotice(null);
+      return true;
+    }
+    if (focusedArea === 'search') {
+      if (isSearchOpen) {
+        setIsSearchOpen(false);
+        setSearchQuery('');
+      }
+      setFocusedArea('categories');
       return true;
     }
     if (isSearchOpen && searchQuery.length > 0) {
@@ -820,7 +848,7 @@ export default function MoviesScreen(): React.JSX.Element {
       router.replace('/home');
     }
     return true;
-  }, [unreleasedNotice, isSearchOpen, searchQuery, selectedCategory, router]);
+  }, [unreleasedNotice, focusedArea, isSearchOpen, searchQuery, selectedCategory, router]);
 
   const handleSelect = (item: VodItem) => {
     if (item.isUnreleased) {
@@ -941,11 +969,18 @@ export default function MoviesScreen(): React.JSX.Element {
           setFocusedCardIndex(0);
         }
       }
+    } else if (focusedArea === 'categories') {
+      setFocusedArea('search');
     }
   }, [focusedArea, isSearchMode, isFavoritesMode, focusedGridIndex, numColumns, focusedRailIndex]);
 
   const handleArrowDown = useCallback(() => {
-    if (focusedArea === 'categories') {
+    if (focusedArea === 'search') {
+      if (isSearchOpen && searchQuery.length === 0) {
+        setIsSearchOpen(false);
+      }
+      setFocusedArea('categories');
+    } else if (focusedArea === 'categories') {
       setFocusedArea('items');
       setFocusedCardIndex(0);
       setFocusedGridIndex(0);
@@ -957,11 +992,14 @@ export default function MoviesScreen(): React.JSX.Element {
         setFocusedCardIndex(0);
       }
     }
-  }, [focusedArea, isSearchMode, isFavoritesMode, gridItems.length, numColumns, currentRails.length]);
+  }, [focusedArea, isSearchOpen, searchQuery.length, isSearchMode, isFavoritesMode, gridItems.length, numColumns, currentRails.length]);
 
   const handleArrowRight = useCallback(() => {
     // في واجهة RTL: التحرك يميناً
-    if (focusedArea === 'categories') {
+    if (focusedArea === 'search') {
+      setIsSidebarFocused(true);
+      setFocusedSidebarIndex(1);
+    } else if (focusedArea === 'categories') {
       if (focusedCategoryIndex === 0) {
         // عند أقصى اليمين: الانتقال للشريط الجانبي
         setIsSidebarFocused(true);
@@ -1020,7 +1058,10 @@ export default function MoviesScreen(): React.JSX.Element {
   ]);
 
   const handleEnterKey = useCallback(() => {
-    if (focusedArea === 'categories') {
+    if (focusedArea === 'search') {
+      setIsSearchOpen(true);
+      setTimeout(() => searchInputRef.current?.focus(), 50);
+    } else if (focusedArea === 'categories') {
       const cat = CATEGORIES[focusedCategoryIndex];
       if (cat) {
         setSearchQuery('');
@@ -1174,7 +1215,7 @@ export default function MoviesScreen(): React.JSX.Element {
               }}
               style={({ focused }: any) => [
                 styles.iconCircleBtn,
-                focused && styles.iconCircleBtnFocused,
+                (focusedArea === 'search' || focused) && styles.iconCircleBtnFocused,
               ]}
               {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
             >
@@ -1394,6 +1435,9 @@ export default function MoviesScreen(): React.JSX.Element {
                 isRailFocused={focusedArea === 'items' && focusedRailIndex === index}
                 focusedCardIndex={focusedCardIndex}
                 onReportItems={handleReportRailItems}
+                rowScrollRef={(node: any) => {
+                  rowScrollRefs.current[index] = node;
+                }}
               />
             ))}
           </View>

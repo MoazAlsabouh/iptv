@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuth } from '../../context/AuthContext';
+import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 import {
   getRemainingDays,
   formatRemainingDaysArabic,
@@ -23,8 +24,14 @@ export default function SettingsScreen(): React.JSX.Element {
   const [successMessage, setSuccessMessage] = useState<string>('');
   const [isInputFocused, setIsInputFocused] = useState<boolean>(false);
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
+  const [focusedElement, setFocusedElement] = useState<'copy' | 'logout' | 'pin' | 'toggleChild'>('logout');
+  const pinInputRef = useRef<any>(null);
 
-  const handleCopyCode = async () => {
+  const isSidebarFocused = useAppStore((state) => state.isSidebarFocused);
+  const setIsSidebarFocused = useAppStore((state) => state.setIsSidebarFocused);
+  const setFocusedSidebarIndex = useAppStore((state) => state.setFocusedSidebarIndex);
+
+  const handleCopyCode = useCallback(async () => {
     if (!subscription?.code) return;
     try {
       if (typeof navigator !== 'undefined' && navigator.clipboard) {
@@ -35,14 +42,14 @@ export default function SettingsScreen(): React.JSX.Element {
     } catch {
       // ignore
     }
-  };
+  }, [subscription?.code]);
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     await logout();
     router.replace('/activate');
-  };
+  }, [logout, router]);
 
-  const handleToggleChildMode = () => {
+  const handleToggleChildMode = useCallback(() => {
     setErrorMessage('');
     setSuccessMessage('');
 
@@ -68,7 +75,138 @@ export default function SettingsScreen(): React.JSX.Element {
       setInputPin('');
       setSuccessMessage('تم تفعيل وضع الطفل بنجاح! تم حجب المحتوى غير المناسب');
     }
-  };
+  }, [inputPin, isChildMode, pinCode, setChildMode, setPinCode]);
+
+  const handleArrowRight = useCallback(() => {
+    // في واجهة RTL: الرجوع للشريط الجانبي عند الضغط على سهم اليمين
+    setIsSidebarFocused(true);
+    setFocusedSidebarIndex(3); // الإعدادات هي العنصر 3
+  }, [setIsSidebarFocused, setFocusedSidebarIndex]);
+
+  const handleArrowDown = useCallback(() => {
+    if (focusedElement === 'copy') {
+      setFocusedElement('logout');
+    } else if (focusedElement === 'logout') {
+      setFocusedElement('pin');
+    } else if (focusedElement === 'pin') {
+      setFocusedElement('toggleChild');
+    }
+  }, [focusedElement]);
+
+  const handleArrowUp = useCallback(() => {
+    if (focusedElement === 'toggleChild') {
+      setFocusedElement('pin');
+    } else if (focusedElement === 'pin') {
+      setFocusedElement('logout');
+    } else if (focusedElement === 'logout' && subscription?.code) {
+      setFocusedElement('copy');
+    }
+  }, [focusedElement, subscription?.code]);
+
+  const handleArrowLeft = useCallback(() => {
+    if (focusedElement === 'copy') {
+      setFocusedElement('logout');
+    } else if (focusedElement === 'logout') {
+      setFocusedElement('pin');
+    }
+  }, [focusedElement]);
+
+  const handleEnterKey = useCallback(() => {
+    if (focusedElement === 'copy') {
+      handleCopyCode();
+    } else if (focusedElement === 'logout') {
+      handleLogout();
+    } else if (focusedElement === 'pin') {
+      pinInputRef.current?.focus();
+    } else if (focusedElement === 'toggleChild') {
+      handleToggleChildMode();
+    }
+  }, [focusedElement, handleCopyCode, handleLogout, handleToggleChildMode]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    if (isSidebarFocused) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      const activeEl = document.activeElement;
+      const isInput =
+        activeEl &&
+        (activeEl.tagName === 'INPUT' ||
+          activeEl.tagName === 'TEXTAREA' ||
+          (activeEl as HTMLElement).isContentEditable);
+
+      if (isInput) {
+        if (e.key === 'Escape' || e.key === 'ArrowDown') {
+          (activeEl as HTMLElement).blur();
+          setFocusedElement('toggleChild');
+          e.preventDefault();
+        } else if (e.key === 'ArrowRight') {
+          (activeEl as HTMLElement).blur();
+          setIsSidebarFocused(true);
+          setFocusedSidebarIndex(3);
+          e.preventDefault();
+        }
+        return;
+      }
+
+      switch (e.key) {
+        case 'ArrowUp':
+          e.preventDefault();
+          handleArrowUp();
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          handleArrowDown();
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          handleArrowRight();
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          handleArrowLeft();
+          break;
+        case 'Enter':
+        case 'NumpadEnter':
+        case ' ':
+        case 'Select':
+          e.preventDefault();
+          handleEnterKey();
+          break;
+        case 'Escape':
+        case 'Back':
+          e.preventDefault();
+          setIsSidebarFocused(true);
+          setFocusedSidebarIndex(3);
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    isSidebarFocused,
+    handleArrowUp,
+    handleArrowDown,
+    handleArrowRight,
+    handleArrowLeft,
+    handleEnterKey,
+    setIsSidebarFocused,
+    setFocusedSidebarIndex,
+  ]);
+
+  useTVRemoteNavigation({
+    onArrowUp: handleArrowUp,
+    onArrowDown: handleArrowDown,
+    onArrowRight: handleArrowRight,
+    onArrowLeft: handleArrowLeft,
+    onEnter: handleEnterKey,
+    onBack: () => {
+      setIsSidebarFocused(true);
+      setFocusedSidebarIndex(3);
+      return true;
+    },
+  });
 
   return (
     <View style={styles.container}>
@@ -135,7 +273,10 @@ export default function SettingsScreen(): React.JSX.Element {
               {subscription?.code && (
                 <Pressable
                   onPress={handleCopyCode}
-                  style={({ focused }) => [styles.copyBtn, focused && styles.copyBtnFocused]}
+                  style={({ focused }) => [
+                    styles.copyBtn,
+                    (focusedElement === 'copy' || focused) && styles.copyBtnFocused,
+                  ]}
                 >
                   <MaterialIcons
                     name={copiedCode ? 'check' : 'content-copy'}
@@ -175,7 +316,10 @@ export default function SettingsScreen(): React.JSX.Element {
           <View style={styles.subActionBox}>
             <Pressable
               onPress={handleLogout}
-              style={({ focused }) => [styles.subLogoutBtn, focused && styles.subLogoutBtnFocused]}
+              style={({ focused }) => [
+                styles.subLogoutBtn,
+                (focusedElement === 'logout' || focused) && styles.subLogoutBtnFocused,
+              ]}
             >
               <MaterialIcons name="logout" size={18} color="#ef4444" />
               <Text style={styles.subLogoutBtnText}>تغيير الكود / خروج</Text>
@@ -218,16 +362,25 @@ export default function SettingsScreen(): React.JSX.Element {
                 : 'لحماية أطفالك وتصفية المحتوى الموجه للبالغين، قم بتعيين رمز PIN مكون من 4 أرقام ثم اضغط تفعيل:'}
             </Text>
 
-            <View style={[styles.inputBox, isInputFocused && styles.inputBoxFocused]}>
+            <View
+              style={[
+                styles.inputBox,
+                (focusedElement === 'pin' || isInputFocused) && styles.inputBoxFocused,
+              ]}
+            >
               <MaterialIcons
                 name="lock-outline"
                 size={22}
-                color={isInputFocused ? '#38bdf8' : '#64748b'}
+                color={isInputFocused || focusedElement === 'pin' ? '#38bdf8' : '#64748b'}
               />
               <TextInput
+                ref={pinInputRef}
                 value={inputPin}
                 onChangeText={setInputPin}
-                onFocus={() => setIsInputFocused(true)}
+                onFocus={() => {
+                  setIsInputFocused(true);
+                  setFocusedElement('pin');
+                }}
                 onBlur={() => setIsInputFocused(false)}
                 placeholder="أدخل رمز PIN (مثال: 1234)"
                 placeholderTextColor="#64748b"
@@ -253,7 +406,7 @@ export default function SettingsScreen(): React.JSX.Element {
             style={({ focused }) => [
               styles.actionBtn,
               isChildMode ? styles.actionBtnDanger : styles.actionBtnWarning,
-              focused && styles.actionBtnFocused,
+              (focusedElement === 'toggleChild' || focused) && styles.actionBtnFocused,
             ]}
           >
             {({ focused }) => (

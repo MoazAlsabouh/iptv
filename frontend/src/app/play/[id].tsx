@@ -583,12 +583,24 @@ export function PlayerScreen(): React.JSX.Element {
   }, [showSideMenu, resetSideMenuTimer]);
 
   const handleGoBack = () => {
+    if (Platform.OS === 'web' && typeof document !== 'undefined' && document.fullscreenElement) {
+      document.exitFullscreen?.().catch(() => {});
+    }
     if (router.canGoBack()) {
       router.back();
     } else {
       router.replace('/home');
     }
   };
+
+  // التأكد من الخروج من ملء الشاشة عند تفكيك المشغل ومغادرته
+  useEffect(() => {
+    return () => {
+      if (Platform.OS === 'web' && typeof document !== 'undefined' && document.fullscreenElement) {
+        document.exitFullscreen?.().catch(() => {});
+      }
+    };
+  }, []);
 
   // مزامنة فهرس العنصر المحدد في القائمة المنبثقة عند فتحها أو تغيير القناة
   useEffect(() => {
@@ -721,18 +733,22 @@ export function PlayerScreen(): React.JSX.Element {
         switch (e.key) {
           case 'ArrowUp':
             e.preventDefault();
+            e.stopPropagation();
             handleDrawerArrowUp();
             break;
           case 'ArrowDown':
             e.preventDefault();
+            e.stopPropagation();
             handleDrawerArrowDown();
             break;
           case 'ArrowRight':
             e.preventDefault();
+            e.stopPropagation();
             handleDrawerArrowRight();
             break;
           case 'ArrowLeft':
             e.preventDefault();
+            e.stopPropagation();
             handleDrawerArrowLeft();
             break;
           case 'Enter':
@@ -740,12 +756,14 @@ export function PlayerScreen(): React.JSX.Element {
           case ' ':
           case 'Select':
             e.preventDefault();
+            e.stopPropagation();
             handleDrawerEnter();
             break;
           case 'Escape':
           case 'Backspace':
           case 'BrowserBack':
             e.preventDefault();
+            e.stopPropagation();
             if (sideMenuLevel === 'channels') {
               setSideMenuLevel('categories');
             } else {
@@ -781,8 +799,8 @@ export function PlayerScreen(): React.JSX.Element {
       }
     };
 
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [
     showSideMenu,
     isVod,
@@ -1538,7 +1556,7 @@ export function PlayerScreen(): React.JSX.Element {
         <View style={styles.sideMenuOverlay}>
           {/* خلفية شفافة قابلة للنقر لإغلاق القائمة */}
           <Pressable
-            style={StyleSheet.absoluteFillObject}
+            style={StyleSheet.absoluteFill}
             onPress={() => setShowSideMenu(false)}
           />
 
@@ -1895,7 +1913,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   modalOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: 'rgba(0, 0, 0, 0.82)',
     justifyContent: 'center',
     alignItems: 'center',
@@ -2084,7 +2106,11 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   errorOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: 'rgba(15, 23, 42, 0.95)',
     justifyContent: 'center',
     alignItems: 'center',

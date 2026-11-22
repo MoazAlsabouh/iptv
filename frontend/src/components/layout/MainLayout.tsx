@@ -17,7 +17,6 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'channels', title: 'القنوات التلفزيونية', route: '/home', icon: 'live-tv' },
   { id: 'movies', title: 'الأفلام والمسلسلات', route: '/movies', icon: 'movie' },
   { id: 'favorites', title: 'المفضلة', route: '/favorites', icon: 'star' },
-  { id: 'admin', title: 'الإحصائيات', route: '/admin', icon: 'analytics' },
   { id: 'settings', title: 'الإعدادات', route: '/settings', icon: 'settings' },
 ];
 
@@ -46,10 +45,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     setIsSidebarFocused(false);
   }, [currentPath, setIsSidebarFocused]);
 
-  // دعم التنقل بالريموت للشريط الجانبي عند تفعيله (isSidebarFocused)
+  // دعم التنقل بالريموت للشريط الجانبي عند تفعيله (isSidebarFocused) مع شبكة أمان لصفحات التطبيق الأخرى
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    if (!isSidebarFocused) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       const activeEl = document.activeElement;
@@ -60,6 +58,26 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           (activeEl as HTMLElement).isContentEditable);
 
       if (isInput) return;
+
+      if (!isSidebarFocused) {
+        // شبكة أمان: في أي صفحة غير /home و /movies و /play
+        const isExcluded =
+          currentPath === '/home' ||
+          currentPath === '/' ||
+          currentPath.startsWith('/movies') ||
+          currentPath.startsWith('/play') ||
+          currentPath.startsWith('/player');
+
+        if (!isExcluded && (e.key === 'ArrowRight' || e.key === 'Escape')) {
+          e.preventDefault();
+          setIsSidebarFocused(true);
+          const currentIdx = NAV_ITEMS.findIndex((item) =>
+            item.route === '/home' ? currentPath === '/home' : currentPath.startsWith(item.route)
+          );
+          setFocusedSidebarIndex(currentIdx >= 0 ? currentIdx : 0);
+        }
+        return;
+      }
 
       switch (e.key) {
         case 'ArrowUp':
@@ -91,7 +109,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isSidebarFocused, focusedSidebarIndex, setIsSidebarFocused, setFocusedSidebarIndex, router]);
+  }, [
+    currentPath,
+    isSidebarFocused,
+    focusedSidebarIndex,
+    setIsSidebarFocused,
+    setFocusedSidebarIndex,
+    router,
+  ]);
 
   return (
     <View
