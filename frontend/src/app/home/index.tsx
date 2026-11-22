@@ -893,6 +893,7 @@ const styles = StyleSheet.create({
   mainContainer: {
     flex: 1,
     backgroundColor: '#070b14',
+    ...(Platform.OS === 'web' ? ({ direction: 'rtl' } as any) : {}),
   },
   centerContainer: {
     flex: 1,
@@ -974,6 +975,7 @@ const styles = StyleSheet.create({
   columnsWrapper: {
     flex: 1,
     flexDirection: 'row',
+    ...(Platform.OS === 'web' ? ({ direction: 'rtl' } as any) : {}),
   },
   column: {
     height: '100%',

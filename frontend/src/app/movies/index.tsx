@@ -337,6 +337,7 @@ interface VodCardProps {
   onToggleFav: (item: VodItem) => void;
   width?: number;
   hasTVPreferredFocus?: boolean;
+  isControlledFocused?: boolean;
 }
 
 const VodCard: React.FC<VodCardProps> = ({
@@ -346,12 +347,13 @@ const VodCard: React.FC<VodCardProps> = ({
   onToggleFav,
   width,
   hasTVPreferredFocus,
+  isControlledFocused,
 }) => {
   const [imageError, setImageError] = useState<boolean>(false);
   const [isHovered, setIsHovered] = useState<boolean>(false);
   const [isFocused, setIsFocused] = useState<boolean>(false);
 
-  const isActive = isHovered || isFocused;
+  const isActive = Boolean(isControlledFocused) || isHovered || isFocused;
 
   return (
     <Pressable
@@ -492,6 +494,9 @@ interface PosterSliderProps {
   favoriteIds: string[];
   onToggleFav: (item: VodItem) => void;
   hasTVPreferredFocus?: boolean;
+  isRailFocused?: boolean;
+  focusedCardIndex?: number;
+  onReportItems?: (railId: string, items: VodItem[]) => void;
 }
 
 const PosterSlider: React.FC<PosterSliderProps> = ({
@@ -500,11 +505,31 @@ const PosterSlider: React.FC<PosterSliderProps> = ({
   favoriteIds,
   onToggleFav,
   hasTVPreferredFocus,
+  isRailFocused = false,
+  focusedCardIndex = 0,
+  onReportItems,
 }) => {
   const [items, setItems] = useState<VodItem[]>(() => railMemoryCache.get(config.id) || []);
   const [isLoading, setIsLoading] = useState<boolean>(!railMemoryCache.has(config.id));
   const [isHovered, setIsHovered] = useState<boolean>(false);
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (items.length > 0 && onReportItems) {
+      onReportItems(config.id, items);
+    }
+  }, [config.id, items, onReportItems]);
+
+  useEffect(() => {
+    if (isRailFocused && scrollRef.current) {
+      const CARD_WIDTH = 191; // 175 عرض البطاقة + 16 تباعد
+      const targetX = Math.max(0, focusedCardIndex * CARD_WIDTH - 200);
+      (scrollRef.current as any).scrollTo?.({
+        x: targetX,
+        animated: true,
+      });
+    }
+  }, [isRailFocused, focusedCardIndex]);
 
   useEffect(() => {
     let isMounted = true;
@@ -640,6 +665,7 @@ const PosterSlider: React.FC<PosterSliderProps> = ({
                 isFav={Boolean(item?.id && Array.isArray(favoriteIds) && favoriteIds.includes(item.id))}
                 onToggleFav={onToggleFav}
                 hasTVPreferredFocus={hasTVPreferredFocus && idx === 0}
+                isControlledFocused={isRailFocused && focusedCardIndex === idx}
               />
             ))}
           </ScrollView>
@@ -676,7 +702,7 @@ export default function MoviesScreen(): React.JSX.Element {
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [debouncedQuery, setDebouncedQuery] = useState<string>('');
-  const searchInputRef = useRef<TextInput>(null);
+  const searchInputRef = useRef<any>(null);
 
   // المفضلة
   const { favoriteIds, vodFavorites, toggleFavorite } = useAppStore();
@@ -751,31 +777,50 @@ export default function MoviesScreen(): React.JSX.Element {
     }
   };
 
+  // إدارة التركيز والتنقل بالريموت للتلفاز
+  const [focusedArea, setFocusedArea] = useState<'categories' | 'items'>('categories');
+  const [focusedCategoryIndex, setFocusedCategoryIndex] = useState<number>(0);
+  const [focusedRailIndex, setFocusedRailIndex] = useState<number>(0);
+  const [focusedCardIndex, setFocusedCardIndex] = useState<number>(0);
+  const [focusedGridIndex, setFocusedGridIndex] = useState<number>(0);
+
+  const [railItemsMap, setRailItemsMap] = useState<Record<string, VodItem[]>>({});
+  const handleReportRailItems = useCallback((railId: string, loadedItems: VodItem[]) => {
+    setRailItemsMap((prev) => {
+      if (prev[railId] === loadedItems) return prev;
+      return { ...prev, [railId]: loadedItems };
+    });
+  }, []);
+
+  const isSidebarFocused = useAppStore((state) => state.isSidebarFocused);
+  const setIsSidebarFocused = useAppStore((state) => state.setIsSidebarFocused);
+  const setFocusedSidebarIndex = useAppStore((state) => state.setFocusedSidebarIndex);
+  const contentScrollRef = useRef<any>(null);
+
   // التنقل والريموت
-  const handleGoBack = () => {
+  const handleGoBack = useCallback(() => {
     if (unreleasedNotice?.visible) {
       setUnreleasedNotice(null);
-      return;
+      return true;
     }
     if (isSearchOpen && searchQuery.length > 0) {
       setSearchQuery('');
       setIsSearchOpen(false);
-      return;
+      return true;
     }
     if (selectedCategory !== 'all') {
       setSelectedCategory('all');
-      return;
+      setFocusedArea('categories');
+      setFocusedCategoryIndex(0);
+      return true;
     }
     if (router.canGoBack()) {
       router.back();
     } else {
       router.replace('/home');
     }
-  };
-
-  useTVRemoteNavigation({
-    onBack: handleGoBack,
-  });
+    return true;
+  }, [unreleasedNotice, isSearchOpen, searchQuery, selectedCategory, router]);
 
   const handleSelect = (item: VodItem) => {
     if (item.isUnreleased) {
@@ -855,6 +900,229 @@ export default function MoviesScreen(): React.JSX.Element {
   // هل نحن في وضع البحث أو المفضلة (الشبكة)؟
   const isSearchMode = debouncedQuery.length > 0;
   const isFavoritesMode = selectedCategory === 'favorites' && !isSearchMode;
+
+  const currentRail = currentRails[focusedRailIndex];
+  const activeRailItems = currentRail ? railItemsMap[currentRail.id] || [] : [];
+  const gridItems = isSearchMode ? searchResults : isFavoritesMode ? (vodFavorites || []) : [];
+
+  // تمرير تلقائي للشاشة الرأسية ليظل العنصر المحدد ظاهراً
+  useEffect(() => {
+    if (focusedArea === 'categories') {
+      contentScrollRef.current?.scrollTo({ y: 0, animated: true });
+    } else if (focusedArea === 'items') {
+      if (isSearchMode || isFavoritesMode) {
+        const rowIndex = Math.floor(focusedGridIndex / numColumns);
+        contentScrollRef.current?.scrollTo({
+          y: Math.max(0, rowIndex * 280),
+          animated: true,
+        });
+      } else {
+        contentScrollRef.current?.scrollTo({
+          y: Math.max(0, focusedRailIndex * 330),
+          animated: true,
+        });
+      }
+    }
+  }, [focusedArea, focusedRailIndex, focusedGridIndex, numColumns, isSearchMode, isFavoritesMode]);
+
+  const handleArrowUp = useCallback(() => {
+    if (focusedArea === 'items') {
+      if (isSearchMode || isFavoritesMode) {
+        if (focusedGridIndex < numColumns) {
+          setFocusedArea('categories');
+        } else {
+          setFocusedGridIndex((prev) => Math.max(0, prev - numColumns));
+        }
+      } else {
+        if (focusedRailIndex === 0) {
+          setFocusedArea('categories');
+        } else {
+          setFocusedRailIndex((prev) => Math.max(0, prev - 1));
+          setFocusedCardIndex(0);
+        }
+      }
+    }
+  }, [focusedArea, isSearchMode, isFavoritesMode, focusedGridIndex, numColumns, focusedRailIndex]);
+
+  const handleArrowDown = useCallback(() => {
+    if (focusedArea === 'categories') {
+      setFocusedArea('items');
+      setFocusedCardIndex(0);
+      setFocusedGridIndex(0);
+    } else if (focusedArea === 'items') {
+      if (isSearchMode || isFavoritesMode) {
+        setFocusedGridIndex((prev) => Math.min(gridItems.length - 1, prev + numColumns));
+      } else {
+        setFocusedRailIndex((prev) => Math.min(currentRails.length - 1, prev + 1));
+        setFocusedCardIndex(0);
+      }
+    }
+  }, [focusedArea, isSearchMode, isFavoritesMode, gridItems.length, numColumns, currentRails.length]);
+
+  const handleArrowRight = useCallback(() => {
+    // في واجهة RTL: التحرك يميناً
+    if (focusedArea === 'categories') {
+      if (focusedCategoryIndex === 0) {
+        // عند أقصى اليمين: الانتقال للشريط الجانبي
+        setIsSidebarFocused(true);
+        setFocusedSidebarIndex(1);
+      } else {
+        setFocusedCategoryIndex((prev) => Math.max(0, prev - 1));
+      }
+    } else if (focusedArea === 'items') {
+      if (isSearchMode || isFavoritesMode) {
+        if (focusedGridIndex % numColumns === 0) {
+          setIsSidebarFocused(true);
+          setFocusedSidebarIndex(1);
+        } else {
+          setFocusedGridIndex((prev) => Math.max(0, prev - 1));
+        }
+      } else {
+        if (focusedCardIndex === 0) {
+          setIsSidebarFocused(true);
+          setFocusedSidebarIndex(1);
+        } else {
+          setFocusedCardIndex((prev) => Math.max(0, prev - 1));
+        }
+      }
+    }
+  }, [
+    focusedArea,
+    focusedCategoryIndex,
+    focusedGridIndex,
+    numColumns,
+    focusedCardIndex,
+    isSearchMode,
+    isFavoritesMode,
+    setIsSidebarFocused,
+    setFocusedSidebarIndex,
+  ]);
+
+  const handleArrowLeft = useCallback(() => {
+    // في واجهة RTL: التحرك يساراً
+    if (focusedArea === 'categories') {
+      setFocusedCategoryIndex((prev) => Math.min(CATEGORIES.length - 1, prev + 1));
+    } else if (focusedArea === 'items') {
+      if (isSearchMode || isFavoritesMode) {
+        setFocusedGridIndex((prev) => Math.min(gridItems.length - 1, prev + 1));
+      } else {
+        const maxIdx = Math.max(0, (activeRailItems.length || 10) - 1);
+        setFocusedCardIndex((prev) => Math.min(maxIdx, prev + 1));
+      }
+    }
+  }, [
+    focusedArea,
+    focusedCategoryIndex,
+    isSearchMode,
+    isFavoritesMode,
+    gridItems.length,
+    activeRailItems.length,
+  ]);
+
+  const handleEnterKey = useCallback(() => {
+    if (focusedArea === 'categories') {
+      const cat = CATEGORIES[focusedCategoryIndex];
+      if (cat) {
+        setSearchQuery('');
+        setSelectedCategory(cat.id);
+        setFocusedArea('items');
+        setFocusedCardIndex(0);
+        setFocusedGridIndex(0);
+      }
+    } else if (focusedArea === 'items') {
+      if (isSearchMode || isFavoritesMode) {
+        const item = gridItems[focusedGridIndex];
+        if (item) handleSelect(item);
+      } else {
+        const item = activeRailItems[focusedCardIndex];
+        if (item) handleSelect(item);
+      }
+    }
+  }, [
+    focusedArea,
+    focusedCategoryIndex,
+    isSearchMode,
+    isFavoritesMode,
+    gridItems,
+    focusedGridIndex,
+    activeRailItems,
+    focusedCardIndex,
+    handleSelect,
+  ]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    if (isSidebarFocused) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      const activeEl = document.activeElement;
+      const isInput =
+        activeEl &&
+        (activeEl.tagName === 'INPUT' ||
+          activeEl.tagName === 'TEXTAREA' ||
+          (activeEl as HTMLElement).isContentEditable);
+
+      if (isInput) {
+        if (e.key === 'Escape' || e.key === 'ArrowDown') {
+          (activeEl as HTMLElement).blur();
+          setFocusedArea('categories');
+          e.preventDefault();
+        }
+        return;
+      }
+
+      switch (e.key) {
+        case 'ArrowUp':
+          e.preventDefault();
+          handleArrowUp();
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          handleArrowDown();
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          handleArrowRight();
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          handleArrowLeft();
+          break;
+        case 'Enter':
+        case 'NumpadEnter':
+        case ' ':
+        case 'Select':
+          e.preventDefault();
+          handleEnterKey();
+          break;
+        case 'Escape':
+        case 'Back':
+          e.preventDefault();
+          handleGoBack();
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    isSidebarFocused,
+    handleArrowUp,
+    handleArrowDown,
+    handleArrowRight,
+    handleArrowLeft,
+    handleEnterKey,
+    handleGoBack,
+  ]);
+
+  useTVRemoteNavigation({
+    onArrowUp: handleArrowUp,
+    onArrowDown: handleArrowDown,
+    onArrowRight: handleArrowRight,
+    onArrowLeft: handleArrowLeft,
+    onEnter: handleEnterKey,
+    onBack: handleGoBack,
+  });
 
   return (
     <View style={styles.container}>
@@ -938,9 +1206,10 @@ export default function MoviesScreen(): React.JSX.Element {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.topCategoriesScrollContent}
         >
-          {CATEGORIES.map((cat) => {
+          {CATEGORIES.map((cat, idx) => {
             const isCatActive = selectedCategory === cat.id && !isSearchMode;
             const isFavCat = cat.id === 'favorites';
+            const isFocusedCat = focusedArea === 'categories' && focusedCategoryIndex === idx;
 
             return (
               <Pressable
@@ -948,6 +1217,7 @@ export default function MoviesScreen(): React.JSX.Element {
                 onPress={() => {
                   setSearchQuery('');
                   setSelectedCategory(cat.id);
+                  setFocusedCategoryIndex(idx);
                 }}
                 style={({ focused }: any) => [
                   styles.categoryCard,
@@ -955,7 +1225,7 @@ export default function MoviesScreen(): React.JSX.Element {
                     (isFavCat
                       ? styles.categoryCardFavActive
                       : styles.categoryCardActive),
-                  focused && styles.categoryCardFocused,
+                  (isFocusedCat || focused) && styles.categoryCardFocused,
                   Platform.OS === 'web'
                     ? ({
                         cursor: 'pointer',
@@ -995,6 +1265,7 @@ export default function MoviesScreen(): React.JSX.Element {
 
       {/* 3. منطقة المحتوى القابلة للتمرير */}
       <ScrollView
+        ref={contentScrollRef}
         key={`content-scroll-${refreshKey}-${selectedCategory}`}
         style={styles.scrollArea}
         contentContainerStyle={styles.scrollContent}
@@ -1043,6 +1314,7 @@ export default function MoviesScreen(): React.JSX.Element {
                       onToggleFav={handleToggleFav}
                       width={gridCardWidth}
                       hasTVPreferredFocus={idx === 0}
+                      isControlledFocused={focusedArea === 'items' && focusedGridIndex === idx}
                     />
                   ))}
                 </View>
@@ -1102,6 +1374,7 @@ export default function MoviesScreen(): React.JSX.Element {
                     onToggleFav={handleToggleFav}
                     width={gridCardWidth}
                     hasTVPreferredFocus={idx === 0}
+                    isControlledFocused={focusedArea === 'items' && focusedGridIndex === idx}
                   />
                 ))}
               </View>
@@ -1118,6 +1391,9 @@ export default function MoviesScreen(): React.JSX.Element {
                 favoriteIds={favoriteIds}
                 onToggleFav={handleToggleFav}
                 hasTVPreferredFocus={index === 0}
+                isRailFocused={focusedArea === 'items' && focusedRailIndex === index}
+                focusedCardIndex={focusedCardIndex}
+                onReportItems={handleReportRailItems}
               />
             ))}
           </View>
@@ -1307,8 +1583,15 @@ const styles = StyleSheet.create({
       : {}),
   },
   categoryCardFocused: {
-    transform: [{ scale: 1.05 }],
-    borderColor: '#0EA5E9',
+    transform: [{ scale: 1.06 }],
+    borderColor: '#38bdf8',
+    borderWidth: 2.5,
+    backgroundColor: 'rgba(56, 189, 248, 0.22)',
+    ...(Platform.OS === 'web'
+      ? ({
+          boxShadow: '0 0 22px rgba(56, 189, 248, 0.6)',
+        } as any)
+      : { elevation: 8 }),
   },
   categoryIconBox: {
     width: 34,
@@ -1444,12 +1727,13 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   posterBoxFocused: {
-    borderColor: '#0EA5E9',
+    borderColor: '#38bdf8',
+    borderWidth: 2.5,
     transform: [{ scale: 1.07 }],
     zIndex: 10,
     ...(Platform.OS === 'web'
       ? ({
-          boxShadow: '0 0 24px rgba(14, 165, 233, 0.45)',
+          boxShadow: '0 0 24px rgba(56, 189, 248, 0.55)',
         } as any)
       : {
           elevation: 10,

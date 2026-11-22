@@ -17,7 +17,7 @@ import { useMediaData } from '../../hooks/useMediaData';
 import { TVPlayer, HlsLevelOption, toYouTubeEmbedUrl } from '../../components/player/TVPlayer';
 import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 import { ChannelLogo } from '../../components/ChannelLogo';
-import { StreamSource } from '../../types/media';
+import { StreamSource, MediaItem } from '../../types/media';
 import { useAuth } from '../../context/AuthContext';
 import { shouldAutoProxy, getProxyStreamUrl } from '../../utils/proxy';
 
@@ -524,19 +524,63 @@ export function PlayerScreen(): React.JSX.Element {
     }
   }, [currentStreamUrl, activeSourceIndex, isVod, isBuffering]);
 
-  const resetOverlayTimer = useCallback(() => {
+  // مؤقت الإخفاء التلقائي لأزرار التحكم والشريط العلوي (4 ثوانٍ)
+  const controlsAutoHideTimerRef = useRef<any>(null);
+
+  const resetControlsTimer = useCallback(() => {
     setShowOverlay(true);
+    if (controlsAutoHideTimerRef.current) {
+      clearTimeout(controlsAutoHideTimerRef.current);
+      controlsAutoHideTimerRef.current = null;
+    }
+    controlsAutoHideTimerRef.current = setTimeout(() => {
+      setShowOverlay(false);
+    }, 4000);
   }, []);
 
+  const resetOverlayTimer = resetControlsTimer;
+
   useEffect(() => {
-    if (!showOverlay || showQualityModal || showEpisodesModal || showSideMenu) return;
+    if (showSideMenu || showQualityModal || showEpisodesModal) {
+      if (controlsAutoHideTimerRef.current) {
+        clearTimeout(controlsAutoHideTimerRef.current);
+        controlsAutoHideTimerRef.current = null;
+      }
+      return;
+    }
+    resetControlsTimer();
+    return () => {
+      if (controlsAutoHideTimerRef.current) {
+        clearTimeout(controlsAutoHideTimerRef.current);
+        controlsAutoHideTimerRef.current = null;
+      }
+    };
+  }, [showSideMenu, showQualityModal, showEpisodesModal, resetControlsTimer]);
 
-    const timer = setTimeout(() => {
-      setShowOverlay(false);
-    }, 5000);
+  // مؤقت الإخفاء التلقائي للقائمة الجانبية المنبثقة (6 ثوانٍ عند عدم النشاط)
+  const sideMenuAutoHideTimerRef = useRef<any>(null);
 
-    return () => clearTimeout(timer);
-  }, [showOverlay, showQualityModal, showEpisodesModal, showSideMenu]);
+  const resetSideMenuTimer = useCallback(() => {
+    if (sideMenuAutoHideTimerRef.current) {
+      clearTimeout(sideMenuAutoHideTimerRef.current);
+      sideMenuAutoHideTimerRef.current = null;
+    }
+    if (showSideMenu) {
+      sideMenuAutoHideTimerRef.current = setTimeout(() => {
+        setShowSideMenu(false);
+      }, 6000);
+    }
+  }, [showSideMenu]);
+
+  useEffect(() => {
+    resetSideMenuTimer();
+    return () => {
+      if (sideMenuAutoHideTimerRef.current) {
+        clearTimeout(sideMenuAutoHideTimerRef.current);
+        sideMenuAutoHideTimerRef.current = null;
+      }
+    };
+  }, [showSideMenu, resetSideMenuTimer]);
 
   const handleGoBack = () => {
     if (router.canGoBack()) {
@@ -563,17 +607,21 @@ export function PlayerScreen(): React.JSX.Element {
     }
   }, [showSideMenu, sideMenuLevel, effectiveChannelId, activeCategoryName, activeChannelList, navGroups, isVod]);
 
-  // تمرير تلقائي للقائمة المنبثقة ليبقى العنصر المحدد ظاهراً
+  // تمرير تلقائي للقائمة المنبثقة ليبقى العنصر المحدد دائماً في منتصف المساحة المرئية
   useEffect(() => {
     if (showSideMenu && !isVod) {
+      const ITEM_HEIGHT = 56;
+      const CONTAINER_HEIGHT = 520;
       if (sideMenuLevel === 'channels' && focusedDrawerChannelIndex >= 0) {
+        const targetY = Math.max(0, focusedDrawerChannelIndex * ITEM_HEIGHT - CONTAINER_HEIGHT / 2);
         drawerChannelsScrollRef.current?.scrollTo({
-          y: Math.max(0, (focusedDrawerChannelIndex - 2) * 54),
+          y: targetY,
           animated: true,
         });
       } else if (sideMenuLevel === 'categories' && focusedDrawerCategoryIndex >= 0) {
+        const targetY = Math.max(0, focusedDrawerCategoryIndex * ITEM_HEIGHT - CONTAINER_HEIGHT / 2);
         drawerCategoriesScrollRef.current?.scrollTo({
-          y: Math.max(0, (focusedDrawerCategoryIndex - 2) * 54),
+          y: targetY,
           animated: true,
         });
       }
@@ -583,26 +631,29 @@ export function PlayerScreen(): React.JSX.Element {
   // دوال التحكم بالريموت داخل القائمة المنبثقة
   const handleDrawerArrowUp = useCallback(() => {
     if (!showSideMenu || isVod) return false;
+    resetSideMenuTimer();
     if (sideMenuLevel === 'channels') {
       setFocusedDrawerChannelIndex((prev) => Math.max(0, prev - 1));
     } else {
       setFocusedDrawerCategoryIndex((prev) => Math.max(0, prev - 1));
     }
     return true;
-  }, [showSideMenu, isVod, sideMenuLevel]);
+  }, [showSideMenu, isVod, sideMenuLevel, resetSideMenuTimer]);
 
   const handleDrawerArrowDown = useCallback(() => {
     if (!showSideMenu || isVod) return false;
+    resetSideMenuTimer();
     if (sideMenuLevel === 'channels') {
       setFocusedDrawerChannelIndex((prev) => Math.min(activeChannelList.length - 1, prev + 1));
     } else {
       setFocusedDrawerCategoryIndex((prev) => Math.min(navGroups.length - 1, prev + 1));
     }
     return true;
-  }, [showSideMenu, isVod, sideMenuLevel, activeChannelList.length, navGroups.length]);
+  }, [showSideMenu, isVod, sideMenuLevel, activeChannelList.length, navGroups.length, resetSideMenuTimer]);
 
   const handleDrawerArrowRight = useCallback(() => {
     if (!showSideMenu || isVod) return false;
+    resetSideMenuTimer();
     if (sideMenuLevel === 'channels') {
       setSideMenuLevel('categories');
       const curCatIdx = navGroups.findIndex((g) => g.name === activeCategoryName);
@@ -610,10 +661,11 @@ export function PlayerScreen(): React.JSX.Element {
       return true;
     }
     return false;
-  }, [showSideMenu, isVod, sideMenuLevel, navGroups, activeCategoryName]);
+  }, [showSideMenu, isVod, sideMenuLevel, navGroups, activeCategoryName, resetSideMenuTimer]);
 
   const handleDrawerArrowLeft = useCallback(() => {
     if (!showSideMenu || isVod) return false;
+    resetSideMenuTimer();
     if (sideMenuLevel === 'categories') {
       const targetGrp = navGroups[focusedDrawerCategoryIndex];
       if (targetGrp) {
@@ -625,7 +677,7 @@ export function PlayerScreen(): React.JSX.Element {
       return true;
     }
     return false;
-  }, [showSideMenu, isVod, sideMenuLevel, navGroups, focusedDrawerCategoryIndex]);
+  }, [showSideMenu, isVod, sideMenuLevel, navGroups, focusedDrawerCategoryIndex, resetSideMenuTimer]);
 
   const handleDrawerEnter = useCallback(() => {
     if (!showSideMenu || isVod) return false;
@@ -633,6 +685,7 @@ export function PlayerScreen(): React.JSX.Element {
       const targetCh = activeChannelList[focusedDrawerChannelIndex];
       if (targetCh) {
         switchLiveChannel(targetCh);
+        setShowSideMenu(false); // إغلاق القائمة فوراً ليعود البث بملء الشاشة مباشرة
       }
     } else {
       const targetGrp = navGroups[focusedDrawerCategoryIndex];
@@ -641,6 +694,7 @@ export function PlayerScreen(): React.JSX.Element {
         setActiveCategoryType(targetGrp.type);
         setSideMenuLevel('channels');
         setFocusedDrawerChannelIndex(0);
+        resetSideMenuTimer();
       }
     }
     return true;
@@ -653,6 +707,7 @@ export function PlayerScreen(): React.JSX.Element {
     navGroups,
     focusedDrawerCategoryIndex,
     switchLiveChannel,
+    resetSideMenuTimer,
   ]);
 
   // مستمع لوحة المفاتيح والريموت على الويب لشاشة المشغّل والقائمة المنبثقة
@@ -906,7 +961,7 @@ export function PlayerScreen(): React.JSX.Element {
       )}
 
       {/* 3. عناصر التحكم العائمة العلوية مع دعم المنطقة الآمنة للهاتف والتلفاز */}
-      {showOverlay && !playbackError && (
+      {!showSideMenu && showOverlay && !playbackError && (
         <View
           style={[
             styles.overlayBar,
@@ -1488,14 +1543,21 @@ export function PlayerScreen(): React.JSX.Element {
           />
 
           {/* الدرج الجانبي على اليمين RTL */}
-          <View style={styles.sideMenuDrawer}>
+          <View
+            style={styles.sideMenuDrawer}
+            onTouchStart={resetSideMenuTimer}
+            onPointerMove={resetSideMenuTimer}
+          >
             {/* رأس القائمة */}
             <View style={styles.sideMenuHeader}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
                 {sideMenuLevel === 'channels' ? (
                   <Pressable
                     style={styles.backToCategoriesBtn}
-                    onPress={() => setSideMenuLevel('categories')}
+                    onPress={() => {
+                      resetSideMenuTimer();
+                      setSideMenuLevel('categories');
+                    }}
                   >
                     <MaterialIcons name="chevron-right" size={24} color="#38bdf8" />
                     <Text style={styles.backToCategoriesText}>الأقسام</Text>
@@ -1524,7 +1586,13 @@ export function PlayerScreen(): React.JSX.Element {
 
             {/* المستوى 1: قائمة القنوات في القسم الحالي */}
             {sideMenuLevel === 'channels' ? (
-              <ScrollView ref={drawerChannelsScrollRef} style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+              <ScrollView
+                ref={drawerChannelsScrollRef}
+                style={{ flex: 1 }}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: 60 }}
+                onScrollBeginDrag={resetSideMenuTimer}
+              >
                 {activeChannelList.length === 0 ? (
                   <View style={{ padding: 24, alignItems: 'center' }}>
                     <Text style={{ color: '#64748b', fontSize: 13 }}>لا توجد قنوات في هذا القسم</Text>
@@ -1548,6 +1616,7 @@ export function PlayerScreen(): React.JSX.Element {
                         onPress={() => {
                           setFocusedDrawerChannelIndex(idx);
                           switchLiveChannel(ch);
+                          setShowSideMenu(false); // إغلاق القائمة فوراً عند الاختيار ليعود البث بملء الشاشة
                         }}
                       >
                         {({ focused }) => {
@@ -1591,7 +1660,13 @@ export function PlayerScreen(): React.JSX.Element {
               </ScrollView>
             ) : (
               /* المستوى 2: قائمة الأقسام والبلدان والسلاسل */
-              <ScrollView ref={drawerCategoriesScrollRef} style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+              <ScrollView
+                ref={drawerCategoriesScrollRef}
+                style={{ flex: 1 }}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: 60 }}
+                onScrollBeginDrag={resetSideMenuTimer}
+              >
                 {navGroups.map((group, idx) => {
                   const isSelected = activeCategoryName === group.name;
                   const isDrawerFocused = focusedDrawerCategoryIndex === idx;

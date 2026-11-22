@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -98,6 +98,7 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
     tmdbId?: string;
     imdbId?: string;
     originalLanguage?: string;
+    lang?: string;
   }>();
 
   const seriesTitle = useMemo(() => {
@@ -189,20 +190,22 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
     };
   }, [seriesTitle, params.imdbId]);
 
-  const handleGoBack = () => {
+  const [focusedSection, setFocusedSection] = useState<'back' | 'seasons' | 'episodes'>('back');
+  const [focusedSeasonIndex, setFocusedSeasonIndex] = useState<number>(0);
+  const [focusedEpisodeIndex, setFocusedEpisodeIndex] = useState<number>(0);
+  const mainScrollRef = useRef<any>(null);
+
+  const handleGoBack = useCallback(() => {
     if (router.canGoBack()) {
       router.back();
     } else {
       router.replace('/movies');
     }
-  };
-
-  useTVRemoteNavigation({
-    onBack: handleGoBack,
-  });
+    return true;
+  }, [router]);
 
   // تشغيل الحلقة المختارة
-  const handlePlayEpisode = (seasonNum: number, episodeNum: number) => {
+  const handlePlayEpisode = useCallback((seasonNum: number, episodeNum: number) => {
     const sources = buildEpisodeSources(params.tmdbId, params.imdbId, seasonNum, episodeNum);
     const initialUrl = sources[0]?.url || '';
     const isExplicitArabic =
@@ -228,7 +231,7 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
         originalLanguage: detectedLang,
       },
     });
-  };
+  }, [params, seriesTitle, seriesPoster, router]);
 
   // حلقات الموسم المختار
   const currentEpisodes = useMemo(() => {
@@ -241,8 +244,159 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
   const numCols = width > 950 ? 3 : width > 600 ? 2 : 1;
   const epColWidth = `${100 / numCols}%` as any;
 
+  // تمرير تلقائي للشاشة الرأسية مع حركة التركيز
+  useEffect(() => {
+    if (focusedSection === 'back') {
+      mainScrollRef.current?.scrollTo({ y: 0, animated: true });
+    } else if (focusedSection === 'seasons') {
+      mainScrollRef.current?.scrollTo({ y: 160, animated: true });
+    } else if (focusedSection === 'episodes') {
+      const rowIndex = Math.floor(focusedEpisodeIndex / numCols);
+      mainScrollRef.current?.scrollTo({
+        y: Math.max(0, 240 + rowIndex * 130),
+        animated: true,
+      });
+    }
+  }, [focusedSection, focusedEpisodeIndex, numCols]);
+
+  const handleArrowUp = useCallback(() => {
+    if (focusedSection === 'episodes') {
+      if (focusedEpisodeIndex < numCols) {
+        if (seasons.length > 1) {
+          setFocusedSection('seasons');
+        } else {
+          setFocusedSection('back');
+        }
+      } else {
+        setFocusedEpisodeIndex((prev) => Math.max(0, prev - numCols));
+      }
+    } else if (focusedSection === 'seasons') {
+      setFocusedSection('back');
+    }
+  }, [focusedSection, focusedEpisodeIndex, numCols, seasons.length]);
+
+  const handleArrowDown = useCallback(() => {
+    if (focusedSection === 'back') {
+      if (seasons.length > 1) {
+        setFocusedSection('seasons');
+      } else if (currentEpisodes.length > 0) {
+        setFocusedSection('episodes');
+        setFocusedEpisodeIndex(0);
+      }
+    } else if (focusedSection === 'seasons') {
+      if (currentEpisodes.length > 0) {
+        setFocusedSection('episodes');
+        setFocusedEpisodeIndex(0);
+      }
+    } else if (focusedSection === 'episodes') {
+      setFocusedEpisodeIndex((prev) =>
+        Math.min(currentEpisodes.length - 1, prev + numCols)
+      );
+    }
+  }, [focusedSection, seasons.length, currentEpisodes.length, numCols]);
+
+  const handleArrowRight = useCallback(() => {
+    // في واجهة RTL: التحرك يميناً
+    if (focusedSection === 'seasons') {
+      setFocusedSeasonIndex((prev) => Math.max(0, prev - 1));
+    } else if (focusedSection === 'episodes') {
+      if (focusedEpisodeIndex % numCols === 0) {
+        // الحافة اليمنى
+      } else {
+        setFocusedEpisodeIndex((prev) => Math.max(0, prev - 1));
+      }
+    }
+  }, [focusedSection, numCols, focusedEpisodeIndex]);
+
+  const handleArrowLeft = useCallback(() => {
+    // في واجهة RTL: التحرك يساراً
+    if (focusedSection === 'seasons') {
+      setFocusedSeasonIndex((prev) => Math.min(seasons.length - 1, prev + 1));
+    } else if (focusedSection === 'episodes') {
+      setFocusedEpisodeIndex((prev) =>
+        Math.min(currentEpisodes.length - 1, prev + 1)
+      );
+    }
+  }, [focusedSection, seasons.length, currentEpisodes.length]);
+
+  const handleEnterKey = useCallback(() => {
+    if (focusedSection === 'back') {
+      handleGoBack();
+    } else if (focusedSection === 'seasons') {
+      const s = seasons[focusedSeasonIndex];
+      if (s) {
+        setSelectedSeason(s.season);
+        setFocusedSection('episodes');
+        setFocusedEpisodeIndex(0);
+      }
+    } else if (focusedSection === 'episodes') {
+      const ep = currentEpisodes[focusedEpisodeIndex];
+      if (ep) {
+        handlePlayEpisode(ep.season, ep.number);
+      }
+    }
+  }, [
+    focusedSection,
+    handleGoBack,
+    seasons,
+    focusedSeasonIndex,
+    currentEpisodes,
+    focusedEpisodeIndex,
+    handlePlayEpisode,
+  ]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      switch (e.key) {
+        case 'ArrowUp':
+          e.preventDefault();
+          handleArrowUp();
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          handleArrowDown();
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          handleArrowRight();
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          handleArrowLeft();
+          break;
+        case 'Enter':
+        case 'NumpadEnter':
+        case ' ':
+        case 'Select':
+          e.preventDefault();
+          handleEnterKey();
+          break;
+        case 'Escape':
+        case 'Back':
+          e.preventDefault();
+          handleGoBack();
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleArrowUp, handleArrowDown, handleArrowRight, handleArrowLeft, handleEnterKey, handleGoBack]);
+
+  useTVRemoteNavigation({
+    onArrowUp: handleArrowUp,
+    onArrowDown: handleArrowDown,
+    onArrowRight: handleArrowRight,
+    onArrowLeft: handleArrowLeft,
+    onEnter: handleEnterKey,
+    onBack: handleGoBack,
+  });
+
   return (
     <ScrollView
+      ref={mainScrollRef}
       style={styles.container}
       contentContainerStyle={styles.scrollContent}
       nestedScrollEnabled={true}
@@ -266,20 +420,26 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
           <Pressable
             hasTVPreferredFocus
             onPress={handleGoBack}
-            style={({ focused }) => [styles.backBtn, focused && styles.backBtnFocused]}
+            style={({ focused }) => [
+              styles.backBtn,
+              (focusedSection === 'back' || focused) && styles.backBtnFocused,
+            ]}
           >
-            {({ focused }) => (
-              <View style={styles.btnRow}>
-                <MaterialIcons
-                  name="arrow-back"
-                  size={22}
-                  color={focused ? '#000000' : '#ffffff'}
-                />
-                <Text style={[styles.backBtnText, focused && styles.backBtnTextFocused]}>
-                  العودة للأفلام والمسلسلات
-                </Text>
-              </View>
-            )}
+            {({ focused }) => {
+              const isFocusedBack = focusedSection === 'back' || focused;
+              return (
+                <View style={styles.btnRow}>
+                  <MaterialIcons
+                    name="arrow-back"
+                    size={22}
+                    color={isFocusedBack ? '#38bdf8' : '#ffffff'}
+                  />
+                  <Text style={[styles.backBtnText, isFocusedBack && styles.backBtnTextFocused]}>
+                    العودة للأفلام والمسلسلات
+                  </Text>
+                </View>
+              );
+            }}
           </Pressable>
         </View>
 
@@ -373,29 +533,38 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
         <Text style={styles.sectionTitle}>المواسم والحلقات</Text>
         {seasons.length > 1 && (
           <View style={styles.seasonsContainer}>
-            {seasons.map((s) => {
+            {seasons.map((s, idx) => {
               const isCurrent = s.season === selectedSeason;
+              const isFocusedSeason = focusedSection === 'seasons' && focusedSeasonIndex === idx;
               return (
                 <Pressable
                   key={`season-chip-${s.season}`}
-                  onPress={() => setSelectedSeason(s.season)}
+                  onPress={() => {
+                    setSelectedSeason(s.season);
+                    setFocusedSeasonIndex(idx);
+                    setFocusedSection('episodes');
+                    setFocusedEpisodeIndex(0);
+                  }}
                   style={({ focused }) => [
                     styles.seasonChip,
                     isCurrent && styles.seasonChipActive,
-                    focused && styles.seasonChipFocused,
+                    (isFocusedSeason || focused) && styles.seasonChipFocused,
                   ]}
                 >
-                  {({ focused }) => (
-                    <Text
-                      style={[
-                        styles.seasonChipText,
-                        isCurrent && styles.seasonChipTextActive,
-                        focused && styles.seasonChipTextFocused,
-                      ]}
-                    >
-                      الموسم {s.season}
-                    </Text>
-                  )}
+                  {({ focused }) => {
+                    const active = isFocusedSeason || focused;
+                    return (
+                      <Text
+                        style={[
+                          styles.seasonChipText,
+                          isCurrent && styles.seasonChipTextActive,
+                          active && styles.seasonChipTextFocused,
+                        ]}
+                      >
+                        الموسم {s.season}
+                      </Text>
+                    );
+                  }}
                 </Pressable>
               );
             })}
@@ -416,48 +585,61 @@ export default function SeriesDetailsScreen(): React.JSX.Element {
         </View>
       ) : (
         <View style={styles.episodesGridWrap}>
-          {currentEpisodes.map((item) => (
-            <View
-              key={`ep-${item.season}-${item.number}-${item.id}`}
-              style={[styles.epCol, { width: epColWidth }]}
-            >
-              <Pressable
-                onPress={() => handlePlayEpisode(item.season, item.number)}
-                style={({ focused }) => [styles.epCard, focused && styles.epCardFocused]}
+          {currentEpisodes.map((item, idx) => {
+            const isFocusedEp = focusedSection === 'episodes' && focusedEpisodeIndex === idx;
+            return (
+              <View
+                key={`ep-${item.season}-${item.number}-${item.id}`}
+                style={[styles.epCol, { width: epColWidth }]}
               >
-                {({ focused }) => (
-                  <View style={styles.epCardInner}>
-                    <View style={styles.epHeaderRow}>
-                      <View style={styles.epNumberBadge}>
-                        <Text style={styles.epNumberText}>الحلقة {item.number}</Text>
+                <Pressable
+                  onPress={() => {
+                    setFocusedSection('episodes');
+                    setFocusedEpisodeIndex(idx);
+                    handlePlayEpisode(item.season, item.number);
+                  }}
+                  style={({ focused }) => [
+                    styles.epCard,
+                    (isFocusedEp || focused) && styles.epCardFocused,
+                  ]}
+                >
+                  {({ focused }) => {
+                    const active = isFocusedEp || focused;
+                    return (
+                      <View style={styles.epCardInner}>
+                        <View style={styles.epHeaderRow}>
+                          <View style={styles.epNumberBadge}>
+                            <Text style={styles.epNumberText}>الحلقة {item.number}</Text>
+                          </View>
+                          <MaterialIcons
+                            name="play-circle-fill"
+                            size={28}
+                            color={active ? '#38bdf8' : '#64748b'}
+                          />
+                        </View>
+
+                        <Text
+                          numberOfLines={1}
+                          style={[styles.epTitle, active && styles.epTitleFocused]}
+                        >
+                          {item.name}
+                        </Text>
+
+                        {item.summary ? (
+                          <Text
+                            numberOfLines={isLandscapeShort ? 1 : 2}
+                            style={[styles.epSummary, active && styles.epSummaryFocused]}
+                          >
+                            {item.summary}
+                          </Text>
+                        ) : null}
                       </View>
-                      <MaterialIcons
-                        name="play-circle-fill"
-                        size={28}
-                        color={focused ? '#0284c7' : '#38bdf8'}
-                      />
-                    </View>
-
-                    <Text
-                      numberOfLines={1}
-                      style={[styles.epTitle, focused && styles.epTitleFocused]}
-                    >
-                      {item.name}
-                    </Text>
-
-                    {item.summary ? (
-                      <Text
-                        numberOfLines={isLandscapeShort ? 1 : 2}
-                        style={[styles.epSummary, focused && styles.epSummaryFocused]}
-                      >
-                        {item.summary}
-                      </Text>
-                    ) : null}
-                  </View>
-                )}
-              </Pressable>
-            </View>
-          ))}
+                    );
+                  }}
+                </Pressable>
+              </View>
+            );
+          })}
         </View>
       )}
     </ScrollView>
@@ -517,9 +699,10 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   backBtnFocused: {
-    backgroundColor: '#ffffff',
-    borderColor: '#ffffff',
-    transform: [{ scale: 1.06 }],
+    backgroundColor: 'rgba(56, 189, 248, 0.2)',
+    borderColor: '#38bdf8',
+    borderWidth: 2,
+    transform: [{ scale: 1.05 }],
     shadowColor: '#38bdf8',
     shadowOpacity: 0.9,
     shadowRadius: 12,
@@ -535,7 +718,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   backBtnTextFocused: {
-    color: '#000000',
+    color: '#38bdf8',
   },
   heroContent: {
     position: 'absolute',
@@ -695,10 +878,11 @@ const styles = StyleSheet.create({
     borderColor: '#38bdf8',
   },
   seasonChipFocused: {
-    backgroundColor: '#ffffff',
-    borderColor: '#ffffff',
+    backgroundColor: 'rgba(56, 189, 248, 0.25)',
+    borderColor: '#38bdf8',
+    borderWidth: 2,
     transform: [{ scale: 1.05 }],
-    shadowColor: '#0EA5E9',
+    shadowColor: '#38bdf8',
     shadowOpacity: 0.9,
     shadowRadius: 10,
   },
@@ -712,7 +896,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   seasonChipTextFocused: {
-    color: '#000000',
+    color: '#38bdf8',
     fontWeight: '900',
   },
   episodesGridWrap: {
@@ -738,9 +922,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   epCardFocused: {
-    backgroundColor: '#ffffff',
-    borderColor: '#ffffff',
-    transform: [{ scale: 1.04 }],
+    backgroundColor: 'rgba(30, 41, 59, 0.98)',
+    borderColor: '#38bdf8',
+    borderWidth: 2.5,
+    transform: [{ scale: 1.03 }],
     shadowColor: '#38bdf8',
     shadowOpacity: 0.9,
     shadowRadius: 14,
@@ -774,7 +959,7 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   epTitleFocused: {
-    color: '#000000',
+    color: '#38bdf8',
   },
   epSummary: {
     color: '#94a3b8',
@@ -783,7 +968,7 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   epSummaryFocused: {
-    color: '#334155',
+    color: '#cbd5e1',
   },
   loadingBox: {
     flex: 1,

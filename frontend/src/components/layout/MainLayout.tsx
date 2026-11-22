@@ -46,10 +46,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     setIsSidebarFocused(false);
   }, [currentPath, setIsSidebarFocused]);
 
-  // دعم التنقل بالريموت للشريط الجانبي في الصفحات الأخرى غير /home
+  // دعم التنقل بالريموت للشريط الجانبي عند تفعيله (isSidebarFocused)
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    if (currentPath === '/home' || currentPath === '/') return;
+    if (!isSidebarFocused) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       const activeEl = document.activeElement;
@@ -61,49 +61,37 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
 
       if (isInput) return;
 
-      if (!isSidebarFocused) {
-        // في واجهة RTL: سهم اليمين ينتقل للشريط الجانبي
-        if (e.key === 'ArrowRight') {
+      switch (e.key) {
+        case 'ArrowUp':
           e.preventDefault();
-          setIsSidebarFocused(true);
-          const currentIdx = NAV_ITEMS.findIndex((item) =>
-            item.route === '/home' ? currentPath === '/home' : currentPath.startsWith(item.route)
-          );
-          setFocusedSidebarIndex(currentIdx >= 0 ? currentIdx : 0);
-        }
-      } else {
-        switch (e.key) {
-          case 'ArrowUp':
-            e.preventDefault();
-            setFocusedSidebarIndex(Math.max(0, focusedSidebarIndex - 1));
-            break;
-          case 'ArrowDown':
-            e.preventDefault();
-            setFocusedSidebarIndex(Math.min(NAV_ITEMS.length - 1, focusedSidebarIndex + 1));
-            break;
-          case 'ArrowLeft':
-            // سهم اليسار يرجع للمحتوى
-            e.preventDefault();
+          setFocusedSidebarIndex(Math.max(0, focusedSidebarIndex - 1));
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          setFocusedSidebarIndex(Math.min(NAV_ITEMS.length - 1, focusedSidebarIndex + 1));
+          break;
+        case 'ArrowLeft':
+          // سهم اليسار يرجع للمحتوى في واجهة RTL
+          e.preventDefault();
+          setIsSidebarFocused(false);
+          break;
+        case 'Enter':
+        case 'NumpadEnter':
+        case ' ':
+        case 'Select':
+          e.preventDefault();
+          const target = NAV_ITEMS[focusedSidebarIndex];
+          if (target) {
             setIsSidebarFocused(false);
-            break;
-          case 'Enter':
-          case 'NumpadEnter':
-          case ' ':
-          case 'Select':
-            e.preventDefault();
-            const target = NAV_ITEMS[focusedSidebarIndex];
-            if (target) {
-              setIsSidebarFocused(false);
-              router.push(target.route as any);
-            }
-            break;
-        }
+            router.push(target.route as any);
+          }
+          break;
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentPath, isSidebarFocused, focusedSidebarIndex, setIsSidebarFocused, setFocusedSidebarIndex, router]);
+  }, [isSidebarFocused, focusedSidebarIndex, setIsSidebarFocused, setFocusedSidebarIndex, router]);
 
   return (
     <View
@@ -197,8 +185,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         </View>
       </View>
 
-      {/* مساحة عرض المحتوى الرئيسية */}
-      <View style={styles.contentArea}>{children}</View>
+      {/* مساحة عرض المحتوى الرئيسية (بدون حواف في /home لتعبئة الشاشة بأسلوب IPTV) */}
+      <View
+        style={[
+          styles.contentArea,
+          (currentPath === '/home' || currentPath.startsWith('/category')) && styles.contentAreaFull,
+        ]}
+      >
+        {children}
+      </View>
     </View>
   );
 };
@@ -210,12 +205,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#0f172a', // خلفية داكنة فخمة
     height: '100%',
     width: '100%',
+    ...(Platform.OS === 'web' ? ({ direction: 'rtl' } as any) : {}),
   },
   sidebar: {
     width: 260,
     backgroundColor: '#0B1120',
-    borderRightWidth: 1,
-    borderRightColor: '#1e293b',
+    borderLeftWidth: 1,
+    borderLeftColor: '#1e293b',
     padding: 24,
     justifyContent: 'space-between',
   },
@@ -324,6 +320,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0B1120',
     padding: 32,
+  },
+  contentAreaFull: {
+    padding: 0,
   },
   subCard: {
     backgroundColor: 'rgba(15, 23, 42, 0.85)',
