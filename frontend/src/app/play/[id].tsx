@@ -518,6 +518,33 @@ export function PlayerScreen(): React.JSX.Element {
   const [retryKey, setRetryKey] = useState<number>(0);
   const [showOverlay, setShowOverlay] = useState<boolean>(true);
 
+  // مؤقت مهلة الانتظار (15 ثانية) لبدء البث المباشر على الشاشة
+  const streamTimeoutRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (streamTimeoutRef.current) {
+      clearTimeout(streamTimeoutRef.current);
+      streamTimeoutRef.current = null;
+    }
+
+    if (currentStreamUrl && isBuffering && !playbackError) {
+      streamTimeoutRef.current = setTimeout(() => {
+        if (isBuffering && !playbackError) {
+          console.warn('[PlayerScreen] Playback timeout after 15s');
+          setIsBuffering(false);
+          setPlaybackError('تعذر تحميل البث على الشاشة');
+        }
+      }, 15000);
+    }
+
+    return () => {
+      if (streamTimeoutRef.current) {
+        clearTimeout(streamTimeoutRef.current);
+        streamTimeoutRef.current = null;
+      }
+    };
+  }, [currentStreamUrl, isBuffering, playbackError, retryKey, effectiveChannelId, activeSourceIndex]);
+
   // مهلة أمان لمؤشر التحميل عند تشغيل الأفلام والمسلسلات أو مشغلات التضمين لمنع بقائه عالقاً
   useEffect(() => {
     const sUrl = String(currentStreamUrl || '');
@@ -835,13 +862,8 @@ export function PlayerScreen(): React.JSX.Element {
   useTVRemoteNavigation({
     onBack: () => {
       if (showSideMenu) {
-        if (sideMenuLevel === 'channels') {
-          setSideMenuLevel('categories');
-          return true;
-        } else {
-          setShowSideMenu(false);
-          return true;
-        }
+        setShowSideMenu(false);
+        return true;
       }
       if (showEpisodesModal) {
         setShowEpisodesModal(false);
@@ -934,7 +956,7 @@ export function PlayerScreen(): React.JSX.Element {
         // تم استنفاد جميع المصادر المتاحة أو لا توجد مصادر بديلة
         setIsBuffering(false);
         setSwitchToast(null);
-        setPlaybackError('عذراً، هذا العمل غير متوفر للمشاهدة حالياً');
+        setPlaybackError(errorMsg || (isVod ? 'عذراً، هذا العمل غير متوفر للمشاهدة حالياً' : 'تعذر تشغيل هذا البث حالياً'));
       }
     },
     [channelSources, activeSourceIndex]
@@ -980,11 +1002,20 @@ export function PlayerScreen(): React.JSX.Element {
         </View>
       )}
 
-      {/* 2. طبقة حساسة للنقر لاستعادة الواجهة عند اختفائها */}
-      {!showOverlay && !playbackError && !showQualityModal && (
+      {/* 2. طبقة حساسة للنقر لاستعادة الواجهة عند اختفائها وفتح قائمة القنوات بالريموت */}
+      {!showOverlay && !playbackError && !showQualityModal && !showSideMenu && (
         <Pressable
-          hasTVPreferredFocus
-          onPress={resetOverlayTimer}
+          hasTVPreferredFocus={!showSideMenu && !showOverlay && !playbackError}
+          focusable={true}
+          onPress={() => {
+            resetOverlayTimer();
+            if (!isVod && !showSideMenu) {
+              const curIdx = activeChannelList.findIndex((c) => c.id === effectiveChannelId);
+              setFocusedDrawerChannelIndex(curIdx >= 0 ? curIdx : 0);
+              setSideMenuLevel('channels');
+              setShowSideMenu(true);
+            }
+          }}
           style={[StyleSheet.absoluteFillObject, { backgroundColor: 'transparent' }]}
         >
           <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'transparent' }]} />
@@ -1517,33 +1548,11 @@ export function PlayerScreen(): React.JSX.Element {
 
           <View style={styles.errorActions}>
             <Pressable
-              hasTVPreferredFocus
-              onPress={handleGoBack}
-              style={({ focused }) => [
-                styles.backToListBtn,
-                { backgroundColor: '#0284c7' },
-                focused && styles.overlayBtnFocused,
-              ]}
-            >
-              {({ focused }) => (
-                <View style={styles.btnRow}>
-                  <MaterialIcons
-                    name="arrow-back"
-                    size={20}
-                    color={focused ? '#000000' : '#ffffff'}
-                  />
-                  <Text style={[styles.backToListText, focused && styles.overlayBtnTextFocused]}>
-                    رجوع
-                  </Text>
-                </View>
-              )}
-            </Pressable>
-
-            <Pressable
+              hasTVPreferredFocus={Boolean(playbackError)}
               onPress={handleRetry}
               style={({ focused }) => [
                 styles.retryBtn,
-                { backgroundColor: '#334155' },
+                { backgroundColor: '#0284c7' },
                 focused && styles.overlayBtnFocused,
               ]}
             >
@@ -1556,6 +1565,28 @@ export function PlayerScreen(): React.JSX.Element {
                   />
                   <Text style={[styles.retryBtnText, focused && styles.overlayBtnTextFocused]}>
                     إعادة المحاولة
+                  </Text>
+                </View>
+              )}
+            </Pressable>
+
+            <Pressable
+              onPress={handleGoBack}
+              style={({ focused }) => [
+                styles.backToListBtn,
+                { backgroundColor: '#334155' },
+                focused && styles.overlayBtnFocused,
+              ]}
+            >
+              {({ focused }) => (
+                <View style={styles.btnRow}>
+                  <MaterialIcons
+                    name="arrow-back"
+                    size={20}
+                    color={focused ? '#000000' : '#ffffff'}
+                  />
+                  <Text style={[styles.backToListText, focused && styles.overlayBtnTextFocused]}>
+                    العودة للقنوات
                   </Text>
                 </View>
               )}
@@ -1637,6 +1668,11 @@ export function PlayerScreen(): React.JSX.Element {
                     return (
                       <Pressable
                         key={ch.id}
+                        hasTVPreferredFocus={
+                          showSideMenu &&
+                          sideMenuLevel === 'channels' &&
+                          (focusedDrawerChannelIndex >= 0 ? isDrawerFocused : isCurrent || idx === 0)
+                        }
                         focusable={true}
                         accessible={true}
                         style={({ focused }) => [
@@ -1705,6 +1741,11 @@ export function PlayerScreen(): React.JSX.Element {
                   return (
                     <Pressable
                       key={group.id}
+                      hasTVPreferredFocus={
+                        showSideMenu &&
+                        sideMenuLevel === 'categories' &&
+                        (focusedDrawerCategoryIndex >= 0 ? isDrawerFocused : isSelected || idx === 0)
+                      }
                       focusable={true}
                       accessible={true}
                       style={({ focused }) => [

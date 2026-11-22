@@ -628,16 +628,38 @@ const NativeVideoPlayer: React.FC<{
   onBuffering?: (isBuffering: boolean) => void;
   onError?: (errorMessage: string) => void;
 }> = ({ streamUrl, style, onBuffering, onError }) => {
-  const player = useVideoPlayer(streamUrl, (p) => {
+  // تحديد مصدر البث صراحةً كـ HLS لضمان تعرف ExoPlayer عليه على أندرويد والتلفاز
+  const videoSource = useMemo(() => {
+    if (!streamUrl) return '';
+    return {
+      uri: streamUrl,
+      contentType: 'hls' as const,
+    };
+  }, [streamUrl]);
+
+  const player = useVideoPlayer(videoSource, (p) => {
     p.loop = false;
     p.muted = false;
     p.volume = 1.0;
     p.play();
   });
 
+  // تحديث مصدر البث وتشغيله فور تغيّر الرابط
+  useEffect(() => {
+    if (streamUrl && player && videoSource) {
+      try {
+        player.replace(videoSource);
+        player.play();
+      } catch (err) {
+        console.warn('[NativeVideoPlayer] replace stream error:', err);
+      }
+    }
+  }, [player, streamUrl, videoSource]);
+
   useEffect(() => {
     const statusSub = player.addListener('statusChange', ({ status, error }: any) => {
       if (status === 'error') {
+        onBuffering?.(false);
         onError?.(error?.message || 'تعذر تشغيل البث على المشغل');
       } else if (status === 'loading') {
         onBuffering?.(true);
@@ -646,19 +668,27 @@ const NativeVideoPlayer: React.FC<{
       }
     });
 
+    const playingSub = (player as any).addListener?.('playingChange', ({ isPlaying }: any) => {
+      if (isPlaying) {
+        onBuffering?.(false);
+      }
+    });
+
     return () => {
       statusSub.remove();
+      playingSub?.remove?.();
     };
   }, [player, onError, onBuffering]);
 
   return (
-    <View style={[styles.nativeContainer, style]}>
+    <View style={[styles.nativeContainer, style]} focusable={false}>
       <VideoView
         style={[StyleSheet.absoluteFill, styles.videoViewFill]}
         player={player}
-        surfaceType="textureView"
+        surfaceType={Platform.OS === 'android' ? 'surfaceView' : 'textureView'}
         contentFit="contain"
         nativeControls={false}
+        focusable={false}
       />
     </View>
   );

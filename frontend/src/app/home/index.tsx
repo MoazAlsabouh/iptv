@@ -42,6 +42,7 @@ export default function DashboardScreen(): React.JSX.Element {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 900;
+  const isMobileDevice = Platform.OS !== 'web' && !Platform.isTV;
 
   const rawFavoriteIds = useAppStore((state) => state.favoriteIds);
   const favoriteIds = Array.isArray(rawFavoriteIds) ? rawFavoriteIds : [];
@@ -538,7 +539,7 @@ export default function DashboardScreen(): React.JSX.Element {
             العمود الأيمن (~22%): الأقسام، البلدان، السلاسل، والمفضلة
             ======================================================== */}
         {(isWide || mobileTab === 'groups') && (
-          <View style={[styles.column, styles.groupsColumn]}>
+          <View style={[styles.column, styles.groupsColumn, (!isWide || isMobileDevice) && styles.mobileColumnFull]}>
             <View style={styles.columnHeader}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <MaterialIcons name="dashboard" size={20} color="#38bdf8" />
@@ -559,6 +560,7 @@ export default function DashboardScreen(): React.JSX.Element {
                 return (
                   <Pressable
                     key={group.id}
+                    hasTVPreferredFocus={activePane === 'categories' && (focusedCategoryIndex === index || (focusedCategoryIndex === -1 && index === 0))}
                     focusable={true}
                     accessible={true}
                     style={({ focused }) => [
@@ -600,6 +602,7 @@ export default function DashboardScreen(): React.JSX.Element {
                               itemFocused && styles.textFocused,
                             ]}
                             numberOfLines={1}
+                            ellipsizeMode="tail"
                           >
                             {group.name}
                           </Text>
@@ -633,7 +636,7 @@ export default function DashboardScreen(): React.JSX.Element {
             العمود الأوسط (~40%): قائمة القنوات المدمجة (Compact Rows)
             ======================================================== */}
         {(isWide || mobileTab === 'channels') && (
-          <View style={[styles.column, styles.channelsColumn]}>
+          <View style={[styles.column, styles.channelsColumn, (!isWide || isMobileDevice) && styles.mobileColumnFull]}>
             {/* رأس عمود القنوات مع شريط بحث مدمج */}
             <View style={styles.columnHeader}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -701,6 +704,7 @@ export default function DashboardScreen(): React.JSX.Element {
 
                   return (
                     <Pressable
+                      hasTVPreferredFocus={activePane === 'channels' && (focusedChannelIndex === index || (focusedChannelIndex === -1 && index === 0))}
                       focusable={true}
                       accessible={true}
                       onPress={() => {
@@ -781,7 +785,7 @@ export default function DashboardScreen(): React.JSX.Element {
             العمود الأيسر (~38%): بطاقة معلومات ومعاينة القناة
             ======================================================== */}
         {(isWide || mobileTab === 'preview') && (
-          <View style={[styles.column, styles.previewColumn]}>
+          <View style={[styles.column, styles.previewColumn, (!isWide || isMobileDevice) && styles.mobileColumnFull]}>
             {previewChannel ? (
               <View style={styles.previewContainer}>
                 {/* 1. لوحة المعاينة التفاعلية الأنيقة بدون تشغيل بث في الخلفية */}
@@ -1007,6 +1011,10 @@ const styles = StyleSheet.create({
     height: '100%',
     borderLeftWidth: 1,
     borderLeftColor: '#1e293b',
+  },
+  mobileColumnFull: {
+    width: '100%',
+    flex: 1,
   },
 
   // 1. عمود الأقسام (~22%)
