@@ -338,6 +338,7 @@ interface VodCardProps {
   width?: number;
   hasTVPreferredFocus?: boolean;
   isControlledFocused?: boolean;
+  nativeID?: string;
 }
 
 const VodCard: React.FC<VodCardProps> = ({
@@ -348,6 +349,7 @@ const VodCard: React.FC<VodCardProps> = ({
   width,
   hasTVPreferredFocus,
   isControlledFocused,
+  nativeID,
 }) => {
   const [imageError, setImageError] = useState<boolean>(false);
   const [isHovered, setIsHovered] = useState<boolean>(false);
@@ -358,17 +360,28 @@ const VodCard: React.FC<VodCardProps> = ({
 
   // تمرير تلقائي في السلايدر الأفقي ليبقى الكرت دائماً في منتصف الشاشة عند التركيز
   useEffect(() => {
-    if (isControlledFocused && cardRef.current) {
-      const node = cardRef.current.getScrollableNode?.() || cardRef.current;
-      if (node && typeof node.scrollIntoView === 'function') {
-        node.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    if (isControlledFocused) {
+      if (Platform.OS === 'web' && nativeID && typeof document !== 'undefined') {
+        const el = document.getElementById(nativeID);
+        if (el && typeof el.scrollIntoView === 'function') {
+          el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+          return;
+        }
+      }
+      if (cardRef.current) {
+        const node = cardRef.current.getScrollableNode?.() || cardRef.current;
+        if (node && typeof node.scrollIntoView === 'function') {
+          node.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        }
       }
     }
-  }, [isControlledFocused]);
+  }, [isControlledFocused, nativeID]);
 
   return (
     <Pressable
       ref={cardRef}
+      nativeID={nativeID}
+      {...(Platform.OS === 'web' && nativeID ? ({ id: nativeID } as any) : {})}
       hasTVPreferredFocus={hasTVPreferredFocus}
       onPress={() => onSelect(item)}
       onFocus={() => setIsFocused(true)}
@@ -502,6 +515,7 @@ const VodCard: React.FC<VodCardProps> = ({
  */
 interface PosterSliderProps {
   config: RailConfig;
+  rowIndex?: number;
   onSelect: (item: VodItem) => void;
   favoriteIds: string[];
   onToggleFav: (item: VodItem) => void;
@@ -514,6 +528,7 @@ interface PosterSliderProps {
 
 const PosterSlider: React.FC<PosterSliderProps> = ({
   config,
+  rowIndex = 0,
   onSelect,
   favoriteIds,
   onToggleFav,
@@ -535,17 +550,26 @@ const PosterSlider: React.FC<PosterSliderProps> = ({
   }, [config.id, items, onReportItems]);
 
   useEffect(() => {
-    if (isRailFocused && scrollRef.current) {
-      const node = (scrollRef.current as any).getScrollableNode?.() || scrollRef.current;
-      const CARD_WIDTH = 191; // 175 عرض البطاقة + 16 تباعد
-      const targetOffset = Math.max(0, focusedCardIndex * CARD_WIDTH - 250);
-      if (node && typeof node.scrollTo === 'function') {
-        node.scrollTo({ left: targetOffset, behavior: 'smooth' });
-      } else if (typeof (scrollRef.current as any).scrollTo === 'function') {
+    if (!isRailFocused) return;
+
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      const cardId = `movie-card-${rowIndex}-${focusedCardIndex}`;
+      const el = document.getElementById(cardId);
+      if (el && typeof el.scrollIntoView === 'function') {
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        return;
+      }
+    }
+
+    if (scrollRef.current && Platform.OS !== 'web') {
+      const CARD_WIDTH = 175;
+      const CARD_GAP = 16;
+      const targetOffset = Math.max(0, focusedCardIndex * (CARD_WIDTH + CARD_GAP) - 120);
+      if (typeof (scrollRef.current as any).scrollTo === 'function') {
         (scrollRef.current as any).scrollTo({ x: targetOffset, animated: true });
       }
     }
-  }, [isRailFocused, focusedCardIndex]);
+  }, [isRailFocused, focusedCardIndex, rowIndex]);
 
   useEffect(() => {
     let isMounted = true;
@@ -674,7 +698,11 @@ const PosterSlider: React.FC<PosterSliderProps> = ({
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.railScrollContent}
-            style={Platform.OS === 'web' ? ({ scrollBehavior: 'smooth' } as any) : undefined}
+            style={
+              Platform.OS === 'web'
+                ? ({ scrollBehavior: 'smooth', overflowX: 'auto', overflowY: 'hidden' } as any)
+                : undefined
+            }
           >
             {items.map((item, idx) => (
               <VodCard
@@ -685,6 +713,7 @@ const PosterSlider: React.FC<PosterSliderProps> = ({
                 onToggleFav={onToggleFav}
                 hasTVPreferredFocus={hasTVPreferredFocus && idx === 0}
                 isControlledFocused={isRailFocused && focusedCardIndex === idx}
+                nativeID={`movie-card-${rowIndex}-${idx}`}
               />
             ))}
           </ScrollView>
@@ -933,7 +962,7 @@ export default function MoviesScreen(): React.JSX.Element {
   const activeRailItems = currentRail ? railItemsMap[currentRail.id] || [] : [];
   const gridItems = isSearchMode ? searchResults : isFavoritesMode ? (vodFavorites || []) : [];
 
-  // تمرير تلقائي للشاشة الرأسية ليظل العنصر المحدد ظاهراً
+  // 1. تمرير تلقائي للشاشة الرأسية ليظل الصف النشط والعنصر المحدد في المنتصف
   useEffect(() => {
     if (focusedArea === 'categories') {
       contentScrollRef.current?.scrollTo({ y: 0, animated: true });
@@ -945,13 +974,60 @@ export default function MoviesScreen(): React.JSX.Element {
           animated: true,
         });
       } else {
+        const ROW_HEIGHT = 370;
+        const targetY = Math.max(0, focusedRailIndex * ROW_HEIGHT - 40);
         contentScrollRef.current?.scrollTo({
-          y: Math.max(0, focusedRailIndex * 330),
+          y: targetY,
           animated: true,
         });
       }
     }
   }, [focusedArea, focusedRailIndex, focusedGridIndex, numColumns, isSearchMode, isFavoritesMode]);
+
+  // 2. تمرير تلقائي أفقي في السلايدر لإظهار البطاقة المحددة في منتصف الشاشة دائماً
+  useEffect(() => {
+    if (focusedArea !== 'items') return;
+
+    if (!isSearchMode && !isFavoritesMode) {
+      const cardId = `movie-card-${focusedRailIndex}-${focusedCardIndex}`;
+
+      // أ) على الويب: التمرير بالـ DOM ID المباشر لمركز الشاشة أفقياً
+      if (Platform.OS === 'web' && typeof document !== 'undefined') {
+        const el = document.getElementById(cardId);
+        if (el && typeof el.scrollIntoView === 'function') {
+          el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        } else {
+          const timer = setTimeout(() => {
+            const deferredEl = document.getElementById(cardId);
+            deferredEl?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+          }, 40);
+          return () => clearTimeout(timer);
+        }
+      }
+
+      // ب) على Native (Android TV / Mobile):
+      const rowRef = rowScrollRefs.current[focusedRailIndex];
+      if (rowRef && Platform.OS !== 'web') {
+        const CARD_WIDTH = 175;
+        const CARD_GAP = 16;
+        const targetX = Math.max(0, focusedCardIndex * (CARD_WIDTH + CARD_GAP) - 120);
+        if (typeof rowRef.scrollTo === 'function') {
+          rowRef.scrollTo({ x: targetX, animated: true });
+        } else if (typeof rowRef.scrollToOffset === 'function') {
+          rowRef.scrollToOffset({ offset: targetX, animated: true });
+        }
+      }
+    } else {
+      // وضع الشبكة (بحث أو مفضلة)
+      if (Platform.OS === 'web' && typeof document !== 'undefined') {
+        const gridCardId = `grid-card-${focusedGridIndex}`;
+        const el = document.getElementById(gridCardId);
+        if (el && typeof el.scrollIntoView === 'function') {
+          el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        }
+      }
+    }
+  }, [focusedArea, focusedRailIndex, focusedCardIndex, focusedGridIndex, isSearchMode, isFavoritesMode]);
 
   const handleArrowUp = useCallback(() => {
     if (focusedArea === 'items') {
@@ -1356,6 +1432,7 @@ export default function MoviesScreen(): React.JSX.Element {
                       width={gridCardWidth}
                       hasTVPreferredFocus={idx === 0}
                       isControlledFocused={focusedArea === 'items' && focusedGridIndex === idx}
+                      nativeID={`grid-card-${idx}`}
                     />
                   ))}
                 </View>
@@ -1416,6 +1493,7 @@ export default function MoviesScreen(): React.JSX.Element {
                     width={gridCardWidth}
                     hasTVPreferredFocus={idx === 0}
                     isControlledFocused={focusedArea === 'items' && focusedGridIndex === idx}
+                    nativeID={`grid-card-${idx}`}
                   />
                 ))}
               </View>
@@ -1428,6 +1506,7 @@ export default function MoviesScreen(): React.JSX.Element {
               <PosterSlider
                 key={`rail-${rail.id}-${refreshKey}`}
                 config={rail}
+                rowIndex={index}
                 onSelect={handleSelect}
                 favoriteIds={favoriteIds}
                 onToggleFav={handleToggleFav}
