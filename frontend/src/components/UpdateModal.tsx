@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   BackHandler,
   useWindowDimensions,
 } from 'react-native';
+import * as Application from 'expo-application';
 import Constants from 'expo-constants';
 import { MaterialIcons } from '@expo/vector-icons';
 import { BACKEND_BASE_URL } from '../context/AuthContext';
@@ -35,9 +36,26 @@ export function UpdateModal(): React.JSX.Element | null {
   const [isMandatory, setIsMandatory] = useState<boolean>(false);
   const [updateInfo, setUpdateInfo] = useState<AppVersionResponse | null>(null);
 
-  // قراءة رقم الإصدار الحالي للتطبيق
-  const currentVersionCode =
-    Constants.expoConfig?.android?.versionCode ?? 3;
+  // قراءة رقم وإصدار التطبيق الحقيقي من نظام التشغيل (Android)
+  const currentVersionCode = useMemo(() => {
+    const nativeCode = Application.nativeBuildVersion;
+    if (nativeCode && !isNaN(Number(nativeCode))) {
+      return Number(nativeCode);
+    }
+    const expoCode = Constants.expoConfig?.android?.versionCode;
+    if (expoCode && !isNaN(Number(expoCode))) {
+      return Number(expoCode);
+    }
+    return 4;
+  }, []);
+
+  const currentVersionName = useMemo(() => {
+    return (
+      Application.nativeApplicationVersion ||
+      Constants.expoConfig?.version ||
+      '1.0.4'
+    );
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -184,13 +202,15 @@ export function UpdateModal(): React.JSX.Element | null {
           <View style={styles.versionDetailsRow}>
             <View style={styles.versionCol}>
               <Text style={styles.versionColLabel}>الإصدار الحالي:</Text>
-              <Text style={styles.versionColVal}>بناء {currentVersionCode}</Text>
+              <Text style={styles.versionColVal}>
+                {currentVersionName} ({currentVersionCode})
+              </Text>
             </View>
             <MaterialIcons name="arrow-back" size={18} color="#64748b" />
             <View style={styles.versionCol}>
               <Text style={styles.versionColLabel}>الإصدار الأحدث:</Text>
               <Text style={[styles.versionColVal, { color: '#0EA5E9' }]}>
-                {updateInfo.latestVersionName}
+                {updateInfo.latestVersionName} ({updateInfo.latestVersionCode})
               </Text>
             </View>
           </View>
