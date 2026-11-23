@@ -26,6 +26,8 @@ export interface PublicSimulatedChannel {
   isActive: boolean;
   sortOrder: number;
   episodes: VirtualLiveEpisode[];
+  createdAt?: number | string;
+  updatedAt?: number | string;
 }
 
 const DEFAULT_CATEGORIES = [
@@ -161,6 +163,7 @@ export default function SimulatedChannelsScreen(): React.JSX.Element {
           type: 'simulated247',
           category: encodeURIComponent(channel.category || 'مسلسلات 24/7'),
           episodes: encodeURIComponent(JSON.stringify(channel.episodes || [])),
+          createdAt: channel.createdAt ? String(channel.createdAt) : '',
         },
       });
     },
@@ -242,7 +245,7 @@ export default function SimulatedChannelsScreen(): React.JSX.Element {
   const renderChannelRow = useCallback(
     ({ item, index }: { item: PublicSimulatedChannel; index: number }) => {
       const isFocused = focusedPane === 'channels' && focusedIndex === index;
-      const livePos = hasMounted ? getVirtualLivePosition(item?.episodes || []) : null;
+      const livePos = hasMounted ? getVirtualLivePosition(item?.episodes || [], item?.createdAt) : null;
       const currentEp = livePos?.currentEpisode;
 
       return (

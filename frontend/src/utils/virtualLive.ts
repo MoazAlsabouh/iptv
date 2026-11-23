@@ -17,10 +17,14 @@ export interface VirtualLivePosition {
 }
 
 /**
- * Computes the virtual live episode and seek position based on current epoch time.
- * All clients compute the exact same position deterministically.
+ * Computes the virtual live episode and seek position based on current epoch time and channel creation time.
+ * When createdAt is provided, the channel starts at Episode 1, Second 0 at creation time,
+ * and progresses synchronously and cyclically across all clients worldwide.
  */
-export function getVirtualLivePosition(episodes: VirtualLiveEpisode[]): VirtualLivePosition {
+export function getVirtualLivePosition(
+  episodes: VirtualLiveEpisode[],
+  createdAt?: number | string | null
+): VirtualLivePosition {
   if (!episodes || episodes.length === 0) {
     return {
       currentEpisode: null,
@@ -45,8 +49,19 @@ export function getVirtualLivePosition(episodes: VirtualLiveEpisode[]): VirtualL
     };
   }
 
-  const nowInSeconds = Math.floor(Date.now() / 1000);
-  const positionInCycle = nowInSeconds % totalDuration;
+  let elapsedSeconds: number;
+  if (createdAt !== undefined && createdAt !== null && createdAt !== '') {
+    const startMs = typeof createdAt === 'string' ? new Date(createdAt).getTime() : Number(createdAt);
+    if (!isNaN(startMs) && startMs > 0) {
+      elapsedSeconds = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+    } else {
+      elapsedSeconds = Math.floor(Date.now() / 1000);
+    }
+  } else {
+    elapsedSeconds = Math.floor(Date.now() / 1000);
+  }
+
+  const positionInCycle = elapsedSeconds % totalDuration;
 
   let accumulated = 0;
   for (let i = 0; i < episodes.length; i++) {

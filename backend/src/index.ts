@@ -5647,6 +5647,23 @@ async function handleAdminSaveSimulatedChannel(request: Request, env: Env, chann
 
     const now = new Date().toISOString();
 
+    // التحقق من وجود القناة للحفاظ على created_at الأصلي بدقة
+    let originalCreatedAt = now;
+    try {
+      const existing = await env.DB.prepare(
+        'SELECT created_at FROM simulated_channels_247 WHERE id = ?'
+      ).bind(id).first<any>();
+      if (existing && existing.created_at) {
+        originalCreatedAt = existing.created_at;
+      } else if (body.createdAt) {
+        originalCreatedAt = String(body.createdAt);
+      }
+    } catch {
+      if (body.createdAt) {
+        originalCreatedAt = String(body.createdAt);
+      }
+    }
+
     await env.DB.prepare(`
       INSERT INTO simulated_channels_247 (
         id, name, logo, category, is_active, sort_order, playlists, created_at, updated_at
@@ -5660,10 +5677,10 @@ async function handleAdminSaveSimulatedChannel(request: Request, env: Env, chann
         playlists = excluded.playlists,
         updated_at = excluded.updated_at
     `).bind(
-      id, name, logo, category, isActive, sortOrder, playlistsStr, now, now
+      id, name, logo, category, isActive, sortOrder, playlistsStr, originalCreatedAt, now
     ).run();
 
-    return jsonResponse({ success: true, message: 'تم حفظ قناة 24/7 بنجاح', id });
+    return jsonResponse({ success: true, message: 'تم حفظ قناة 24/7 بنجاح', id, createdAt: originalCreatedAt });
   } catch (err: any) {
     return jsonResponse({ error: 'فشل حفظ القناة: ' + (err?.message || '') }, 500);
   }
@@ -5728,6 +5745,8 @@ async function handleGetPublicSimulatedChannels(env: Env): Promise<Response> {
         sortOrder: r.sort_order,
         playlists,
         episodes: allEpisodes,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
       };
     });
 
@@ -6278,7 +6297,7 @@ export default {
       const rawSub = url.pathname.startsWith(prefix) ? url.pathname.substring(prefix.length) : cleanPath.substring(prefix.length);
       const idParam = decodeURIComponent(rawSub).trim();
       if (idParam) {
-        if (request.method === 'PUT' || request.method === 'POST') {
+        if (request.method === 'PUT' || request.method === 'POST' || request.method === 'PATCH') {
           return handleAdminSaveNetwork(request, env, idParam);
         }
         if (request.method === 'DELETE') {
@@ -6317,7 +6336,7 @@ export default {
       const rawSub = url.pathname.startsWith(prefix) ? url.pathname.substring(prefix.length) : cleanPath.substring(prefix.length);
       const idParam = decodeURIComponent(rawSub).trim();
       if (idParam) {
-        if (request.method === 'PUT' || request.method === 'POST') {
+        if (request.method === 'PUT' || request.method === 'POST' || request.method === 'PATCH') {
           return handleAdminSaveSimulatedChannel(request, env, idParam);
         }
         if (request.method === 'DELETE') {

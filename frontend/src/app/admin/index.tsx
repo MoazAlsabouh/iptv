@@ -122,6 +122,7 @@ export interface SimulatedChannelItem {
   sortOrder: number;
   playlists: SimulatedPlaylistItem[];
   episodesCount?: number;
+  createdAt?: string | number;
   updatedAt?: string;
 }
 
@@ -1558,6 +1559,7 @@ export default function AdminScreen(): React.JSX.Element {
           isActive: payload.isActive ?? true,
           sortOrder: payload.sortOrder ?? null,
           playlists: payload.playlists || [],
+          createdAt: isEdit ? editingSimulated.createdAt : (data.createdAt || new Date().toISOString()),
         };
         setSimulatedChannels((prev) => {
           if (isEdit) {

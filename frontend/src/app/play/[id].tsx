@@ -61,11 +61,16 @@ export function PlayerScreen(): React.JSX.Element {
     lang?: string;
     originalLanguage?: string;
     episodes?: string;
+    createdAt?: string;
   }>();
 
   const isSimulated247 = useMemo(() => {
     return params.type === 'simulated247';
   }, [params.type]);
+
+  const [channelCreatedAt, setChannelCreatedAt] = useState<string | null>(() => {
+    return params.createdAt ? decodeURIComponent(params.createdAt) : null;
+  });
 
   const [simulatedEpisodes, setSimulatedEpisodes] = useState<VirtualLiveEpisode[]>(() => {
     if (params.type === 'simulated247' && params.episodes) {
@@ -82,7 +87,8 @@ export function PlayerScreen(): React.JSX.Element {
       try {
         const parsed = JSON.parse(decodeURIComponent(params.episodes));
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return getVirtualLivePosition(parsed);
+          const cAt = params.createdAt ? decodeURIComponent(params.createdAt) : null;
+          return getVirtualLivePosition(parsed, cAt);
         }
       } catch {}
     }
@@ -104,8 +110,10 @@ export function PlayerScreen(): React.JSX.Element {
           if (isMounted && Array.isArray(rawChannels)) {
             const found = rawChannels.find((c: any) => c.id === params.id);
             if (found && Array.isArray(found.episodes)) {
+              const chCreatedAt = found.createdAt || found.created_at || null;
+              if (chCreatedAt) setChannelCreatedAt(chCreatedAt);
               setSimulatedEpisodes(found.episodes);
-              setVirtualLivePos(getVirtualLivePosition(found.episodes));
+              setVirtualLivePos(getVirtualLivePosition(found.episodes, chCreatedAt || channelCreatedAt));
             }
           }
         }
@@ -117,13 +125,13 @@ export function PlayerScreen(): React.JSX.Element {
     return () => {
       isMounted = false;
     };
-  }, [isSimulated247, simulatedEpisodes.length, params.id]);
+  }, [isSimulated247, simulatedEpisodes.length, params.id, channelCreatedAt]);
 
   // تهيئة الموضع اللحظي عند توفر الحلقات لأول مرة فقط دون قفز دوري في منتصف الحلقة
   useEffect(() => {
     if (!isSimulated247 || simulatedEpisodes.length === 0) return;
-    setVirtualLivePos((prev) => prev || getVirtualLivePosition(simulatedEpisodes));
-  }, [isSimulated247, simulatedEpisodes]);
+    setVirtualLivePos((prev) => prev || getVirtualLivePosition(simulatedEpisodes, channelCreatedAt));
+  }, [isSimulated247, simulatedEpisodes, channelCreatedAt]);
 
   const [simulatedSyncKey, setSimulatedSyncKey] = useState<number>(0);
   type TopControlTarget = 'back' | 'sync' | 'episodes' | 'quality' | 'channels';
@@ -607,7 +615,7 @@ export function PlayerScreen(): React.JSX.Element {
   // مزامنة لحظية فورية مع البث المباشر 24/7 عند رغبة المستخدم
   const handleSyncToLive = useCallback(() => {
     if (!isSimulated247 || simulatedEpisodes.length === 0) return;
-    const livePos = getVirtualLivePosition(simulatedEpisodes);
+    const livePos = getVirtualLivePosition(simulatedEpisodes, channelCreatedAt);
     setVirtualLivePos(livePos);
     setSimulatedSyncKey((prev) => prev + 1);
     setIsBuffering(true);
@@ -615,7 +623,7 @@ export function PlayerScreen(): React.JSX.Element {
       `مزامنة البث المباشر: ${livePos.currentEpisode?.title || ''}`,
       'sync'
     );
-  }, [isSimulated247, simulatedEpisodes, showOsd]);
+  }, [isSimulated247, simulatedEpisodes, channelCreatedAt, showOsd]);
 
   // المزامنة الذكية التلقائية عند انتهاء الحلقة (onEnded)
   const handleEpisodeEnded = useCallback(() => {
@@ -625,7 +633,7 @@ export function PlayerScreen(): React.JSX.Element {
     const currentEp = virtualLivePos?.currentEpisode;
 
     // استدعاء دالة المزامنة الحية لإعادة حساب الموضع في الدورة العالمية
-    const livePos = getVirtualLivePosition(simulatedEpisodes);
+    const livePos = getVirtualLivePosition(simulatedEpisodes, channelCreatedAt);
 
     // التحقق مما إذا كانت الدالة أعادت نفس الحلقة التي انتهت للتو
     const isSameEpisode =
@@ -651,7 +659,7 @@ export function PlayerScreen(): React.JSX.Element {
       setSimulatedSyncKey((prev) => prev + 1);
       showOsd(`مزامنة البث: ${livePos.currentEpisode?.title || ''}`, 'sync');
     }
-  }, [isSimulated247, simulatedEpisodes, virtualLivePos, showOsd]);
+  }, [isSimulated247, simulatedEpisodes, channelCreatedAt, virtualLivePos, showOsd]);
 
   // رابط البث الفعلي بناءً على المصدر المختار
   const currentStreamUrl = useMemo(() => {
