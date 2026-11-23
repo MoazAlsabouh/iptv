@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo, useImperativeHandle, forwardRef } from 'react';
 import { View, Text, Pressable, Platform, StyleSheet, StyleProp, ViewStyle } from 'react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -13,14 +13,64 @@ export interface HlsLevelOption {
   bitrate?: number;
 }
 
+export interface TrackOption {
+  id: string | number;
+  label: string;
+  language?: string;
+}
+
+export interface TVPlayerPlaybackState {
+  isPlaying: boolean;
+  currentTime: number;
+  duration: number;
+  isMuted: boolean;
+  audioTracks: TrackOption[];
+  selectedAudioTrackId?: string | number | null;
+  subtitleTracks: TrackOption[];
+  selectedSubtitleTrackId?: string | number | null;
+  isLive: boolean;
+}
+
+export interface TVPlayerHandle {
+  play: () => void;
+  pause: () => void;
+  togglePlayPause: () => void;
+  seekBy: (seconds: number) => void;
+  seekTo: (seconds: number) => void;
+  toggleMute: () => void;
+  selectAudioTrack: (trackId: string | number) => void;
+  selectSubtitleTrack: (trackId: string | number | null) => void;
+}
+
 export interface TVPlayerProps {
   streamUrl: string;
   streamType?: 'auto' | 'hls' | 'youtube' | 'iframe';
+  contentFit?: 'contain' | 'cover' | 'fill';
   onBuffering?: (isBuffering: boolean) => void;
   onError?: (errorMessage: string) => void;
   onLevelsLoaded?: (levels: HlsLevelOption[]) => void;
+  onPlaybackStateChange?: (state: TVPlayerPlaybackState) => void;
   selectedLevel?: number;
   style?: StyleProp<ViewStyle>;
+}
+
+export function isEmbedStreamUrl(rawUrl: string, streamType?: string): boolean {
+  if (!rawUrl) return false;
+  const safeStreamUrl = String(rawUrl).toLowerCase();
+  return (
+    streamType === 'youtube' ||
+    streamType === 'iframe' ||
+    safeStreamUrl.includes('youtube.com') ||
+    safeStreamUrl.includes('youtu.be') ||
+    safeStreamUrl.includes('/embed/') ||
+    safeStreamUrl.includes('vidsrc') ||
+    safeStreamUrl.includes('vidlink.pro') ||
+    safeStreamUrl.includes('embed.su') ||
+    safeStreamUrl.includes('autoembed') ||
+    safeStreamUrl.includes('2embed') ||
+    safeStreamUrl.includes('dailymotion.com') ||
+    safeStreamUrl.includes('player.')
+  );
 }
 
 /**
@@ -103,18 +153,21 @@ export function normalizeYouTubeEmbedUrl(url: string): string {
  * - يدعم استخراج وتبديل مستويات الجودة Hls Levels ومعالجة Autoplay.
  * - يدعم تشغيل السيرفرات المدمجة مباشرة عبر iframe دون قيود sandbox لضمان التوافق التام.
  */
-export const TVPlayer: React.FC<TVPlayerProps> = ({
+export const TVPlayer = forwardRef<TVPlayerHandle, TVPlayerProps>(({
   streamUrl,
   streamType = 'auto',
+  contentFit = 'contain',
   onBuffering,
   onError,
   onLevelsLoaded,
+  onPlaybackStateChange,
   selectedLevel = -1,
   style,
-}) => {
+}, ref) => {
   const videoHtmlRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
   const [needsUserPlay, setNeedsUserPlay] = useState<boolean>(false);
+  const nativePlayerRef = useRef<TVPlayerHandle | null>(null);
 
   // تخزين دوال رد الاتصال في refs لتجنب إعادة تشغيل useEffect عند كل re-render
   const onBufferingRef = useRef(onBuffering);
@@ -123,6 +176,8 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
   onErrorRef.current = onError;
   const onLevelsLoadedRef = useRef(onLevelsLoaded);
   onLevelsLoadedRef.current = onLevelsLoaded;
+  const onPlaybackStateChangeRef = useRef(onPlaybackStateChange);
+  onPlaybackStateChangeRef.current = onPlaybackStateChange;
 
   const safeStreamUrl = String(streamUrl || '');
 
@@ -131,18 +186,7 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
     safeStreamUrl.includes('youtube.com') ||
     safeStreamUrl.includes('youtu.be');
 
-  const isEmbedUrl =
-    streamType === 'youtube' ||
-    streamType === 'iframe' ||
-    isYouTube ||
-    safeStreamUrl.includes('/embed/') ||
-    safeStreamUrl.includes('vidsrc') ||
-    safeStreamUrl.includes('vidlink.pro') ||
-    safeStreamUrl.includes('embed.su') ||
-    safeStreamUrl.includes('autoembed') ||
-    safeStreamUrl.includes('2embed') ||
-    safeStreamUrl.includes('dailymotion.com') ||
-    safeStreamUrl.includes('player.');
+  const isEmbedUrl = isEmbedStreamUrl(safeStreamUrl, streamType);
 
   const finalEmbedUrl = React.useMemo(() => {
     if (!isEmbedUrl) return safeStreamUrl;
@@ -162,6 +206,131 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
     }
     return url;
   }, [safeStreamUrl, isEmbedUrl, isYouTube]);
+
+  // إرسال حالة التشغيل للويب
+  const notifyWebPlaybackState = useCallback(() => {
+    const videoEl = videoHtmlRef.current;
+    if (!videoEl || Platform.OS !== 'web' || isEmbedUrl) return;
+
+    const hls = hlsRef.current;
+    let audioTracks: TrackOption[] = [];
+    let selectedAudioTrackId: number | null = null;
+    let subtitleTracks: TrackOption[] = [];
+    let selectedSubtitleTrackId: number | null = null;
+
+    if (hls) {
+      if (hls.audioTracks && hls.audioTracks.length > 0) {
+        audioTracks = hls.audioTracks.map((t, idx) => ({
+          id: idx,
+          label: t.name || t.lang || `مسار ${idx + 1}`,
+          language: t.lang,
+        }));
+        selectedAudioTrackId = hls.audioTrack;
+      }
+      if (hls.subtitleTracks && hls.subtitleTracks.length > 0) {
+        subtitleTracks = hls.subtitleTracks.map((t, idx) => ({
+          id: idx,
+          label: t.name || t.lang || `ترجمة ${idx + 1}`,
+          language: t.lang,
+        }));
+        selectedSubtitleTrackId = hls.subtitleTrack >= 0 ? hls.subtitleTrack : null;
+      }
+    }
+
+    const curTime = Number(videoEl.currentTime) || 0;
+    const dur = Number(videoEl.duration) || 0;
+    const isLive = !Number.isFinite(dur) || dur <= 0;
+
+    onPlaybackStateChangeRef.current?.({
+      isPlaying: !videoEl.paused && !videoEl.ended,
+      currentTime: curTime,
+      duration: isLive ? 0 : dur,
+      isMuted: videoEl.muted,
+      audioTracks,
+      selectedAudioTrackId,
+      subtitleTracks,
+      selectedSubtitleTrackId,
+      isLive,
+    });
+  }, [isEmbedUrl]);
+
+  // إتاحة التحكم الخارجي عبر useImperativeHandle
+  useImperativeHandle(ref, () => {
+    if (Platform.OS !== 'web') {
+      return {
+        play: () => nativePlayerRef.current?.play(),
+        pause: () => nativePlayerRef.current?.pause(),
+        togglePlayPause: () => nativePlayerRef.current?.togglePlayPause(),
+        seekBy: (secs) => nativePlayerRef.current?.seekBy(secs),
+        seekTo: (secs) => nativePlayerRef.current?.seekTo(secs),
+        toggleMute: () => nativePlayerRef.current?.toggleMute(),
+        selectAudioTrack: (tId) => nativePlayerRef.current?.selectAudioTrack(tId),
+        selectSubtitleTrack: (tId) => nativePlayerRef.current?.selectSubtitleTrack(tId),
+      };
+    }
+
+    // على الويب:
+    return {
+      play: () => {
+        const videoEl = videoHtmlRef.current;
+        if (videoEl) {
+          videoEl.play().catch(() => {});
+        }
+      },
+      pause: () => {
+        const videoEl = videoHtmlRef.current;
+        if (videoEl) {
+          videoEl.pause();
+        }
+      },
+      togglePlayPause: () => {
+        const videoEl = videoHtmlRef.current;
+        if (videoEl) {
+          if (videoEl.paused) {
+            videoEl.play().catch(() => {});
+          } else {
+            videoEl.pause();
+          }
+        }
+      },
+      seekBy: (seconds: number) => {
+        const videoEl = videoHtmlRef.current;
+        if (videoEl) {
+          const newTime = Math.max(0, Math.min(videoEl.duration || 0, (videoEl.currentTime || 0) + seconds));
+          videoEl.currentTime = newTime;
+          notifyWebPlaybackState();
+        }
+      },
+      seekTo: (seconds: number) => {
+        const videoEl = videoHtmlRef.current;
+        if (videoEl) {
+          videoEl.currentTime = Math.max(0, seconds);
+          notifyWebPlaybackState();
+        }
+      },
+      toggleMute: () => {
+        const videoEl = videoHtmlRef.current;
+        if (videoEl) {
+          videoEl.muted = !videoEl.muted;
+          notifyWebPlaybackState();
+        }
+      },
+      selectAudioTrack: (trackId: string | number) => {
+        const hls = hlsRef.current;
+        if (hls && typeof trackId === 'number') {
+          hls.audioTrack = trackId;
+          notifyWebPlaybackState();
+        }
+      },
+      selectSubtitleTrack: (trackId: string | number | null) => {
+        const hls = hlsRef.current;
+        if (hls) {
+          hls.subtitleTrack = trackId === null ? -1 : Number(trackId);
+          notifyWebPlaybackState();
+        }
+      },
+    };
+  }, [notifyWebPlaybackState]);
 
   // استماع لرسائل أخطاء يوتيوب (postMessage) من الـ iframe للتنقل التلقائي عند الحظر أو تقييد العمر
   useEffect(() => {
@@ -293,6 +462,10 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
     videoEl.addEventListener('playing', onPlaySuccess);
     videoEl.addEventListener('canplay', onPlaySuccess);
     videoEl.addEventListener('error', onVideoError);
+    videoEl.addEventListener('timeupdate', notifyWebPlaybackState);
+    videoEl.addEventListener('pause', notifyWebPlaybackState);
+    videoEl.addEventListener('play', notifyWebPlaybackState);
+    videoEl.addEventListener('volumechange', notifyWebPlaybackState);
 
     const safePlay = () => {
       // تشغيل غير مكتوم بالصوت الكامل افتراضياً
@@ -492,6 +665,10 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
       videoEl.removeEventListener('playing', onPlaySuccess);
       videoEl.removeEventListener('canplay', onPlaySuccess);
       videoEl.removeEventListener('error', onVideoError);
+      videoEl.removeEventListener('timeupdate', notifyWebPlaybackState);
+      videoEl.removeEventListener('pause', notifyWebPlaybackState);
+      videoEl.removeEventListener('play', notifyWebPlaybackState);
+      videoEl.removeEventListener('volumechange', notifyWebPlaybackState);
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
@@ -559,7 +736,7 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
             width: '100%',
             height: '100%',
             backgroundColor: '#000000',
-            objectFit: 'contain',
+            objectFit: contentFit,
           }}
           playsInline
           autoPlay
@@ -611,23 +788,31 @@ export const TVPlayer: React.FC<TVPlayerProps> = ({
   // روابط البث التلفزيوني العادية (HLS / m3u8) عبر expo-video
   return (
     <NativeVideoPlayer
+      ref={nativePlayerRef}
       streamUrl={streamUrl}
+      contentFit={contentFit}
       style={style}
       onBuffering={onBuffering}
       onError={onError}
+      onPlaybackStateChange={onPlaybackStateChange}
     />
   );
-};
+});
 
 /**
  * مشغل الفيديو للأجهزة الأصلية (Android / Android TV / iOS) باستخدام expo-video الحديثة
  */
-const NativeVideoPlayer: React.FC<{
-  streamUrl: string;
-  style?: StyleProp<ViewStyle>;
-  onBuffering?: (isBuffering: boolean) => void;
-  onError?: (errorMessage: string) => void;
-}> = ({ streamUrl, style, onBuffering, onError }) => {
+const NativeVideoPlayer = forwardRef<
+  TVPlayerHandle,
+  {
+    streamUrl: string;
+    contentFit?: 'contain' | 'cover' | 'fill';
+    style?: StyleProp<ViewStyle>;
+    onBuffering?: (isBuffering: boolean) => void;
+    onError?: (errorMessage: string) => void;
+    onPlaybackStateChange?: (state: TVPlayerPlaybackState) => void;
+  }
+>(({ streamUrl, contentFit = 'contain', style, onBuffering, onError, onPlaybackStateChange }, ref) => {
   // تحديد مصدر البث صراحةً كـ HLS لضمان تعرف ExoPlayer عليه على أندرويد والتلفاز
   const videoSource = useMemo(() => {
     if (!streamUrl) return '';
@@ -641,8 +826,115 @@ const NativeVideoPlayer: React.FC<{
     p.loop = false;
     p.muted = false;
     p.volume = 1.0;
+    p.timeUpdateEventInterval = 0.5;
     p.play();
   });
+
+  const onPlaybackStateChangeRef = useRef(onPlaybackStateChange);
+  onPlaybackStateChangeRef.current = onPlaybackStateChange;
+
+  const syncPlaybackState = useCallback(() => {
+    if (!player) return;
+    try {
+      const p = player as any;
+      const audioTracks: TrackOption[] = (p.availableAudioTracks || []).map((t: any, idx: number) => ({
+        id: t.id ?? idx,
+        label: t.label || t.language || `صوت ${idx + 1}`,
+        language: t.language,
+      }));
+
+      const subtitleTracks: TrackOption[] = (p.availableSubtitleTracks || []).map((t: any, idx: number) => ({
+        id: t.id ?? idx,
+        label: t.label || t.language || `ترجمة ${idx + 1}`,
+        language: t.language,
+      }));
+
+      const curTime = Number(p.currentTime) || 0;
+      const dur = Number(p.duration) || 0;
+      const isLive = !Number.isFinite(dur) || dur <= 0;
+
+      onPlaybackStateChangeRef.current?.({
+        isPlaying: Boolean(p.playing),
+        currentTime: curTime,
+        duration: isLive ? 0 : dur,
+        isMuted: Boolean(p.muted),
+        audioTracks,
+        selectedAudioTrackId: p.audioTrack?.id ?? null,
+        subtitleTracks,
+        selectedSubtitleTrackId: p.subtitleTrack?.id ?? null,
+        isLive,
+      });
+    } catch (err) {
+      // تجاهل
+    }
+  }, [player]);
+
+  useImperativeHandle(ref, () => ({
+    play: () => {
+      try {
+        player.play();
+        syncPlaybackState();
+      } catch {}
+    },
+    pause: () => {
+      try {
+        player.pause();
+        syncPlaybackState();
+      } catch {}
+    },
+    togglePlayPause: () => {
+      try {
+        if ((player as any).playing) {
+          player.pause();
+        } else {
+          player.play();
+        }
+        syncPlaybackState();
+      } catch {}
+    },
+    seekBy: (seconds: number) => {
+      try {
+        (player as any).seekBy?.(seconds);
+        syncPlaybackState();
+      } catch {}
+    },
+    seekTo: (seconds: number) => {
+      try {
+        (player as any).currentTime = Math.max(0, seconds);
+        syncPlaybackState();
+      } catch {}
+    },
+    toggleMute: () => {
+      try {
+        player.muted = !player.muted;
+        syncPlaybackState();
+      } catch {}
+    },
+    selectAudioTrack: (trackId: string | number) => {
+      try {
+        const tracks = (player as any).availableAudioTracks || [];
+        const match = tracks.find((t: any, idx: number) => (t.id ?? idx) === trackId);
+        if (match) {
+          (player as any).audioTrack = match;
+        }
+        syncPlaybackState();
+      } catch {}
+    },
+    selectSubtitleTrack: (trackId: string | number | null) => {
+      try {
+        if (trackId === null) {
+          (player as any).subtitleTrack = null;
+        } else {
+          const tracks = (player as any).availableSubtitleTracks || [];
+          const match = tracks.find((t: any, idx: number) => (t.id ?? idx) === trackId);
+          if (match) {
+            (player as any).subtitleTrack = match;
+          }
+        }
+        syncPlaybackState();
+      } catch {}
+    },
+  }), [player, syncPlaybackState]);
 
   // تحديث مصدر البث وتشغيله فور تغيّر الرابط
   useEffect(() => {
@@ -650,13 +942,15 @@ const NativeVideoPlayer: React.FC<{
       try {
         player.replace(videoSource);
         player.play();
+        syncPlaybackState();
       } catch (err) {
         console.warn('[NativeVideoPlayer] replace stream error:', err);
       }
     }
-  }, [player, streamUrl, videoSource]);
+  }, [player, streamUrl, videoSource, syncPlaybackState]);
 
   useEffect(() => {
+    const p = player as any;
     const statusSub = player.addListener('statusChange', ({ status, error }: any) => {
       if (status === 'error') {
         onBuffering?.(false);
@@ -666,19 +960,38 @@ const NativeVideoPlayer: React.FC<{
       } else if (status === 'readyToPlay') {
         onBuffering?.(false);
       }
+      syncPlaybackState();
     });
 
-    const playingSub = (player as any).addListener?.('playingChange', ({ isPlaying }: any) => {
+    const playingSub = p.addListener?.('playingChange', ({ isPlaying }: any) => {
       if (isPlaying) {
         onBuffering?.(false);
       }
+      syncPlaybackState();
     });
+
+    const timeUpdateSub = p.addListener?.('timeUpdate', () => {
+      syncPlaybackState();
+    });
+
+    const audioTracksSub = p.addListener?.('availableAudioTracksChange', () => {
+      syncPlaybackState();
+    });
+
+    const subtitleTracksSub = p.addListener?.('availableSubtitleTracksChange', () => {
+      syncPlaybackState();
+    });
+
+    syncPlaybackState();
 
     return () => {
       statusSub.remove();
       playingSub?.remove?.();
+      timeUpdateSub?.remove?.();
+      audioTracksSub?.remove?.();
+      subtitleTracksSub?.remove?.();
     };
-  }, [player, onError, onBuffering]);
+  }, [player, onError, onBuffering, syncPlaybackState]);
 
   return (
     <View style={[styles.nativeContainer, style]} focusable={false}>
@@ -686,13 +999,13 @@ const NativeVideoPlayer: React.FC<{
         style={[StyleSheet.absoluteFill, styles.videoViewFill]}
         player={player}
         surfaceType={Platform.OS === 'android' ? 'surfaceView' : 'textureView'}
-        contentFit="contain"
+        contentFit={contentFit}
         nativeControls={false}
         focusable={false}
       />
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   nativeContainer: {

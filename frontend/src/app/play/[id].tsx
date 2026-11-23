@@ -15,7 +15,16 @@ import { useSafeKeepAwake } from '../../hooks/useSafeKeepAwake';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../../store/useAppStore';
 import { useMediaData } from '../../hooks/useMediaData';
-import { TVPlayer, HlsLevelOption, toYouTubeEmbedUrl } from '../../components/player/TVPlayer';
+import {
+  TVPlayer,
+  HlsLevelOption,
+  toYouTubeEmbedUrl,
+  TVPlayerHandle,
+  TVPlayerPlaybackState,
+  TrackOption,
+  isEmbedStreamUrl,
+} from '../../components/player/TVPlayer';
+import { TVPlayerControls, BottomControlTarget, formatVideoTime } from '../../components/player/TVPlayerControls';
 import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 import { ChannelLogo } from '../../components/ChannelLogo';
 import { StreamSource, MediaItem } from '../../types/media';
@@ -479,6 +488,26 @@ export function PlayerScreen(): React.JSX.Element {
   const [hlsLevels, setHlsLevels] = useState<HlsLevelOption[]>([]);
   const [selectedHlsLevel, setSelectedHlsLevel] = useState<number>(-1);
   const [showQualityModal, setShowQualityModal] = useState<boolean>(false);
+  const [showAudioModal, setShowAudioModal] = useState<boolean>(false);
+  const [showSubtitleModal, setShowSubtitleModal] = useState<boolean>(false);
+  const [contentFit, setContentFit] = useState<'contain' | 'cover' | 'fill'>('contain');
+  const [playbackState, setPlaybackState] = useState<TVPlayerPlaybackState | null>(null);
+  const [focusedControlSection, setFocusedControlSection] = useState<'top' | 'bottom'>('top');
+  const [focusedBottomTarget, setFocusedBottomTarget] = useState<BottomControlTarget>('playPause');
+  const [osdToast, setOsdToast] = useState<{ message: string; icon?: string } | null>(null);
+  const osdToastTimerRef = useRef<any>(null);
+
+  const playerRef = useRef<TVPlayerHandle | null>(null);
+
+  const showOsd = useCallback((message: string, icon?: string) => {
+    if (osdToastTimerRef.current) {
+      clearTimeout(osdToastTimerRef.current);
+    }
+    setOsdToast({ message, icon });
+    osdToastTimerRef.current = setTimeout(() => {
+      setOsdToast(null);
+    }, 2200);
+  }, []);
 
   // اختيار حلقة معينة للمسلسلات
   const handleSelectEpisode = (seasonNum: number, episodeNum: number) => {
@@ -566,7 +595,7 @@ export function PlayerScreen(): React.JSX.Element {
     }
   }, [currentStreamUrl, activeSourceIndex, isVod, isBuffering]);
 
-  // مؤقت الإخفاء التلقائي لأزرار التحكم والشريط العلوي (4 ثوانٍ)
+  // مؤقت الإخفاء التلقائي لأزرار التحكم والشريط العلوي والسفلي (5 ثوانٍ)
   const controlsAutoHideTimerRef = useRef<any>(null);
 
   const resetControlsTimer = useCallback(() => {
@@ -577,13 +606,13 @@ export function PlayerScreen(): React.JSX.Element {
     }
     controlsAutoHideTimerRef.current = setTimeout(() => {
       setShowOverlay(false);
-    }, 4000);
+    }, 5000);
   }, []);
 
   const resetOverlayTimer = resetControlsTimer;
 
   useEffect(() => {
-    if (showSideMenu || showQualityModal || showEpisodesModal) {
+    if (showSideMenu || showQualityModal || showEpisodesModal || showAudioModal || showSubtitleModal) {
       if (controlsAutoHideTimerRef.current) {
         clearTimeout(controlsAutoHideTimerRef.current);
         controlsAutoHideTimerRef.current = null;
@@ -597,7 +626,7 @@ export function PlayerScreen(): React.JSX.Element {
         controlsAutoHideTimerRef.current = null;
       }
     };
-  }, [showSideMenu, showQualityModal, showEpisodesModal, resetControlsTimer]);
+  }, [showSideMenu, showQualityModal, showEpisodesModal, showAudioModal, showSubtitleModal, resetControlsTimer]);
 
   // مؤقت الإخفاء التلقائي للقائمة الجانبية المنبثقة (6 ثوانٍ عند عدم النشاط)
   const sideMenuAutoHideTimerRef = useRef<any>(null);
@@ -754,9 +783,50 @@ export function PlayerScreen(): React.JSX.Element {
     return true;
   }, [isVod, switchLiveChannel, resetSideMenuTimer]);
 
+  const isEmbed = useMemo(() => {
+    return isEmbedStreamUrl(currentStreamUrl);
+  }, [currentStreamUrl]);
+
+  // قائمة أزرار التحكم السفلية لتسهيل التنقل الأفقي
+  const bottomControlOrder: BottomControlTarget[] = useMemo(() => {
+    const isLive = playbackState?.isLive || (playbackState?.duration ?? 0) <= 0;
+    if (isLive) {
+      return ['playPause', 'audio', 'subtitles', 'aspectRatio'];
+    }
+    return ['seekbar', 'playPause', 'rewind', 'forward', 'audio', 'subtitles', 'aspectRatio'];
+  }, [playbackState?.isLive, playbackState?.duration]);
+
+  // تبديل نسبة العرض
+  const handleToggleAspectRatio = useCallback(() => {
+    setContentFit((prev) => {
+      if (prev === 'contain') return 'cover';
+      if (prev === 'cover') return 'fill';
+      return 'contain';
+    });
+    showOsd(
+      contentFit === 'contain'
+        ? 'نسبة العرض: تعبئة وقص (Cover)'
+        : contentFit === 'cover'
+        ? 'نسبة العرض: تمدد الشاشة (Fill)'
+        : 'نسبة العرض: ملء نسبي (Contain)',
+      'aspect-ratio'
+    );
+  }, [contentFit, showOsd]);
+
   // إدارة التنقل الموحد بالريموت كنترول ولوحة المفاتيح عبر useTVRemoteNavigation
   useTVRemoteNavigation({
     onBack: () => {
+      // 1. إغلاق القوائم المنبثقة أولاً
+      if (showAudioModal) {
+        setShowAudioModal(false);
+        resetOverlayTimer();
+        return true;
+      }
+      if (showSubtitleModal) {
+        setShowSubtitleModal(false);
+        resetOverlayTimer();
+        return true;
+      }
       if (showSideMenu) {
         if (sideMenuLevel === 'channels') {
           setSideMenuLevel('categories');
@@ -767,22 +837,30 @@ export function PlayerScreen(): React.JSX.Element {
       }
       if (showEpisodesModal) {
         setShowEpisodesModal(false);
+        resetOverlayTimer();
         return true;
       }
       if (showQualityModal) {
         setShowQualityModal(false);
+        resetOverlayTimer();
         return true;
       }
+      // 2. إذا كانت واجهة التحكم ظاهرة، إخفاؤها
+      if (showOverlay) {
+        setShowOverlay(false);
+        return true;
+      }
+      // 3. الخروج من المشغل
       handleGoBack();
       return true;
     },
     onChannelUp: () => {
-      if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal) {
+      if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal && !showAudioModal && !showSubtitleModal) {
         handleZapNext();
       }
     },
     onChannelDown: () => {
-      if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal) {
+      if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal && !showAudioModal && !showSubtitleModal) {
         handleZapPrev();
       }
     },
@@ -791,7 +869,17 @@ export function PlayerScreen(): React.JSX.Element {
         handleDrawerArrowUp();
         return;
       }
-      if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal) {
+      if (showAudioModal || showSubtitleModal || showQualityModal || showEpisodesModal) {
+        return;
+      }
+      if (showOverlay) {
+        resetOverlayTimer();
+        if (focusedControlSection === 'bottom') {
+          setFocusedControlSection('top');
+          return;
+        }
+      }
+      if (!isVod && !showSideMenu) {
         handleZapNext();
       }
     },
@@ -800,7 +888,17 @@ export function PlayerScreen(): React.JSX.Element {
         handleDrawerArrowDown();
         return;
       }
-      if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal) {
+      if (showAudioModal || showSubtitleModal || showQualityModal || showEpisodesModal) {
+        return;
+      }
+      if (showOverlay && !isEmbed) {
+        resetOverlayTimer();
+        if (focusedControlSection === 'top') {
+          setFocusedControlSection('bottom');
+          return;
+        }
+      }
+      if (!isVod && !showSideMenu) {
         handleZapPrev();
       }
     },
@@ -809,7 +907,31 @@ export function PlayerScreen(): React.JSX.Element {
         handleDrawerArrowRight();
         return;
       }
-      if (!isVod && !showQualityModal && !showEpisodesModal) {
+      if (showAudioModal || showSubtitleModal || showQualityModal || showEpisodesModal) {
+        return;
+      }
+      // عند اختفاء الواجهة: تقديم 10 ثوانٍ مع OSD
+      if (!showOverlay) {
+        if (!isEmbed) {
+          const isLive = playbackState?.isLive || (playbackState?.duration ?? 0) <= 0;
+          if (!isLive) {
+            playerRef.current?.seekBy(10);
+            showOsd('+10 ثوانٍ', 'forward-10');
+            return;
+          }
+        }
+        return;
+      }
+      resetOverlayTimer();
+      // عند ظهور الواجهة والشريط السفلي محدد
+      if (focusedControlSection === 'bottom' && !isEmbed) {
+        const curIdx = bottomControlOrder.indexOf(focusedBottomTarget);
+        if (curIdx >= 0 && curIdx < bottomControlOrder.length - 1) {
+          setFocusedBottomTarget(bottomControlOrder[curIdx + 1]);
+        }
+        return;
+      }
+      if (!isVod) {
         const curIdx = activeChannelListRef.current.findIndex((c) => c.id === effectiveChannelId);
         setFocusedDrawerChannelIndex(curIdx >= 0 ? curIdx : 0);
         setSideMenuLevel('channels');
@@ -821,13 +943,79 @@ export function PlayerScreen(): React.JSX.Element {
         handleDrawerArrowLeft();
         return;
       }
+      if (showAudioModal || showSubtitleModal || showQualityModal || showEpisodesModal) {
+        return;
+      }
+      // عند اختفاء الواجهة: تأخير 10 ثوانٍ مع OSD
+      if (!showOverlay) {
+        if (!isEmbed) {
+          const isLive = playbackState?.isLive || (playbackState?.duration ?? 0) <= 0;
+          if (!isLive) {
+            playerRef.current?.seekBy(-10);
+            showOsd('-10 ثوانٍ', 'replay-10');
+            return;
+          }
+        }
+        return;
+      }
+      resetOverlayTimer();
+      // عند ظهور الواجهة والشريط السفلي محدد
+      if (focusedControlSection === 'bottom' && !isEmbed) {
+        const curIdx = bottomControlOrder.indexOf(focusedBottomTarget);
+        if (curIdx > 0) {
+          setFocusedBottomTarget(bottomControlOrder[curIdx - 1]);
+        }
+        return;
+      }
     },
     onEnter: () => {
       if (showSideMenu && !isVod) {
         handleDrawerEnter();
         return;
       }
-      if (!isVod && !showSideMenu && !showQualityModal && !showEpisodesModal) {
+      if (showAudioModal || showSubtitleModal || showQualityModal || showEpisodesModal) {
+        return;
+      }
+      // إذا كانت الواجهة مخفية: إظهارها أو تبديل التشغيل
+      if (!showOverlay) {
+        setShowOverlay(true);
+        resetOverlayTimer();
+        return;
+      }
+      resetOverlayTimer();
+      // إذا كان التركيز في القسم السفلي
+      if (focusedControlSection === 'bottom' && !isEmbed) {
+        switch (focusedBottomTarget) {
+          case 'seekbar':
+            // ضغط زر OK على شريط التقدم يقدم 10 ثوانٍ
+            playerRef.current?.seekBy(10);
+            showOsd('+10 ثوانٍ', 'forward-10');
+            break;
+          case 'playPause':
+            playerRef.current?.togglePlayPause();
+            showOsd(playbackState?.isPlaying ? 'إيقاف مؤقت' : 'تشغيل', playbackState?.isPlaying ? 'pause' : 'play-arrow');
+            break;
+          case 'rewind':
+            playerRef.current?.seekBy(-10);
+            showOsd('-10 ثوانٍ', 'replay-10');
+            break;
+          case 'forward':
+            playerRef.current?.seekBy(10);
+            showOsd('+10 ثوانٍ', 'forward-10');
+            break;
+          case 'audio':
+            setShowAudioModal(true);
+            break;
+          case 'subtitles':
+            setShowSubtitleModal(true);
+            break;
+          case 'aspectRatio':
+            handleToggleAspectRatio();
+            break;
+        }
+        return;
+      }
+      if (!isVod && !showSideMenu) {
         const curIdx = activeChannelListRef.current.findIndex((c) => c.id === effectiveChannelId);
         setFocusedDrawerChannelIndex(curIdx >= 0 ? curIdx : 0);
         setSideMenuLevel('channels');
@@ -877,10 +1065,13 @@ export function PlayerScreen(): React.JSX.Element {
       {/* 1. مشغل الفيديو HLS */}
       {currentStreamUrl && !playbackError ? (
         <TVPlayer
+          ref={playerRef}
           key={`tv-player-${retryKey}-${activeSourceIndex}`}
           streamUrl={currentStreamUrl}
+          contentFit={contentFit}
           selectedLevel={selectedHlsLevel}
           onLevelsLoaded={(levels) => setHlsLevels(levels)}
+          onPlaybackStateChange={(state) => setPlaybackState(state)}
           style={StyleSheet.absoluteFillObject}
           onBuffering={(buffering) => setIsBuffering(buffering)}
           onError={handlePlayerError}
@@ -1408,6 +1599,241 @@ export function PlayerScreen(): React.JSX.Element {
         </View>
       )}
 
+      {/* 4.ج. نافذة اختيار مسار الصوت وكتم الصوت (Audio Tracks Modal) */}
+      {showAudioModal && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalTitleRow}>
+                <MaterialIcons name="volume-up" size={24} color="#38bdf8" />
+                <Text style={styles.modalTitle}>إعدادات الصوت ومسارات البث</Text>
+              </View>
+              <Text style={styles.modalSub}>{channelTitle}</Text>
+            </View>
+
+            <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
+              {/* خيار كتم / رفع الصوت */}
+              <View style={styles.modalSection}>
+                <Text style={styles.sectionHeader}>حالة الصوت:</Text>
+                <Pressable
+                  hasTVPreferredFocus={true}
+                  onPress={() => {
+                    playerRef.current?.toggleMute();
+                    resetOverlayTimer();
+                  }}
+                  style={({ focused }) => [
+                    styles.optionChip,
+                    playbackState?.isMuted && styles.optionChipActive,
+                    focused && styles.optionChipFocused,
+                  ]}
+                >
+                  {({ focused }) => (
+                    <View style={styles.optionContent}>
+                      <MaterialIcons
+                        name={playbackState?.isMuted ? 'volume-off' : 'volume-up'}
+                        size={20}
+                        color={focused ? '#000000' : playbackState?.isMuted ? '#ef4444' : '#10b981'}
+                      />
+                      <Text
+                        style={[
+                          styles.optionText,
+                          playbackState?.isMuted && styles.optionTextActive,
+                          focused && styles.optionTextFocused,
+                        ]}
+                      >
+                        {playbackState?.isMuted ? 'الصوت مكتوم (اضغط لإلغاء الكتم)' : 'الصوت مفعل (اضغط للكتم)'}
+                      </Text>
+                    </View>
+                  )}
+                </Pressable>
+              </View>
+
+              {/* قائمة المسارات الصوتية */}
+              <View style={styles.modalSection}>
+                <Text style={styles.sectionHeader}>المسارات الصوتية المتوفرة:</Text>
+                {playbackState?.audioTracks && playbackState.audioTracks.length > 0 ? (
+                  <View style={styles.optionsWrap}>
+                    {playbackState.audioTracks.map((trk) => {
+                      const isCurrentTrack = trk.id === playbackState.selectedAudioTrackId;
+                      return (
+                        <Pressable
+                          key={`audio-trk-${trk.id}`}
+                          onPress={() => {
+                            playerRef.current?.selectAudioTrack(trk.id);
+                            setShowAudioModal(false);
+                            resetOverlayTimer();
+                            showOsd(`تم اختيار: ${trk.label}`, 'volume-up');
+                          }}
+                          style={({ focused }) => [
+                            styles.optionChip,
+                            isCurrentTrack && styles.optionChipActive,
+                            focused && styles.optionChipFocused,
+                          ]}
+                        >
+                          {({ focused }) => (
+                            <View style={styles.optionContent}>
+                              {isCurrentTrack && (
+                                <MaterialIcons
+                                  name="check"
+                                  size={18}
+                                  color={focused ? '#000000' : '#38bdf8'}
+                                />
+                              )}
+                              <Text
+                                style={[
+                                  styles.optionText,
+                                  isCurrentTrack && styles.optionTextActive,
+                                  focused && styles.optionTextFocused,
+                                ]}
+                              >
+                                {trk.label} {trk.language ? `(${trk.language.toUpperCase()})` : ''}
+                              </Text>
+                            </View>
+                          )}
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                ) : (
+                  <Text style={{ color: '#94a3b8', fontSize: 13, marginTop: 4 }}>
+                    المسار الافتراضي فقط متاح لهذا البث
+                  </Text>
+                )}
+              </View>
+            </ScrollView>
+
+            <Pressable
+              onPress={() => setShowAudioModal(false)}
+              style={({ focused }) => [
+                styles.modalCloseBtn,
+                focused && styles.modalCloseBtnFocused,
+              ]}
+            >
+              <Text style={styles.modalCloseBtnText}>إغلاق</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      {/* 4.د. نافذة اختيار مسار الترجمة (Subtitles Modal) */}
+      {showSubtitleModal && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalTitleRow}>
+                <MaterialIcons name="subtitles" size={24} color="#38bdf8" />
+                <Text style={styles.modalTitle}>إعدادات الترجمة (Subtitles)</Text>
+              </View>
+              <Text style={styles.modalSub}>{channelTitle}</Text>
+            </View>
+
+            <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
+              <View style={styles.modalSection}>
+                <Text style={styles.sectionHeader}>خيارات الترجمة:</Text>
+                <View style={styles.optionsWrap}>
+                  {/* خيار إيقاف الترجمة */}
+                  <Pressable
+                    hasTVPreferredFocus={playbackState?.selectedSubtitleTrackId === null}
+                    onPress={() => {
+                      playerRef.current?.selectSubtitleTrack(null);
+                      setShowSubtitleModal(false);
+                      resetOverlayTimer();
+                      showOsd('تم إيقاف الترجمة', 'subtitles-off');
+                    }}
+                    style={({ focused }) => [
+                      styles.optionChip,
+                      playbackState?.selectedSubtitleTrackId === null && styles.optionChipActive,
+                      focused && styles.optionChipFocused,
+                    ]}
+                  >
+                    {({ focused }) => (
+                      <View style={styles.optionContent}>
+                        {playbackState?.selectedSubtitleTrackId === null && (
+                          <MaterialIcons
+                            name="check"
+                            size={18}
+                            color={focused ? '#000000' : '#38bdf8'}
+                          />
+                        )}
+                        <Text
+                          style={[
+                            styles.optionText,
+                            playbackState?.selectedSubtitleTrackId === null && styles.optionTextActive,
+                            focused && styles.optionTextFocused,
+                          ]}
+                        >
+                          إيقاف الترجمة (Off)
+                        </Text>
+                      </View>
+                    )}
+                  </Pressable>
+
+                  {/* قائمة مسارات الترجمة المتوفرة */}
+                  {playbackState?.subtitleTracks && playbackState.subtitleTracks.length > 0 ? (
+                    playbackState.subtitleTracks.map((trk) => {
+                      const isCurrentTrack = trk.id === playbackState.selectedSubtitleTrackId;
+                      return (
+                        <Pressable
+                          key={`sub-trk-${trk.id}`}
+                          onPress={() => {
+                            playerRef.current?.selectSubtitleTrack(trk.id);
+                            setShowSubtitleModal(false);
+                            resetOverlayTimer();
+                            showOsd(`تم تفعيل: ${trk.label}`, 'subtitles');
+                          }}
+                          style={({ focused }) => [
+                            styles.optionChip,
+                            isCurrentTrack && styles.optionChipActive,
+                            focused && styles.optionChipFocused,
+                          ]}
+                        >
+                          {({ focused }) => (
+                            <View style={styles.optionContent}>
+                              {isCurrentTrack && (
+                                <MaterialIcons
+                                  name="check"
+                                  size={18}
+                                  color={focused ? '#000000' : '#38bdf8'}
+                                />
+                              )}
+                              <Text
+                                style={[
+                                  styles.optionText,
+                                  isCurrentTrack && styles.optionTextActive,
+                                  focused && styles.optionTextFocused,
+                                ]}
+                              >
+                                {trk.label} {trk.language ? `(${trk.language.toUpperCase()})` : ''}
+                              </Text>
+                            </View>
+                          )}
+                        </Pressable>
+                      );
+                    })
+                  ) : null}
+                </View>
+
+                {(!playbackState?.subtitleTracks || playbackState.subtitleTracks.length === 0) && (
+                  <Text style={{ color: '#94a3b8', fontSize: 13, marginTop: 12 }}>
+                    لا توجد مسارات ترجمة مدمجة مع هذا الفيديو
+                  </Text>
+                )}
+              </View>
+            </ScrollView>
+
+            <Pressable
+              onPress={() => setShowSubtitleModal(false)}
+              style={({ focused }) => [
+                styles.modalCloseBtn,
+                focused && styles.modalCloseBtnFocused,
+              ]}
+            >
+              <Text style={styles.modalCloseBtnText}>إغلاق</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
       {/* إشعار الانتقال التلقائي للمصدر التالي */}
       {switchToast && (
         <View style={styles.switchToastBadge} pointerEvents="none">
@@ -1722,6 +2148,50 @@ export function PlayerScreen(): React.JSX.Element {
               </Text>
             </View>
           </View>
+        </View>
+      )}
+
+      {/* 7. شريط التحكم السفلي المخصص لريموت التلفاز واللمس */}
+      <TVPlayerControls
+        visible={showOverlay && !playbackError && !showSideMenu}
+        isEmbed={isEmbed}
+        playbackState={playbackState}
+        focusedTarget={focusedControlSection === 'bottom' ? focusedBottomTarget : null}
+        contentFit={contentFit}
+        onPlayPause={() => {
+          playerRef.current?.togglePlayPause();
+          showOsd(playbackState?.isPlaying ? 'إيقاف مؤقت' : 'تشغيل', playbackState?.isPlaying ? 'pause' : 'play-arrow');
+        }}
+        onSeekTo={(secs) => {
+          playerRef.current?.seekTo(secs);
+          showOsd(`الانتقال إلى: ${formatVideoTime(secs)}`, 'fast-forward');
+        }}
+        onSeekBy={(secs) => {
+          playerRef.current?.seekBy(secs);
+          showOsd(secs > 0 ? `+${secs} ثوانٍ` : `${secs} ثوانٍ`, secs > 0 ? 'forward-10' : 'replay-10');
+        }}
+        onOpenAudioModal={() => {
+          setShowAudioModal(true);
+        }}
+        onOpenSubtitleModal={() => {
+          setShowSubtitleModal(true);
+        }}
+        onToggleAspectRatio={handleToggleAspectRatio}
+        onInteraction={resetOverlayTimer}
+      />
+
+      {/* 8. إشعار OSD السريع عند التقديم والتأخير وتغيير الصوت والحجم */}
+      {osdToast && (
+        <View style={styles.osdContainer} pointerEvents="none">
+          {osdToast.icon && (
+            <MaterialIcons
+              name={osdToast.icon as any}
+              size={28}
+              color="#38bdf8"
+              style={{ marginBottom: 4 }}
+            />
+          )}
+          <Text style={styles.osdText}>{osdToast.message}</Text>
         </View>
       )}
     </View>
@@ -2327,6 +2797,30 @@ const styles = StyleSheet.create({
     height: 6,
     borderRadius: 3,
     backgroundColor: '#10b981',
+  },
+  osdContainer: {
+    position: 'absolute',
+    top: '40%',
+    alignSelf: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+    borderWidth: 1.5,
+    borderColor: '#38bdf8',
+    borderRadius: 20,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 100,
+    shadowColor: '#38bdf8',
+    shadowOpacity: 0.8,
+    shadowRadius: 16,
+    elevation: 20,
+  },
+  osdText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '800',
+    textAlign: 'center',
   },
   textFocused: {
     color: '#38bdf8',
