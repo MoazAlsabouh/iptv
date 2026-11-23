@@ -48,12 +48,15 @@ export default function SimulatedChannelsScreen(): React.JSX.Element {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [focusedIndex, setFocusedIndex] = useState<number>(0);
   const [focusedPane, setFocusedPane] = useState<'categories' | 'channels'>('channels');
-  const [tickerTime, setTickerTime] = useState<number>(Date.now());
+  const [hasMounted, setHasMounted] = useState<boolean>(false);
+  const [tickerTime, setTickerTime] = useState<number>(0);
 
   const setIsSidebarFocused = useAppStore((state) => state.setIsSidebarFocused);
 
-  // تحديث دوري كل 15 ثانية لمزامنة بيانات "يعرض الآن"
+  // حماية الترطيب (Hydration Safe): تجنب قراءة Date.now() في خادم الـ SSR
   useEffect(() => {
+    setHasMounted(true);
+    setTickerTime(Date.now());
     const timer = setInterval(() => {
       setTickerTime(Date.now());
     }, 15000);
@@ -269,8 +272,8 @@ export default function SimulatedChannelsScreen(): React.JSX.Element {
           >
             {filteredChannels.map((channel, index) => {
               const isFocused = focusedPane === 'channels' && focusedIndex === index;
-              const livePos = getVirtualLivePosition(channel.episodes);
-              const currentEp = livePos.currentEpisode;
+              const livePos = hasMounted ? getVirtualLivePosition(channel.episodes) : null;
+              const currentEp = livePos?.currentEpisode;
 
               return (
                 <Pressable
@@ -317,7 +320,7 @@ export default function SimulatedChannelsScreen(): React.JSX.Element {
                       <Text style={styles.nowPlayingLabel}>يعرض الآن:</Text>
                     </View>
                     <Text style={styles.nowPlayingTitle} numberOfLines={1}>
-                      {currentEp ? currentEp.title : 'بث متواصل'}
+                      {hasMounted && currentEp ? currentEp.title : 'بث متواصل 24/7'}
                     </Text>
                   </View>
 

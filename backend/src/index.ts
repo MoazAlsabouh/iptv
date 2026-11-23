@@ -5845,48 +5845,50 @@ async function fetchPlaylistViaApi(playlistId: string, apiKey: string): Promise<
   return episodes;
 }
 
-async function fetchPlaylistViaScraping(playlistId: string): Promise<Array<{ title: string; youtubeId: string; duration: number }>> {
-  const episodes: Array<{ title: string; youtubeId: string; duration: number }> = [];
-  const url = `https://www.youtube.com/playlist?list=${encodeURIComponent(playlistId)}`;
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept-Language': 'ar,en-US;q=0.9,en;q=0.8',
-    },
-  });
+function extractVideosFromYouTubeObject(
+  obj: any,
+  episodes: Array<{ title: string; youtubeId: string; duration: number }>,
+  seenIds: Set<string> = new Set()
+): void {
+  if (!obj || typeof obj !== 'object') return;
 
-  if (!res.ok) {
-    return episodes;
-  }
-
-  const html = await res.text();
-
-  let ytData: any = null;
-  const jsonMatch = html.match(/var ytInitialData\s*=\s*({.+?});<\/script>/s) || html.match(/ytInitialData\s*=\s*({.+?});/s);
-  if (jsonMatch && jsonMatch[1]) {
-    try {
-      ytData = JSON.parse(jsonMatch[1]);
-    } catch {}
-  }
-
-  if (ytData) {
-    const findVideoRenderers = (obj: any, results: any[] = []) => {
-      if (!obj || typeof obj !== 'object') return results;
-      if (obj.playlistVideoRenderer) {
-        results.push(obj.playlistVideoRenderer);
-      }
-      for (const key of Object.keys(obj)) {
-        if (typeof obj[key] === 'object') {
-          findVideoRenderers(obj[key], results);
+  // 1. دعم نمط lockupViewModel الحديث (YouTube 2024-2026)
+  if (obj.lockupViewModel && obj.lockupViewModel.contentId) {
+    const l = obj.lockupViewModel;
+    const vid = String(l.contentId).trim();
+    if (vid && !seenIds.has(vid)) {
+      seenIds.add(vid);
+      const title =
+        l.metadata?.lockupMetadataViewModel?.title?.content ||
+        l.rendererContext?.accessibilityContext?.label ||
+        'حلقة مسلسل';
+      let dur = 2400;
+      const overlays = l.contentImage?.thumbnailViewModel?.overlays;
+      if (Array.isArray(overlays)) {
+        for (const ov of overlays) {
+          const badges = ov?.thumbnailBottomOverlayViewModel?.badges;
+          if (Array.isArray(badges)) {
+            for (const b of badges) {
+              const text = b?.thumbnailBadgeViewModel?.text;
+              if (text && typeof text === 'string') {
+                dur = parseTimeStringToSeconds(text);
+                break;
+              }
+            }
+          }
         }
       }
-      return results;
-    };
+      episodes.push({ title, youtubeId: vid, duration: dur });
+    }
+  }
 
-    const renderers = findVideoRenderers(ytData);
-    for (const r of renderers) {
-      const vid = r.videoId;
-      const title = r.title?.runs?.[0]?.text || r.title?.simpleText || '';
+  // 2. دعم نمط playlistVideoRenderer الكلاسيكي
+  if (obj.playlistVideoRenderer && obj.playlistVideoRenderer.videoId) {
+    const r = obj.playlistVideoRenderer;
+    const vid = String(r.videoId).trim();
+    if (vid && !seenIds.has(vid)) {
+      seenIds.add(vid);
+      const title = r.title?.runs?.[0]?.text || r.title?.simpleText || 'حلقة';
       let dur = 2400;
       if (r.lengthSeconds) {
         dur = parseInt(r.lengthSeconds, 10) || 2400;
@@ -5895,26 +5897,133 @@ async function fetchPlaylistViaScraping(playlistId: string): Promise<Array<{ tit
       } else if (r.lengthText?.runs?.[0]?.text) {
         dur = parseTimeStringToSeconds(r.lengthText.runs[0].text);
       }
-      if (vid && title) {
-        episodes.push({
-          title,
-          youtubeId: vid,
-          duration: dur,
-        });
-      }
+      episodes.push({ title, youtubeId: vid, duration: dur });
     }
   }
 
-  if (episodes.length === 0) {
-    const rx = /"playlistVideoRenderer":\{"videoId":"([^"]+)".*?"title":\{"runs":\[\{"text":"([^"]+)".*?"lengthSeconds":"(\d+)"/g;
-    let m;
-    while ((m = rx.exec(html)) !== null) {
-      const vid = m[1];
-      const title = m[2];
-      const dur = parseInt(m[3], 10) || 2400;
-      if (vid && title) {
-        episodes.push({ title, youtubeId: vid, duration: dur });
+  // 3. دعم نمط compactVideoRenderer و gridVideoRenderer
+  if (obj.compactVideoRenderer && obj.compactVideoRenderer.videoId) {
+    const r = obj.compactVideoRenderer;
+    const vid = String(r.videoId).trim();
+    if (vid && !seenIds.has(vid)) {
+      seenIds.add(vid);
+      const title = r.title?.runs?.[0]?.text || r.title?.simpleText || 'فيديو';
+      const dur = r.lengthText?.simpleText ? parseTimeStringToSeconds(r.lengthText.simpleText) : 2400;
+      episodes.push({ title, youtubeId: vid, duration: dur });
+    }
+  }
+
+  // تكرار متداخل لكافة الكائنات
+  for (const k of Object.keys(obj)) {
+    if (typeof obj[k] === 'object') {
+      extractVideosFromYouTubeObject(obj[k], episodes, seenIds);
+    }
+  }
+}
+
+async function fetchPlaylistViaInnertube(playlistId: string): Promise<Array<{ title: string; youtubeId: string; duration: number }>> {
+  const episodes: Array<{ title: string; youtubeId: string; duration: number }> = [];
+  try {
+    const cleanId = playlistId.replace(/^VL/, '');
+    const browseId = `VL${cleanId}`;
+    const res = await fetch('https://www.youtube.com/youtubei/v1/browse?prettyPrint=false', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'X-YouTube-Client-Name': '1',
+        'X-YouTube-Client-Version': '2.20240101.00.00',
+        'Accept-Language': 'ar,en-US;q=0.9,en;q=0.8',
+      },
+      body: JSON.stringify({
+        context: {
+          client: {
+            clientName: 'WEB',
+            clientVersion: '2.20240101.00.00',
+            hl: 'ar',
+            gl: 'EG',
+            utcOffsetMinutes: 0,
+          },
+        },
+        browseId,
+      }),
+    });
+
+    if (res.ok) {
+      const data = (await res.json()) as any;
+      extractVideosFromYouTubeObject(data, episodes);
+    }
+  } catch (err) {
+    console.warn('[YouTube Innertube] Request failed:', err);
+  }
+  return episodes;
+}
+
+async function fetchPlaylistViaScraping(playlistId: string): Promise<Array<{ title: string; youtubeId: string; duration: number }>> {
+  const episodes: Array<{ title: string; youtubeId: string; duration: number }> = [];
+  const cleanId = playlistId.replace(/^VL/, '');
+  const url = `https://www.youtube.com/playlist?list=${encodeURIComponent(cleanId)}`;
+
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'ar,en-US;q=0.9,en;q=0.8',
+        'Cookie': 'CONSENT=YES+cb.20210328-17-p0.en+FX+478; SOCS=CAESEwgDEgk1Nzc0MjY2Mzg4; PREF=tz=UTC&f6=400',
+      },
+    });
+
+    if (res.ok) {
+      const html = await res.text();
+      let ytData: any = null;
+
+      const startIdx = html.indexOf('ytInitialData = ');
+      if (startIdx !== -1) {
+        const jsonStart = startIdx + 'ytInitialData = '.length;
+        const scriptEnd = html.indexOf(';</script>', jsonStart);
+        if (scriptEnd !== -1) {
+          try {
+            ytData = JSON.parse(html.substring(jsonStart, scriptEnd));
+          } catch {}
+        }
       }
+
+      if (!ytData) {
+        const jsonMatch = html.match(/ytInitialData\s*=\s*({.+?});<\/script>/s);
+        if (jsonMatch && jsonMatch[1]) {
+          try {
+            ytData = JSON.parse(jsonMatch[1]);
+          } catch {}
+        }
+      }
+
+      if (ytData) {
+        extractVideosFromYouTubeObject(ytData, episodes);
+      }
+
+      // مطابقة بديلة بالـ Regex في حال تعذر قراءة الكائن كاملاً
+      if (episodes.length === 0) {
+        const rx = /"playlistVideoRenderer":\{"videoId":"([^"]+)".*?"title":\{"runs":\[\{"text":"([^"]+)".*?"lengthSeconds":"(\d+)"/g;
+        let m;
+        while ((m = rx.exec(html)) !== null) {
+          const vid = m[1];
+          const title = m[2];
+          const dur = parseInt(m[3], 10) || 2400;
+          if (vid && title && !episodes.some((e) => e.youtubeId === vid)) {
+            episodes.push({ title, youtubeId: vid, duration: dur });
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[YouTube Scraping] HTML extraction failed:', err);
+  }
+
+  // في حال فشل سحب صفحة الـ HTML، ننتقل فوراً لواجهة YouTube Innertube
+  if (episodes.length === 0) {
+    const itEpisodes = await fetchPlaylistViaInnertube(cleanId);
+    if (itEpisodes.length > 0) {
+      return itEpisodes;
     }
   }
 
@@ -5941,7 +6050,7 @@ async function handleAdminImportYouTubePlaylist(request: Request, env: Env): Pro
 
     let episodes: Array<{ title: string; youtubeId: string; duration: number }> = [];
 
-    // 1. فحص توفر مفتاح YouTube API
+    // 1. فحص توفر مفتاح YouTube Data API الرسمي
     if (env.YOUTUBE_API_KEY) {
       try {
         episodes = await fetchPlaylistViaApi(playlistId, env.YOUTUBE_API_KEY);
@@ -5950,16 +6059,16 @@ async function handleAdminImportYouTubePlaylist(request: Request, env: Env): Pro
       }
     }
 
-    // 2. البديل المجاني التلقائي عبر فحص صفحة القائمة
+    // 2. البديل المجاني التلقائي عبر الفحص والـ Innertube
     if (episodes.length === 0) {
       episodes = await fetchPlaylistViaScraping(playlistId);
     }
 
     if (episodes.length === 0) {
       return jsonResponse({
-        error: 'لم يتم العثور على أي حلقات في قائمة التشغيل. تأكد من أن القائمة عامة (Public) وليست خاصة (Private).',
+        error: 'لم يتم العثور على أي حلقات في قائمة التشغيل. تأكد من أن الرابط صحيح، وأن القائمة عامة (Public) وليست خاصة (Private) أو محذوفة.',
         episodes: [],
-      }, 404);
+      }, 400);
     }
 
     return jsonResponse({
@@ -5969,13 +6078,15 @@ async function handleAdminImportYouTubePlaylist(request: Request, env: Env): Pro
       episodes,
     });
   } catch (err: any) {
-    return jsonResponse({ error: err?.message || 'حدث خطأ أثناء استيراد قائمة التشغيل' }, 500);
+    return jsonResponse({ error: err?.message || 'حدث خطأ أثناء استيراد قائمة التشغيل' }, 502);
   }
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    const rawPath = url.pathname;
+    const cleanPath = rawPath.length > 1 && rawPath.endsWith('/') ? rawPath.slice(0, -1) : rawPath;
 
     // معالجة طلبات الأمان (CORS Preflight)
     if (request.method === 'OPTIONS') {
@@ -6145,50 +6256,85 @@ export default {
     // ==========================================
     // مسارات سلاسل وباقات القنوات (Networks)
     // ==========================================
-    if (url.pathname === '/api/admin/networks' && request.method === 'GET') {
+    if ((cleanPath === '/api/admin/networks' || url.pathname === '/api/admin/networks') && request.method === 'GET') {
       return handleAdminGetNetworks(request, env);
     }
-    if (url.pathname === '/api/admin/networks' && request.method === 'POST') {
+    if ((cleanPath === '/api/admin/networks' || url.pathname === '/api/admin/networks') && request.method === 'POST') {
       return handleAdminSaveNetwork(request, env);
     }
-    if (url.pathname === '/api/admin/networks/reorder' && request.method === 'POST') {
+    if ((cleanPath === '/api/admin/networks/reorder' || url.pathname === '/api/admin/networks/reorder') && request.method === 'POST') {
       return handleAdminReorderNetworks(request, env);
     }
-    if (url.pathname.startsWith('/api/admin/networks/')) {
-      const idParam = decodeURIComponent(url.pathname.substring('/api/admin/networks/'.length));
-      if (request.method === 'PUT' || request.method === 'POST') {
-        return handleAdminSaveNetwork(request, env, idParam);
-      }
-      if (request.method === 'DELETE') {
-        return handleAdminDeleteNetwork(request, env, idParam);
+    if (url.pathname.startsWith('/api/admin/networks/') || cleanPath.startsWith('/api/admin/networks/')) {
+      const prefix = '/api/admin/networks/';
+      const rawSub = url.pathname.startsWith(prefix) ? url.pathname.substring(prefix.length) : cleanPath.substring(prefix.length);
+      const idParam = decodeURIComponent(rawSub).trim();
+      if (idParam) {
+        if (request.method === 'PUT' || request.method === 'POST') {
+          return handleAdminSaveNetwork(request, env, idParam);
+        }
+        if (request.method === 'DELETE') {
+          return handleAdminDeleteNetwork(request, env, idParam);
+        }
+      } else {
+        if (request.method === 'GET') {
+          return handleAdminGetNetworks(request, env);
+        }
+        if (request.method === 'POST') {
+          return handleAdminSaveNetwork(request, env);
+        }
       }
     }
-    if (url.pathname === '/api/networks' && request.method === 'GET') {
+    if ((cleanPath === '/api/networks' || url.pathname === '/api/networks') && request.method === 'GET') {
       return handleGetPublicNetworks(env);
     }
 
     // ==========================================
     // مسارات قنوات بث المسلسلات 24/7 (Simulated Live TV)
     // ==========================================
-    if (url.pathname === '/api/admin/simulated-channels' && request.method === 'GET') {
+    if (
+      (cleanPath === '/api/admin/simulated-channels' || url.pathname === '/api/admin/simulated-channels') &&
+      request.method === 'GET'
+    ) {
       return handleAdminGetSimulatedChannels(request, env);
     }
-    if (url.pathname === '/api/admin/simulated-channels' && request.method === 'POST') {
+    if (
+      (cleanPath === '/api/admin/simulated-channels' || url.pathname === '/api/admin/simulated-channels') &&
+      request.method === 'POST'
+    ) {
       return handleAdminSaveSimulatedChannel(request, env);
     }
-    if (url.pathname.startsWith('/api/admin/simulated-channels/')) {
-      const idParam = decodeURIComponent(url.pathname.substring('/api/admin/simulated-channels/'.length));
-      if (request.method === 'PUT' || request.method === 'POST') {
-        return handleAdminSaveSimulatedChannel(request, env, idParam);
-      }
-      if (request.method === 'DELETE') {
-        return handleAdminDeleteSimulatedChannel(request, env, idParam);
+    if (url.pathname.startsWith('/api/admin/simulated-channels/') || cleanPath.startsWith('/api/admin/simulated-channels/')) {
+      const prefix = '/api/admin/simulated-channels/';
+      const rawSub = url.pathname.startsWith(prefix) ? url.pathname.substring(prefix.length) : cleanPath.substring(prefix.length);
+      const idParam = decodeURIComponent(rawSub).trim();
+      if (idParam) {
+        if (request.method === 'PUT' || request.method === 'POST') {
+          return handleAdminSaveSimulatedChannel(request, env, idParam);
+        }
+        if (request.method === 'DELETE') {
+          return handleAdminDeleteSimulatedChannel(request, env, idParam);
+        }
+      } else {
+        // تم طلب المسار مع شرطة مائلة زائدة (/api/admin/simulated-channels/)
+        if (request.method === 'GET') {
+          return handleAdminGetSimulatedChannels(request, env);
+        }
+        if (request.method === 'POST') {
+          return handleAdminSaveSimulatedChannel(request, env);
+        }
       }
     }
-    if (url.pathname === '/api/simulated-channels' && request.method === 'GET') {
+    if (
+      (cleanPath === '/api/simulated-channels' || url.pathname === '/api/simulated-channels') &&
+      request.method === 'GET'
+    ) {
       return handleGetPublicSimulatedChannels(env);
     }
-    if (url.pathname === '/api/admin/youtube/playlist' && request.method === 'POST') {
+    if (
+      (cleanPath === '/api/admin/youtube/playlist' || url.pathname === '/api/admin/youtube/playlist') &&
+      request.method === 'POST'
+    ) {
       return handleAdminImportYouTubePlaylist(request, env);
     }
 
