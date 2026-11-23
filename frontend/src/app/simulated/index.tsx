@@ -11,7 +11,6 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
-import { MainLayout } from '../../components/layout/MainLayout';
 import { ChannelLogo } from '../../components/ChannelLogo';
 import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 import { useAppStore } from '../../store/useAppStore';
@@ -83,20 +82,24 @@ export default function SimulatedChannelsScreen(): React.JSX.Element {
     fetchChannels();
   }, [fetchChannels]);
 
+  // تجميع التصنيفات ديناميكياً من القنوات المضافة فعلياً (بما فيها أي تصنيف مخصص "آخر")
+  const dynamicCategories = useMemo(() => {
+    const set = new Set<string>();
+    channels.forEach((ch) => {
+      const cat = ch.category?.trim();
+      if (cat) set.add(cat);
+    });
+    const unique = Array.from(set);
+    return [
+      { id: 'all', title: 'الكل' },
+      ...unique.map((cat) => ({ id: cat, title: cat })),
+    ];
+  }, [channels]);
+
   // تصفية القنوات حسب التصنيف
   const filteredChannels = useMemo(() => {
     if (selectedCategory === 'all') return channels;
-    return channels.filter((ch) => {
-      const cat = (ch.category || '').toLowerCase();
-      if (selectedCategory === 'comedy') return cat.includes('كوميد');
-      if (selectedCategory === 'drama') return cat.includes('درام');
-      if (selectedCategory === 'historical') return cat.includes('تاريخ');
-      if (selectedCategory === 'religious') return cat.includes('دين') || cat.includes('إسلام');
-      if (selectedCategory === 'animation') return cat.includes('كرتون') || cat.includes('أنيم');
-      if (selectedCategory === 'documentary') return cat.includes('وثائق');
-      if (selectedCategory === 'variety') return cat.includes('منوع');
-      return true;
-    });
+    return channels.filter((ch) => (ch.category?.trim() || '') === selectedCategory);
   }, [channels, selectedCategory]);
 
   const numColumns = useMemo(() => {
@@ -187,63 +190,62 @@ export default function SimulatedChannelsScreen(): React.JSX.Element {
   });
 
   return (
-    <MainLayout>
-      <View style={styles.container}>
-        {/* ترويسة الصفحة */}
-        <View style={styles.header}>
-          <View style={styles.headerTitleRow}>
-            <View style={styles.iconBadge}>
-              <MaterialIcons name="ondemand-video" size={26} color="#f59e0b" />
-            </View>
-            <View>
-              <View style={styles.titleWithBadge}>
-                <Text style={styles.title}>بث المسلسلات 24/7</Text>
-                <View style={styles.livePulseBadge}>
-                  <View style={styles.livePulseDot} />
-                  <Text style={styles.livePulseText}>مباشر 24 ساعة</Text>
-                </View>
+    <View style={styles.container}>
+      {/* ترويسة الصفحة */}
+      <View style={styles.header}>
+        <View style={styles.headerTitleRow}>
+          <View style={styles.iconBadge}>
+            <MaterialIcons name="ondemand-video" size={26} color="#f59e0b" />
+          </View>
+          <View>
+            <View style={styles.titleWithBadge}>
+              <Text style={styles.title}>بث المسلسلات 24/7</Text>
+              <View style={styles.livePulseBadge}>
+                <View style={styles.livePulseDot} />
+                <Text style={styles.livePulseText}>مباشر 24 ساعة</Text>
               </View>
-              <Text style={styles.subtitle}>
-                قنوات تبث مسلسلاتك المفضلة حلقة تلو الأخرى على مدار الساعة بدقة ومزامنة حية لحظية.
-              </Text>
             </View>
+            <Text style={styles.subtitle}>
+              قنوات تبث مسلسلاتك المفضلة حلقة تلو الأخرى على مدار الساعة بدقة ومزامنة حية لحظية.
+            </Text>
           </View>
         </View>
+      </View>
 
-        {/* شريط التصنيفات */}
-        <View style={styles.categoriesBar}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoriesContent}>
-            {CATEGORIES.map((cat, idx) => {
-              const isSelected = selectedCategory === cat.id;
-              const isFocused = focusedPane === 'categories' && selectedCategory === cat.id;
-              return (
-                <Pressable
-                  key={cat.id}
+      {/* شريط التصنيفات */}
+      <View style={styles.categoriesBar}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoriesContent}>
+          {dynamicCategories.map((cat, idx) => {
+            const isSelected = selectedCategory === cat.id;
+            const isFocused = focusedPane === 'categories' && selectedCategory === cat.id;
+            return (
+              <Pressable
+                key={cat.id}
+                style={[
+                  styles.categoryChip,
+                  isSelected && styles.categoryChipSelected,
+                  isFocused && styles.categoryChipFocused,
+                ]}
+                onPress={() => {
+                  setSelectedCategory(cat.id);
+                  setFocusedIndex(0);
+                  setFocusedPane('channels');
+                }}
+              >
+                <Text
                   style={[
-                    styles.categoryChip,
-                    isSelected && styles.categoryChipSelected,
-                    isFocused && styles.categoryChipFocused,
+                    styles.categoryChipText,
+                    isSelected && styles.categoryChipTextSelected,
+                    isFocused && styles.categoryChipTextFocused,
                   ]}
-                  onPress={() => {
-                    setSelectedCategory(cat.id);
-                    setFocusedIndex(0);
-                    setFocusedPane('channels');
-                  }}
                 >
-                  <Text
-                    style={[
-                      styles.categoryChipText,
-                      isSelected && styles.categoryChipTextSelected,
-                      isFocused && styles.categoryChipTextFocused,
-                    ]}
-                  >
-                    {cat.title}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-        </View>
+                  {cat.title}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </View>
 
         {/* محتوى القنوات */}
         {loading ? (
@@ -338,9 +340,8 @@ export default function SimulatedChannelsScreen(): React.JSX.Element {
           </ScrollView>
         )}
       </View>
-    </MainLayout>
-  );
-}
+    );
+  }
 
 const styles = StyleSheet.create({
   container: {

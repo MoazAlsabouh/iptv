@@ -37,6 +37,7 @@ export interface Env {
   ADMIN_EMAIL?: string;
   ADMIN_PASSWORD?: string;
   TMDB_API_KEY?: string;
+  YOUTUBE_API_KEY?: string;
   WYZIE_API_KEY?: string;
   OPENSUBTITLES_API_KEY?: string;
   LATEST_VERSION_CODE?: string | number;
@@ -5732,6 +5733,246 @@ async function handleGetPublicSimulatedChannels(env: Env): Promise<Response> {
   }
 }
 
+// ==========================================
+// استيراد حلقات قوائم تشغيل YouTube تلقائياً
+// ==========================================
+
+function extractYouTubePlaylistId(input: string): string {
+  if (!input) return '';
+  const trimmed = input.trim();
+  if (/^[a-zA-Z0-9_-]{10,}$/.test(trimmed) && !trimmed.includes('http') && !trimmed.includes('/')) {
+    return trimmed;
+  }
+  try {
+    const parsed = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`);
+    const list = parsed.searchParams.get('list');
+    if (list) return list;
+  } catch {}
+  const match = trimmed.match(/[?&]list=([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+  return trimmed;
+}
+
+function parseIso8601Duration(dur: string): number {
+  if (!dur) return 2400;
+  const match = dur.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+  if (!match) return 2400;
+  const hours = parseInt(match[1] || '0', 10);
+  const minutes = parseInt(match[2] || '0', 10);
+  const seconds = parseInt(match[3] || '0', 10);
+  const total = hours * 3600 + minutes * 60 + seconds;
+  return total > 0 ? total : 2400;
+}
+
+function parseTimeStringToSeconds(timeStr: string): number {
+  if (!timeStr) return 2400;
+  const parts = timeStr.trim().split(':').map((p) => parseInt(p, 10));
+  if (parts.some(isNaN)) return 2400;
+  if (parts.length === 3) {
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
+  if (parts.length === 2) {
+    return parts[0] * 60 + parts[1];
+  }
+  if (parts.length === 1) {
+    return parts[0];
+  }
+  return 2400;
+}
+
+async function fetchPlaylistViaApi(playlistId: string, apiKey: string): Promise<Array<{ title: string; youtubeId: string; duration: number }>> {
+  const episodes: Array<{ title: string; youtubeId: string; duration: number }> = [];
+  let pageToken = '';
+
+  for (let page = 0; page < 4; page++) {
+    const pageParam = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '';
+    const res = await fetch(
+      `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&maxResults=50&playlistId=${encodeURIComponent(playlistId)}${pageParam}&key=${encodeURIComponent(apiKey)}`
+    );
+    if (!res.ok) break;
+    const data = (await res.json()) as any;
+    if (!data.items || !Array.isArray(data.items) || data.items.length === 0) break;
+
+    const videoIds: string[] = [];
+    const itemMap = new Map<string, { title: string; youtubeId: string }>();
+
+    for (const item of data.items) {
+      const vid = item.contentDetails?.videoId || item.snippet?.resourceId?.videoId;
+      const title = item.snippet?.title || '';
+      if (vid && title && title !== 'Private video' && title !== 'Deleted video') {
+        videoIds.push(vid);
+        itemMap.set(vid, { title, youtubeId: vid });
+      }
+    }
+
+    if (videoIds.length > 0) {
+      const vidRes = await fetch(
+        `https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${videoIds.join(',')}&key=${encodeURIComponent(apiKey)}`
+      );
+      if (vidRes.ok) {
+        const vidData = (await vidRes.json()) as any;
+        const durationMap = new Map<string, number>();
+        if (vidData.items && Array.isArray(vidData.items)) {
+          for (const vItem of vidData.items) {
+            const d = parseIso8601Duration(vItem.contentDetails?.duration || '');
+            durationMap.set(vItem.id, d);
+          }
+        }
+        for (const vid of videoIds) {
+          const info = itemMap.get(vid);
+          if (info) {
+            episodes.push({
+              title: info.title,
+              youtubeId: info.youtubeId,
+              duration: durationMap.get(vid) || 2400,
+            });
+          }
+        }
+      } else {
+        for (const vid of videoIds) {
+          const info = itemMap.get(vid);
+          if (info) {
+            episodes.push({ title: info.title, youtubeId: info.youtubeId, duration: 2400 });
+          }
+        }
+      }
+    }
+
+    pageToken = data.nextPageToken;
+    if (!pageToken) break;
+  }
+
+  return episodes;
+}
+
+async function fetchPlaylistViaScraping(playlistId: string): Promise<Array<{ title: string; youtubeId: string; duration: number }>> {
+  const episodes: Array<{ title: string; youtubeId: string; duration: number }> = [];
+  const url = `https://www.youtube.com/playlist?list=${encodeURIComponent(playlistId)}`;
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept-Language': 'ar,en-US;q=0.9,en;q=0.8',
+    },
+  });
+
+  if (!res.ok) {
+    return episodes;
+  }
+
+  const html = await res.text();
+
+  let ytData: any = null;
+  const jsonMatch = html.match(/var ytInitialData\s*=\s*({.+?});<\/script>/s) || html.match(/ytInitialData\s*=\s*({.+?});/s);
+  if (jsonMatch && jsonMatch[1]) {
+    try {
+      ytData = JSON.parse(jsonMatch[1]);
+    } catch {}
+  }
+
+  if (ytData) {
+    const findVideoRenderers = (obj: any, results: any[] = []) => {
+      if (!obj || typeof obj !== 'object') return results;
+      if (obj.playlistVideoRenderer) {
+        results.push(obj.playlistVideoRenderer);
+      }
+      for (const key of Object.keys(obj)) {
+        if (typeof obj[key] === 'object') {
+          findVideoRenderers(obj[key], results);
+        }
+      }
+      return results;
+    };
+
+    const renderers = findVideoRenderers(ytData);
+    for (const r of renderers) {
+      const vid = r.videoId;
+      const title = r.title?.runs?.[0]?.text || r.title?.simpleText || '';
+      let dur = 2400;
+      if (r.lengthSeconds) {
+        dur = parseInt(r.lengthSeconds, 10) || 2400;
+      } else if (r.lengthText?.simpleText) {
+        dur = parseTimeStringToSeconds(r.lengthText.simpleText);
+      } else if (r.lengthText?.runs?.[0]?.text) {
+        dur = parseTimeStringToSeconds(r.lengthText.runs[0].text);
+      }
+      if (vid && title) {
+        episodes.push({
+          title,
+          youtubeId: vid,
+          duration: dur,
+        });
+      }
+    }
+  }
+
+  if (episodes.length === 0) {
+    const rx = /"playlistVideoRenderer":\{"videoId":"([^"]+)".*?"title":\{"runs":\[\{"text":"([^"]+)".*?"lengthSeconds":"(\d+)"/g;
+    let m;
+    while ((m = rx.exec(html)) !== null) {
+      const vid = m[1];
+      const title = m[2];
+      const dur = parseInt(m[3], 10) || 2400;
+      if (vid && title) {
+        episodes.push({ title, youtubeId: vid, duration: dur });
+      }
+    }
+  }
+
+  return episodes;
+}
+
+async function handleAdminImportYouTubePlaylist(request: Request, env: Env): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  try {
+    const body = (await request.json()) as any;
+    const input = String(body.playlistUrl || body.playlistId || '').trim();
+    if (!input) {
+      return jsonResponse({ error: 'يرجى تقديم رابط أو معرّف قائمة تشغيل يوتيوب' }, 400);
+    }
+
+    const playlistId = extractYouTubePlaylistId(input);
+    if (!playlistId) {
+      return jsonResponse({ error: 'تعذر استخراج معرّف قائمة التشغيل من الرابط المدخل' }, 400);
+    }
+
+    let episodes: Array<{ title: string; youtubeId: string; duration: number }> = [];
+
+    // 1. فحص توفر مفتاح YouTube API
+    if (env.YOUTUBE_API_KEY) {
+      try {
+        episodes = await fetchPlaylistViaApi(playlistId, env.YOUTUBE_API_KEY);
+      } catch (err) {
+        console.warn('[YouTube API] Failed to fetch via API, falling back to scraping:', err);
+      }
+    }
+
+    // 2. البديل المجاني التلقائي عبر فحص صفحة القائمة
+    if (episodes.length === 0) {
+      episodes = await fetchPlaylistViaScraping(playlistId);
+    }
+
+    if (episodes.length === 0) {
+      return jsonResponse({
+        error: 'لم يتم العثور على أي حلقات في قائمة التشغيل. تأكد من أن القائمة عامة (Public) وليست خاصة (Private).',
+        episodes: [],
+      }, 404);
+    }
+
+    return jsonResponse({
+      success: true,
+      playlistId,
+      count: episodes.length,
+      episodes,
+    });
+  } catch (err: any) {
+    return jsonResponse({ error: err?.message || 'حدث خطأ أثناء استيراد قائمة التشغيل' }, 500);
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -5946,6 +6187,9 @@ export default {
     }
     if (url.pathname === '/api/simulated-channels' && request.method === 'GET') {
       return handleGetPublicSimulatedChannels(env);
+    }
+    if (url.pathname === '/api/admin/youtube/playlist' && request.method === 'POST') {
+      return handleAdminImportYouTubePlaylist(request, env);
     }
 
     // 3. نقاط نهاية بوابة الموزعين (Reseller Portal)

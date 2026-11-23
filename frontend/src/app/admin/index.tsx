@@ -344,6 +344,9 @@ export default function AdminScreen(): React.JSX.Element {
   const [showSimulatedModal, setShowSimulatedModal] = useState<boolean>(false);
   const [savingSimulated, setSavingSimulated] = useState<boolean>(false);
   const [quickEpisodesText, setQuickEpisodesText] = useState<string>('');
+  const [isCustomCategoryMode, setIsCustomCategoryMode] = useState<boolean>(false);
+  const [playlistUrls, setPlaylistUrls] = useState<Record<number, string>>({});
+  const [importingPlaylistIdx, setImportingPlaylistIdx] = useState<number | null>(null);
   const [editingSimulated, setEditingSimulated] = useState<SimulatedChannelItem>({
     id: '',
     name: '',
@@ -1569,6 +1572,41 @@ export default function AdminScreen(): React.JSX.Element {
       }
     } catch {
       setStatusMessage('فشل حذف قناة المسلسلات');
+    }
+  };
+
+  const handleImportYouTubePlaylist = async (pIdx: number) => {
+    const rawUrl = playlistUrls[pIdx]?.trim();
+    if (!rawUrl) {
+      setStatusMessage('يرجى إدخال رابط أو معرّف قائمة تشغيل يوتيوب');
+      return;
+    }
+
+    setImportingPlaylistIdx(pIdx);
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/youtube/playlist`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ playlistUrl: rawUrl }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success && Array.isArray(data.episodes)) {
+        setEditingSimulated((prev) => {
+          const updated = [...(prev.playlists || [])];
+          if (updated[pIdx]) {
+            updated[pIdx].episodes = [...(updated[pIdx].episodes || []), ...data.episodes];
+          }
+          return { ...prev, playlists: updated };
+        });
+        setPlaylistUrls((prev) => ({ ...prev, [pIdx]: '' }));
+        setStatusMessage(`تم بنجاح سحب وإضافة ${data.episodes.length} حلقة إلى هذا الموسم!`);
+      } else {
+        setStatusMessage(data.error || 'فشل سحب الحلقات من قائمة التشغيل');
+      }
+    } catch {
+      setStatusMessage('حدث خطأ في الاتصال أثناء سحب قائمة التشغيل');
+    } finally {
+      setImportingPlaylistIdx(null);
     }
   };
 
@@ -4892,6 +4930,8 @@ export default function AdminScreen(): React.JSX.Element {
               <Pressable
                 style={[styles.addCustomChannelBtn, { backgroundColor: '#f59e0b' }]}
                 onPress={() => {
+                  setIsCustomCategoryMode(false);
+                  setPlaylistUrls({});
                   setEditingSimulated({
                     id: '',
                     name: '',
@@ -4966,6 +5006,9 @@ export default function AdminScreen(): React.JSX.Element {
                         <Pressable
                           style={styles.channelActionBtn}
                           onPress={() => {
+                            const PRESETS = ['دراما', 'كوميديا', 'تاريخي', 'إسلامي وديني', 'كرتون وأنيميشن', 'وثائقي', 'منوعات'];
+                            setIsCustomCategoryMode(!PRESETS.includes(ch.category || ''));
+                            setPlaylistUrls({});
                             setEditingSimulated({
                               ...ch,
                               playlists: ch.playlists || [
@@ -5945,33 +5988,68 @@ export default function AdminScreen(): React.JSX.Element {
               <View style={styles.modalFieldGroup}>
                 <Text style={styles.modalLabel}>التصنيف:</Text>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-                  {['دراما', 'كوميديا', 'تاريخي', 'إسلامي وديني', 'كرتون وأنيميشن', 'وثائقي', 'منوعات'].map((cat) => (
-                    <Pressable
-                      key={cat}
-                      style={[
-                        styles.streamTypeOption,
-                        editingSimulated.category === cat && styles.streamTypeOptionActive,
-                      ]}
-                      onPress={() => setEditingSimulated((p) => ({ ...p, category: cat }))}
-                    >
-                      <Text
+                  {['دراما', 'كوميديا', 'تاريخي', 'إسلامي وديني', 'كرتون وأنيميشن', 'وثائقي', 'منوعات'].map((cat) => {
+                    const isSelected = !isCustomCategoryMode && editingSimulated.category === cat;
+                    return (
+                      <Pressable
+                        key={cat}
                         style={[
-                          styles.streamTypeOptionText,
-                          editingSimulated.category === cat && styles.streamTypeOptionTextActive,
+                          styles.streamTypeOption,
+                          isSelected && styles.streamTypeOptionActive,
                         ]}
+                        onPress={() => {
+                          setIsCustomCategoryMode(false);
+                          setEditingSimulated((p) => ({ ...p, category: cat }));
+                        }}
                       >
-                        {cat}
-                      </Text>
-                    </Pressable>
-                  ))}
+                        <Text
+                          style={[
+                            styles.streamTypeOptionText,
+                            isSelected && styles.streamTypeOptionTextActive,
+                          ]}
+                        >
+                          {cat}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                  <Pressable
+                    style={[
+                      styles.streamTypeOption,
+                      isCustomCategoryMode && styles.streamTypeOptionActive,
+                    ]}
+                    onPress={() => {
+                      setIsCustomCategoryMode(true);
+                      const PRESETS = ['دراما', 'كوميديا', 'تاريخي', 'إسلامي وديني', 'كرتون وأنيميشن', 'وثائقي', 'منوعات'];
+                      if (PRESETS.includes(editingSimulated.category)) {
+                        setEditingSimulated((p) => ({ ...p, category: '' }));
+                      }
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.streamTypeOptionText,
+                        isCustomCategoryMode && styles.streamTypeOptionTextActive,
+                      ]}
+                    >
+                      آخر
+                    </Text>
+                  </Pressable>
                 </View>
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="أو اكتب تصنيفاً مخصصاً..."
-                  placeholderTextColor="#64748b"
-                  value={editingSimulated.category}
-                  onChangeText={(val) => setEditingSimulated((p) => ({ ...p, category: val }))}
-                />
+                {isCustomCategoryMode && (
+                  <View style={{ marginTop: 4 }}>
+                    <Text style={[styles.modalLabel, { fontSize: 12, color: '#f59e0b' }]}>
+                      أدخل اسم التصنيف المخصص: *
+                    </Text>
+                    <TextInput
+                      style={styles.modalInput}
+                      placeholder="مثال: أكشن، إثارة، عائلي، طبخ، رياضة..."
+                      placeholderTextColor="#64748b"
+                      value={editingSimulated.category}
+                      onChangeText={(val) => setEditingSimulated((p) => ({ ...p, category: val }))}
+                    />
+                  </View>
+                )}
               </View>
 
               {/* الحالة والترتيب */}
@@ -6065,6 +6143,44 @@ export default function AdminScreen(): React.JSX.Element {
                           <MaterialIcons name="delete-outline" size={18} color="#ef4444" />
                         </Pressable>
                       )}
+                    </View>
+
+                    {/* حقل استيراد وسحب حلقات قائمة تشغيل يوتيوب */}
+                    <View style={{ marginVertical: 8, padding: 10, backgroundColor: 'rgba(56, 189, 248, 0.08)', borderRadius: 8, borderWidth: 1, borderColor: 'rgba(56, 189, 248, 0.25)' }}>
+                      <Text style={{ color: '#38bdf8', fontSize: 12, fontWeight: '700', marginBottom: 6 }}>
+                        سحب الحلقات تلقائياً من قائمة تشغيل يوتيوب (YouTube Playlist):
+                      </Text>
+                      <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                        <TextInput
+                          style={[styles.modalInput, { flex: 1, height: 38, fontSize: 12 }]}
+                          placeholder="رابط أو معرّف قائمة تشغيل يوتيوب (مثال: https://www.youtube.com/playlist?list=PL...)"
+                          placeholderTextColor="#64748b"
+                          value={playlistUrls[pIdx] || ''}
+                          onChangeText={(val) => setPlaylistUrls((prev) => ({ ...prev, [pIdx]: val }))}
+                        />
+                        <Pressable
+                          style={{
+                            backgroundColor: '#0284c7',
+                            paddingHorizontal: 14,
+                            paddingVertical: 10,
+                            borderRadius: 8,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 6,
+                          }}
+                          disabled={importingPlaylistIdx === pIdx}
+                          onPress={() => handleImportYouTubePlaylist(pIdx)}
+                        >
+                          {importingPlaylistIdx === pIdx ? (
+                            <ActivityIndicator size="small" color="#ffffff" />
+                          ) : (
+                            <>
+                              <MaterialIcons name="cloud-download" size={16} color="#ffffff" />
+                              <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '700' }}>سحب الحلقات تلقائياً</Text>
+                            </>
+                          )}
+                        </Pressable>
+                      </View>
                     </View>
 
                     {/* زر إضافة حلقة مفردة */}
