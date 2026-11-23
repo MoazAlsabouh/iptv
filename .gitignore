@@ -17,7 +17,25 @@ frontend/ios/
 # Keystore & Signing Credentials
 *.jks
 *.keystore
+*.p12
+*.key
+*.pem
+*.mobileprovision
 android/keystore.properties
 frontend/android/keystore.properties
 keystore.properties
+*/keystore.properties
 credentials.json
+*/credentials.json
+google-services.json
+*/google-services.json
+GoogleService-Info.plist
+*/GoogleService-Info.plist
+local.properties
+*/local.properties
+
+# Environment Variables
+.env
+.env.*
+.dev.vars
+!.env.example

@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 import { useAppStore } from '../store/useAppStore';
 import { appStorage } from '../utils/storage';
 
-export const BACKEND_BASE_URL = 'https://iptv-backend.moaznsm.workers.dev';
+export const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://iptv-backend.moaznsm.workers.dev';
 
 export const TOKEN_KEY = 'iptv_auth_token';
 export const ACTIVATION_CODE_KEY = 'iptv_activation_code';
