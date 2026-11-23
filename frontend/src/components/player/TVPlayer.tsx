@@ -119,14 +119,17 @@ export function toYouTubeEmbedUrl(rawUrl: string): string {
       }
     }
 
+    const domain = Platform.OS !== 'web' ? 'www.youtube.com' : 'www.youtube-nocookie.com';
+    const policyParams = 'autoplay=1&controls=0&rel=0&playsinline=1&enablejsapi=1&origin=https%3A%2F%2Ftv.moazns.sy&widget_referrer=https%3A%2F%2Ftv.moazns.sy';
+
     if (videoId && listId) {
-      return `https://www.youtube-nocookie.com/embed/${videoId}?list=${encodeURIComponent(listId)}${startQuery}&autoplay=1&controls=0&rel=0&playsinline=1&enablejsapi=1`;
+      return `https://${domain}/embed/${videoId}?list=${encodeURIComponent(listId)}${startQuery}&${policyParams}`;
     }
     if (videoId) {
-      return `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&controls=0${startQuery}&rel=0&playsinline=1&enablejsapi=1`;
+      return `https://${domain}/embed/${videoId}?${policyParams}${startQuery}`;
     }
     if (listId) {
-      return `https://www.youtube-nocookie.com/embed/videoseries?list=${encodeURIComponent(listId)}${startQuery}&autoplay=1&controls=0&rel=0&playsinline=1&enablejsapi=1`;
+      return `https://${domain}/embed/videoseries?list=${encodeURIComponent(listId)}${startQuery}&${policyParams}`;
     }
   } catch {
     const vMatch = trimmed.match(/(?:[?&]v=|youtu\.be\/|\/embed\/|\/shorts\/|\/live\/)([a-zA-Z0-9_-]{11})/);
@@ -136,14 +139,17 @@ export function toYouTubeEmbedUrl(rawUrl: string): string {
     const listId = listMatch ? listMatch[1] : '';
     const startQuery = startMatch ? `&start=${startMatch[1]}` : '';
 
+    const domain = Platform.OS !== 'web' ? 'www.youtube.com' : 'www.youtube-nocookie.com';
+    const policyParams = 'autoplay=1&controls=0&rel=0&playsinline=1&enablejsapi=1&origin=https%3A%2F%2Ftv.moazns.sy&widget_referrer=https%3A%2F%2Ftv.moazns.sy';
+
     if (videoId && listId) {
-      return `https://www.youtube-nocookie.com/embed/${videoId}?list=${encodeURIComponent(listId)}${startQuery}&autoplay=1&controls=0&rel=0&playsinline=1&enablejsapi=1`;
+      return `https://${domain}/embed/${videoId}?list=${encodeURIComponent(listId)}${startQuery}&${policyParams}`;
     }
     if (videoId) {
-      return `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&controls=0${startQuery}&rel=0&playsinline=1&enablejsapi=1`;
+      return `https://${domain}/embed/${videoId}?${policyParams}${startQuery}`;
     }
     if (listId) {
-      return `https://www.youtube-nocookie.com/embed/videoseries?list=${encodeURIComponent(listId)}${startQuery}&autoplay=1&controls=0&rel=0&playsinline=1&enablejsapi=1`;
+      return `https://${domain}/embed/videoseries?list=${encodeURIComponent(listId)}${startQuery}&${policyParams}`;
     }
   }
 
@@ -212,8 +218,18 @@ export const TVPlayer = forwardRef<TVPlayerHandle, TVPlayerProps>(({
       .replace(/([?&])(?:mute|muted)=(?:1|true|yes)(&|$)/gi, '$1')
       .replace(/[?&]$/, '');
 
-    if (isYouTube && url && !String(url).includes('enablejsapi=1')) {
-      url = url + (String(url).includes('?') ? '&' : '?') + 'enablejsapi=1';
+    if (isYouTube && url) {
+      if (Platform.OS !== 'web' && url.includes('youtube-nocookie.com')) {
+        url = url.replace('youtube-nocookie.com', 'youtube.com');
+      }
+      const sep = url.includes('?') ? '&' : '?';
+      const additions: string[] = [];
+      if (!url.includes('origin=')) additions.push('origin=https%3A%2F%2Ftv.moazns.sy');
+      if (!url.includes('widget_referrer=')) additions.push('widget_referrer=https%3A%2F%2Ftv.moazns.sy');
+      if (!url.includes('enablejsapi=')) additions.push('enablejsapi=1');
+      if (additions.length > 0) {
+        url = `${url}${sep}${additions.join('&')}`;
+      }
     }
     return url;
   }, [safeStreamUrl, isEmbedUrl, isYouTube]);

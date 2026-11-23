@@ -666,7 +666,8 @@ export function PlayerScreen(): React.JSX.Element {
     if (isSimulated247 && virtualLivePos?.currentEpisode) {
       const ep = virtualLivePos.currentEpisode;
       const ytId = extractYouTubeId(ep.youtubeId);
-      return `https://www.youtube-nocookie.com/embed/${ytId}?start=${virtualLivePos.startAt}&autoplay=1&controls=0&rel=0&playsinline=1&enablejsapi=1`;
+      const domain = Platform.OS !== 'web' ? 'www.youtube.com' : 'www.youtube-nocookie.com';
+      return `https://${domain}/embed/${ytId}?start=${virtualLivePos.startAt}&autoplay=1&controls=0&rel=0&playsinline=1&enablejsapi=1&origin=https%3A%2F%2Ftv.moazns.sy&widget_referrer=https%3A%2F%2Ftv.moazns.sy`;
     }
     let url = liveChannel ? liveChannel.streamUrl : rawStreamUrl;
     if (channelSources.length > 0 && channelSources[activeSourceIndex]) {
