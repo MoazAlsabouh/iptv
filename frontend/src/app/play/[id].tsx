@@ -95,11 +95,14 @@ export function PlayerScreen(): React.JSX.Element {
     let isMounted = true;
     const fetchSimulatedChannel = async () => {
       try {
-        const res = await fetch('https://iptv-backend.moaznsm.workers.dev/api/simulated-channels');
+        const res = await fetch('https://iptv-backend.moaznsm.workers.dev/api/simulated-channels?t=' + Date.now(), {
+          cache: 'no-store',
+        });
         if (res.ok) {
           const data = await res.json();
-          if (isMounted && data.success && Array.isArray(data.channels)) {
-            const found = data.channels.find((c: any) => c.id === params.id);
+          const rawChannels = data?.channels ?? data?.simulatedChannels ?? (Array.isArray(data) ? data : []);
+          if (isMounted && Array.isArray(rawChannels)) {
+            const found = rawChannels.find((c: any) => c.id === params.id);
             if (found && Array.isArray(found.episodes)) {
               setSimulatedEpisodes(found.episodes);
               setVirtualLivePos(getVirtualLivePosition(found.episodes));

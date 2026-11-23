@@ -1505,14 +1505,14 @@ export default function AdminScreen(): React.JSX.Element {
   const fetchSimulatedChannels = useCallback(async () => {
     setSimulatedLoading(true);
     try {
-      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/simulated-channels`, {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/simulated-channels?t=${Date.now()}`, {
+        cache: 'no-store',
         headers: getAuthHeaders(),
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.success && Array.isArray(data.channels)) {
-          setSimulatedChannels(data.channels);
-        }
+        const rawChannels = data?.channels ?? data?.simulatedChannels ?? (Array.isArray(data) ? data : []);
+        setSimulatedChannels(Array.isArray(rawChannels) ? rawChannels : []);
       }
     } catch (err) {
       console.warn('[Admin] Failed to fetch simulated channels:', err);
@@ -1545,9 +1545,28 @@ export default function AdminScreen(): React.JSX.Element {
         body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (res.ok && data.success) {
+      if (res.ok && (data.success || data.id)) {
         setShowSimulatedModal(false);
         setStatusMessage(isEdit ? 'تم تحديث قناة المسلسلات 24/7 بنجاح' : 'تمت إضافة قناة المسلسلات 24/7 بنجاح');
+        
+        // تحديث الـ state فوراً في الواجهة
+        const savedItem: SimulatedChannelItem = {
+          id: isEdit ? editingSimulated.id : (data.id || `sim247_${Date.now()}`),
+          name: payload.name,
+          logo: payload.logo,
+          category: payload.category,
+          isActive: payload.isActive ?? true,
+          sortOrder: payload.sortOrder ?? null,
+          playlists: payload.playlists || [],
+        };
+        setSimulatedChannels((prev) => {
+          if (isEdit) {
+            return prev.map((ch) => (ch.id === editingSimulated.id ? { ...ch, ...savedItem } : ch));
+          } else {
+            return [savedItem, ...prev];
+          }
+        });
+
         fetchSimulatedChannels();
       } else {
         setStatusMessage(data.error || 'فشل حفظ قناة المسلسلات');
@@ -1566,8 +1585,10 @@ export default function AdminScreen(): React.JSX.Element {
         headers: getAuthHeaders(),
       });
       const data = await res.json();
-      if (res.ok && data.success) {
+      if (res.ok) {
         setStatusMessage('تم حذف قناة المسلسلات 24/7 بنجاح');
+        // تحديث الـ state فوراً بحذف القناة
+        setSimulatedChannels((prev) => prev.filter((ch) => ch.id !== id));
         fetchSimulatedChannels();
       }
     } catch {
@@ -4971,69 +4992,81 @@ export default function AdminScreen(): React.JSX.Element {
               </View>
             ) : (
               <View style={styles.channelsGrid}>
-                {simulatedChannels.map((ch) => (
-                  <View key={ch.id} style={styles.channelCardItem}>
-                    <View style={styles.channelCardHeader}>
-                      <View style={styles.channelLogoWrapper}>
-                        <ChannelLogo uri={ch.logo} name={ch.name} size={42} />
+                {simulatedChannels.map((ch, idx) => {
+                  const episodesTotal =
+                    ch.episodesCount ??
+                    (Array.isArray(ch.playlists)
+                      ? ch.playlists.reduce((acc, p) => acc + (Array.isArray(p?.episodes) ? p.episodes.length : 0), 0)
+                      : 0);
+                  const playlistsCount = Array.isArray(ch.playlists) ? ch.playlists.length : 0;
+                  const isActive = Boolean(ch.isActive ?? true);
+
+                  return (
+                    <View key={ch.id || `sim-ch-${idx}`} style={styles.channelCardItem}>
+                      <View style={styles.channelCardHeader}>
+                        <View style={styles.channelLogoWrapper}>
+                          <ChannelLogo uri={ch.logo || ''} name={ch.name || 'قناة 24/7'} size={42} />
+                        </View>
+                        <View style={styles.channelCardInfo}>
+                          <Text style={styles.channelCardName}>{ch.name || 'بدون اسم'}</Text>
+                          <Text style={styles.channelCardCat}>{ch.category || 'مسلسلات 24/7'}</Text>
+                        </View>
                       </View>
-                      <View style={styles.channelCardInfo}>
-                        <Text style={styles.channelCardName}>{ch.name}</Text>
-                        <Text style={styles.channelCardCat}>{ch.category || 'مسلسلات 24/7'}</Text>
+
+                      <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginVertical: 6 }}>
+                        <View style={[styles.statusBadge, { backgroundColor: isActive ? '#10b98120' : '#ef444420' }]}>
+                          <Text style={[styles.statusBadgeText, { color: isActive ? '#10b981' : '#ef4444' }]}>
+                            {isActive ? 'نشطة' : 'متوقفة'}
+                          </Text>
+                        </View>
+                        <View style={[styles.statusBadge, { backgroundColor: '#f59e0b20' }]}>
+                          <Text style={[styles.statusBadgeText, { color: '#f59e0b' }]}>
+                            {episodesTotal} حلقة
+                          </Text>
+                        </View>
+                        <View style={[styles.statusBadge, { backgroundColor: '#38bdf820' }]}>
+                          <Text style={[styles.statusBadgeText, { color: '#38bdf8' }]}>
+                            {playlistsCount || 1} أجزاء/مواسم
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View style={[styles.channelCardActionsRow, { justifyContent: 'flex-end', marginTop: 8 }]}>
+                        <View style={styles.actionBtnsGroup}>
+                          <Pressable
+                            style={styles.channelActionBtn}
+                            onPress={() => {
+                              const PRESETS = ['دراما', 'كوميديا', 'تاريخي', 'إسلامي وديني', 'كرتون وأنيميشن', 'وثائقي', 'منوعات'];
+                              setIsCustomCategoryMode(!PRESETS.includes(ch.category || ''));
+                              setPlaylistUrls({});
+                              setEditingSimulated({
+                                ...ch,
+                                playlists: Array.isArray(ch.playlists) && ch.playlists.length > 0
+                                  ? ch.playlists
+                                  : [
+                                      { id: 'p1', name: 'الموسم الأول', sortOrder: 1, episodes: [] },
+                                    ],
+                              });
+                              setQuickEpisodesText('');
+                              setShowSimulatedModal(true);
+                            }}
+                          >
+                            <MaterialIcons name="edit" size={16} color="#38bdf8" />
+                            <Text style={[styles.channelActionBtnText, { color: '#38bdf8' }]}>تعديل والحلقات</Text>
+                          </Pressable>
+
+                          <Pressable
+                            style={[styles.channelActionBtn, { borderColor: '#ef444430' }]}
+                            onPress={() => handleDeleteSimulatedChannel(ch.id)}
+                          >
+                            <MaterialIcons name="delete" size={16} color="#ef4444" />
+                            <Text style={[styles.channelActionBtnText, { color: '#ef4444' }]}>حذف</Text>
+                          </Pressable>
+                        </View>
                       </View>
                     </View>
-
-                    <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginVertical: 6 }}>
-                      <View style={[styles.statusBadge, { backgroundColor: ch.isActive ? '#10b98120' : '#ef444420' }]}>
-                        <Text style={[styles.statusBadgeText, { color: ch.isActive ? '#10b981' : '#ef4444' }]}>
-                          {ch.isActive ? 'نشطة' : 'متوقفة'}
-                        </Text>
-                      </View>
-                      <View style={[styles.statusBadge, { backgroundColor: '#f59e0b20' }]}>
-                        <Text style={[styles.statusBadgeText, { color: '#f59e0b' }]}>
-                          {ch.episodesCount ?? ch.playlists?.reduce((acc, p) => acc + (p.episodes?.length || 0), 0) ?? 0} حلقة
-                        </Text>
-                      </View>
-                      <View style={[styles.statusBadge, { backgroundColor: '#38bdf820' }]}>
-                        <Text style={[styles.statusBadgeText, { color: '#38bdf8' }]}>
-                          {ch.playlists?.length || 1} أجزاء/مواسم
-                        </Text>
-                      </View>
-                    </View>
-
-                    <View style={[styles.channelCardActionsRow, { justifyContent: 'flex-end', marginTop: 8 }]}>
-                      <View style={styles.actionBtnsGroup}>
-                        <Pressable
-                          style={styles.channelActionBtn}
-                          onPress={() => {
-                            const PRESETS = ['دراما', 'كوميديا', 'تاريخي', 'إسلامي وديني', 'كرتون وأنيميشن', 'وثائقي', 'منوعات'];
-                            setIsCustomCategoryMode(!PRESETS.includes(ch.category || ''));
-                            setPlaylistUrls({});
-                            setEditingSimulated({
-                              ...ch,
-                              playlists: ch.playlists || [
-                                { id: 'p1', name: 'الموسم الأول', sortOrder: 1, episodes: [] },
-                              ],
-                            });
-                            setQuickEpisodesText('');
-                            setShowSimulatedModal(true);
-                          }}
-                        >
-                          <MaterialIcons name="edit" size={16} color="#38bdf8" />
-                          <Text style={[styles.channelActionBtnText, { color: '#38bdf8' }]}>تعديل والحلقات</Text>
-                        </Pressable>
-
-                        <Pressable
-                          style={[styles.channelActionBtn, { borderColor: '#ef444430' }]}
-                          onPress={() => handleDeleteSimulatedChannel(ch.id)}
-                        >
-                          <MaterialIcons name="delete" size={16} color="#ef4444" />
-                          <Text style={[styles.channelActionBtnText, { color: '#ef4444' }]}>حذف</Text>
-                        </Pressable>
-                      </View>
-                    </View>
-                  </View>
-                ))}
+                  );
+                })}
               </View>
             )}
           </View>
@@ -7987,5 +8020,35 @@ const styles = StyleSheet.create({
   channelActionBtnDangerActive: {
     borderColor: '#ef4444',
     backgroundColor: 'rgba(239, 68, 68, 0.15)',
+  },
+  channelCardItem: {
+    backgroundColor: '#111827',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.07)',
+    borderRadius: 14,
+    padding: 16,
+    gap: 12,
+  },
+  channelCardInfo: {
+    flex: 1,
+    gap: 4,
+  },
+  channelCardName: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  channelCardCat: {
+    color: '#94a3b8',
+    fontSize: 12,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  statusBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
 });

@@ -67,12 +67,13 @@ export default function SimulatedChannelsScreen(): React.JSX.Element {
   const fetchChannels = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${BACKEND_BASE_URL}/api/simulated-channels`);
+      const res = await fetch(`${BACKEND_BASE_URL}/api/simulated-channels?t=${Date.now()}`, {
+        cache: 'no-store',
+      });
       if (res.ok) {
         const data = await res.json();
-        if (data.success && Array.isArray(data.channels)) {
-          setChannels(data.channels);
-        }
+        const rawChannels = data?.channels ?? data?.simulatedChannels ?? (Array.isArray(data) ? data : []);
+        setChannels(Array.isArray(rawChannels) ? rawChannels : []);
       }
     } catch (err) {
       console.warn('[Simulated] Failed to fetch 24/7 channels:', err);
@@ -272,12 +273,12 @@ export default function SimulatedChannelsScreen(): React.JSX.Element {
           >
             {filteredChannels.map((channel, index) => {
               const isFocused = focusedPane === 'channels' && focusedIndex === index;
-              const livePos = hasMounted ? getVirtualLivePosition(channel.episodes) : null;
+              const livePos = hasMounted ? getVirtualLivePosition(channel?.episodes || []) : null;
               const currentEp = livePos?.currentEpisode;
 
               return (
                 <Pressable
-                  key={channel.id}
+                  key={channel?.id || `sim-card-${index}`}
                   style={[
                     styles.channelCard,
                     { width: `${100 / numColumns - 2}%` },
@@ -289,8 +290,8 @@ export default function SimulatedChannelsScreen(): React.JSX.Element {
                   <View style={styles.cardHeader}>
                     <View style={styles.logoWrapper}>
                       <ChannelLogo
-                        uri={channel.logo}
-                        name={channel.name}
+                        uri={channel?.logo || ''}
+                        name={channel?.name || 'قناة 24/7'}
                         size={48}
                         style={styles.channelLogo}
                       />

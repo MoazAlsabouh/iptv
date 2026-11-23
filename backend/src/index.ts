@@ -5597,9 +5597,15 @@ async function handleAdminGetSimulatedChannels(request: Request, env: Env): Prom
       };
     });
 
-    return jsonResponse({ channels });
+    return jsonResponse({ success: true, channels }, 200, {
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    });
   } catch (err: any) {
-    return jsonResponse({ error: 'فشل جلب قنوات المسلسلات 24/7: ' + (err?.message || '') }, 500);
+    return jsonResponse({ success: false, error: 'فشل جلب قنوات المسلسلات 24/7: ' + (err?.message || ''), channels: [] }, 500, {
+      'Cache-Control': 'no-store',
+    });
   }
 }
 
@@ -5725,11 +5731,13 @@ async function handleGetPublicSimulatedChannels(env: Env): Promise<Response> {
       };
     });
 
-    return jsonResponse({ channels }, 200, {
-      'Cache-Control': 'public, max-age=60',
+    return jsonResponse({ success: true, channels }, 200, {
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
     });
   } catch (err: any) {
-    return jsonResponse({ channels: [] });
+    return jsonResponse({ success: false, channels: [] });
   }
 }
 
