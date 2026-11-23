@@ -92,6 +92,8 @@ export function toYouTubeEmbedUrl(rawUrl: string): string {
 
     let videoId = '';
     const listId = parsed.searchParams.get('list') || '';
+    const startParam = parsed.searchParams.get('start') || parsed.searchParams.get('t') || '';
+    const startQuery = startParam ? `&start=${encodeURIComponent(startParam.replace('s', ''))}` : '';
 
     if (host.includes('youtu.be')) {
       const pathParts = parsed.pathname.split('/').filter(Boolean);
@@ -115,28 +117,30 @@ export function toYouTubeEmbedUrl(rawUrl: string): string {
     }
 
     if (videoId && listId) {
-      return `https://www.youtube.com/embed/${videoId}?list=${encodeURIComponent(listId)}&autoplay=1&rel=0&playsinline=1&enablejsapi=1`;
+      return `https://www.youtube.com/embed/${videoId}?list=${encodeURIComponent(listId)}${startQuery}&autoplay=1&rel=0&playsinline=1&enablejsapi=1`;
     }
     if (videoId) {
-      return `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&playsinline=1&enablejsapi=1`;
+      return `https://www.youtube.com/embed/${videoId}?autoplay=1${startQuery}&rel=0&playsinline=1&enablejsapi=1`;
     }
     if (listId) {
-      return `https://www.youtube.com/embed/videoseries?list=${encodeURIComponent(listId)}&autoplay=1&rel=0&playsinline=1&enablejsapi=1`;
+      return `https://www.youtube.com/embed/videoseries?list=${encodeURIComponent(listId)}${startQuery}&autoplay=1&rel=0&playsinline=1&enablejsapi=1`;
     }
   } catch {
     const vMatch = trimmed.match(/(?:[?&]v=|youtu\.be\/|\/embed\/|\/shorts\/|\/live\/)([a-zA-Z0-9_-]{11})/);
     const listMatch = trimmed.match(/[?&]list=([a-zA-Z0-9_-]+)/);
+    const startMatch = trimmed.match(/[?&](?:start|t)=([0-9]+)/);
     const videoId = vMatch ? vMatch[1] : '';
     const listId = listMatch ? listMatch[1] : '';
+    const startQuery = startMatch ? `&start=${startMatch[1]}` : '';
 
     if (videoId && listId) {
-      return `https://www.youtube.com/embed/${videoId}?list=${encodeURIComponent(listId)}&autoplay=1&rel=0&playsinline=1&enablejsapi=1`;
+      return `https://www.youtube.com/embed/${videoId}?list=${encodeURIComponent(listId)}${startQuery}&autoplay=1&rel=0&playsinline=1&enablejsapi=1`;
     }
     if (videoId) {
-      return `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&playsinline=1&enablejsapi=1`;
+      return `https://www.youtube.com/embed/${videoId}?autoplay=1${startQuery}&rel=0&playsinline=1&enablejsapi=1`;
     }
     if (listId) {
-      return `https://www.youtube.com/embed/videoseries?list=${encodeURIComponent(listId)}&autoplay=1&rel=0&playsinline=1&enablejsapi=1`;
+      return `https://www.youtube.com/embed/videoseries?list=${encodeURIComponent(listId)}${startQuery}&autoplay=1&rel=0&playsinline=1&enablejsapi=1`;
     }
   }
 

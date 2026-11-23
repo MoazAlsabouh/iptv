@@ -3878,10 +3878,14 @@ async function ensureChannelOverridesTable(db: D1Database): Promise<void> {
         is_deleted INTEGER DEFAULT 0,
         sort_order INTEGER,
         is_custom INTEGER DEFAULT 0,
+        manual_override INTEGER DEFAULT 0,
         updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_channel_overrides_sort ON channel_overrides(sort_order);
     `);
+    try {
+      await db.exec(`ALTER TABLE channel_overrides ADD COLUMN manual_override INTEGER DEFAULT 0;`);
+    } catch {}
     isOverridesTableReady = true;
   } catch (err) {
     console.warn('[DB] Failed to ensure channel_overrides table:', err);
@@ -3912,6 +3916,7 @@ async function handleAdminGetChannelOverrides(request: Request, env: Env): Promi
       isDeleted: Boolean(r.is_deleted),
       sortOrder: r.sort_order,
       isCustom: Boolean(r.is_custom),
+      manualOverride: Boolean(r.manual_override),
       updatedAt: r.updated_at,
     }));
 
@@ -3951,12 +3956,13 @@ async function handleAdminSaveChannelOverride(request: Request, env: Env): Promi
     const isDeleted = body.isDeleted ? 1 : 0;
     const sortOrder = body.sortOrder !== undefined && body.sortOrder !== null ? Number(body.sortOrder) : null;
     const isCustomInt = isCustom ? 1 : 0;
+    const manualOverride = body.manualOverride ? 1 : 0;
     const now = new Date().toISOString();
 
     await env.DB.prepare(`
       INSERT INTO channel_overrides (
-        id, name, logo, category, stream_url, stream_type, is_hidden, is_deleted, sort_order, is_custom, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, name, logo, category, stream_url, stream_type, is_hidden, is_deleted, sort_order, is_custom, manual_override, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         logo = excluded.logo,
@@ -3967,9 +3973,10 @@ async function handleAdminSaveChannelOverride(request: Request, env: Env): Promi
         is_deleted = excluded.is_deleted,
         sort_order = COALESCE(excluded.sort_order, channel_overrides.sort_order),
         is_custom = excluded.is_custom,
+        manual_override = excluded.manual_override,
         updated_at = excluded.updated_at
     `).bind(
-      id, name, logo, category, streamUrl, streamType, isHidden, isDeleted, sortOrder, isCustomInt, now
+      id, name, logo, category, streamUrl, streamType, isHidden, isDeleted, sortOrder, isCustomInt, manualOverride, now
     ).run();
 
     return jsonResponse({
@@ -3985,6 +3992,7 @@ async function handleAdminSaveChannelOverride(request: Request, env: Env): Promi
         isDeleted: Boolean(isDeleted),
         sortOrder,
         isCustom,
+        manualOverride: Boolean(manualOverride),
         updatedAt: now,
       },
     });
@@ -4014,12 +4022,13 @@ async function handleAdminUpdateChannelOverride(request: Request, env: Env, id: 
     const isDeleted = body.isDeleted !== undefined ? (body.isDeleted ? 1 : 0) : (existing?.is_deleted ?? 0);
     const sortOrder = body.sortOrder !== undefined ? (body.sortOrder !== null ? Number(body.sortOrder) : null) : (existing?.sort_order ?? null);
     const isCustom = body.isCustom !== undefined ? (body.isCustom ? 1 : 0) : (existing?.is_custom ?? 0);
+    const manualOverride = body.manualOverride !== undefined ? (body.manualOverride ? 1 : 0) : (existing?.manual_override ?? 0);
     const now = new Date().toISOString();
 
     await env.DB.prepare(`
       INSERT INTO channel_overrides (
-        id, name, logo, category, stream_url, stream_type, is_hidden, is_deleted, sort_order, is_custom, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, name, logo, category, stream_url, stream_type, is_hidden, is_deleted, sort_order, is_custom, manual_override, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         logo = excluded.logo,
@@ -4030,9 +4039,10 @@ async function handleAdminUpdateChannelOverride(request: Request, env: Env, id: 
         is_deleted = excluded.is_deleted,
         sort_order = excluded.sort_order,
         is_custom = excluded.is_custom,
+        manual_override = excluded.manual_override,
         updated_at = excluded.updated_at
     `).bind(
-      id, name, logo, category, streamUrl, streamType, isHidden, isDeleted, sortOrder, isCustom, now
+      id, name, logo, category, streamUrl, streamType, isHidden, isDeleted, sortOrder, isCustom, manualOverride, now
     ).run();
 
     return jsonResponse({
@@ -4048,6 +4058,7 @@ async function handleAdminUpdateChannelOverride(request: Request, env: Env, id: 
         isDeleted: Boolean(isDeleted),
         sortOrder,
         isCustom: Boolean(isCustom),
+        manualOverride: Boolean(manualOverride),
         updatedAt: now,
       },
     });
@@ -4065,10 +4076,26 @@ async function handleAdminDeleteChannelOverride(request: Request, env: Env, id: 
   await ensureChannelOverridesTable(env.DB);
 
   try {
-    await env.DB.prepare('DELETE FROM channel_overrides WHERE id = ?').bind(id).run();
-    return jsonResponse({ success: true, message: 'تم إلغاء التخصيص واستعادة القناة الأصلية بنجاح' });
+    const url = new URL(request.url);
+    const action = url.searchParams.get('action'); // 'blacklist' | 'restore'
+
+    if (action === 'restore') {
+      // إزالة التخصيص أو الحذف للعودة للقناة الأصلية التلقائية
+      await env.DB.prepare('DELETE FROM channel_overrides WHERE id = ?').bind(id).run();
+      return jsonResponse({ success: true, message: 'تمت استعادة القناة الأصلية بنجاح' });
+    }
+
+    // افتراضياً: الحذف النهائي / الحظر الدائم (Blacklist) حتى لا تعود للظهور مع التحديث التلقائي
+    const now = new Date().toISOString();
+    await env.DB.prepare(`
+      INSERT INTO channel_overrides (id, is_deleted, is_hidden, updated_at)
+      VALUES (?, 1, 0, ?)
+      ON CONFLICT(id) DO UPDATE SET is_deleted = 1, is_hidden = 0, updated_at = excluded.updated_at
+    `).bind(id, now).run();
+
+    return jsonResponse({ success: true, message: 'تم حذف وحظر القناة نهائياً من العرض والتحديث' });
   } catch (err: any) {
-    return jsonResponse({ error: 'فشل حذف التخصيص: ' + (err?.message || '') }, 500);
+    return jsonResponse({ error: 'فشل حذف القناة: ' + (err?.message || '') }, 500);
   }
 }
 
@@ -4124,6 +4151,7 @@ async function handleGetPublicChannelOverrides(request: Request, env: Env): Prom
       isDeleted: Boolean(r.is_deleted),
       sortOrder: r.sort_order,
       isCustom: Boolean(r.is_custom),
+      manualOverride: Boolean(r.manual_override),
     }));
 
     return jsonResponse(
@@ -4748,10 +4776,48 @@ const DEFAULT_BACKEND_NETWORKS = [
   { id: 'news', name: 'باقة الأخبار الدولية', keywords: ['bbc arabic', 'فرانس 24', 'france 24', 'سكاي نيوز', 'sky news arabia', 'روسيا اليوم', 'rt arabic', 'الحرة', 'alhurra', 'dw arabic', 'trt عربي', 'تلفزيون العربي', 'alaraby'], description: 'أبرز القنوات الإخبارية الدولية الناطقة بالعربية', icon: 'public' },
 ];
 
+let isNetworksTableReady = false;
+
+async function ensureNetworksTable(db: D1Database): Promise<void> {
+  if (isNetworksTableReady) return;
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS network_overrides (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        icon TEXT,
+        keywords TEXT,
+        sort_order INTEGER,
+        is_hidden INTEGER DEFAULT 0,
+        is_deleted INTEGER DEFAULT 0,
+        is_custom INTEGER DEFAULT 0,
+        excluded_channel_ids TEXT DEFAULT '[]',
+        hidden_channel_ids TEXT DEFAULT '[]',
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_network_overrides_sort ON network_overrides(sort_order);
+    `);
+    try {
+      await db.exec(`ALTER TABLE network_overrides ADD COLUMN excluded_channel_ids TEXT DEFAULT '[]';`);
+    } catch {}
+    try {
+      await db.exec(`ALTER TABLE network_overrides ADD COLUMN hidden_channel_ids TEXT DEFAULT '[]';`);
+    } catch {}
+    isNetworksTableReady = true;
+  } catch (err) {
+    console.warn('[DB] Failed to ensure network_overrides table:', err);
+  }
+}
+
 async function handleAdminGetNetworks(request: Request, env: Env): Promise<Response> {
   const auth = await checkAdminAuth(request, env);
   if (!auth.authorized) {
     return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  if (env.DB) {
+    await ensureNetworksTable(env.DB);
   }
 
   let dbOverrides: any[] = [];
@@ -4779,6 +4845,11 @@ async function handleAdminGetNetworks(request: Request, env: Env): Promise<Respo
       if (ov.keywords) {
         try { kw = JSON.parse(ov.keywords); } catch { kw = ov.keywords.split(',').map((k: string) => k.trim()); }
       }
+      let excluded: string[] = [];
+      try { excluded = JSON.parse(ov.excluded_channel_ids || '[]'); } catch {}
+      let hidden: string[] = [];
+      try { hidden = JSON.parse(ov.hidden_channel_ids || '[]'); } catch {}
+
       networks.push({
         id: def.id,
         name: ov.name || def.name,
@@ -4789,6 +4860,8 @@ async function handleAdminGetNetworks(request: Request, env: Env): Promise<Respo
         isHidden: Boolean(ov.is_hidden),
         isDeleted: Boolean(ov.is_deleted),
         isCustom: false,
+        excludedChannelIds: excluded,
+        hiddenChannelIds: hidden,
         updatedAt: ov.updated_at,
       });
       overrideMap.delete(def.id.toLowerCase());
@@ -4803,6 +4876,8 @@ async function handleAdminGetNetworks(request: Request, env: Env): Promise<Respo
         isHidden: false,
         isDeleted: false,
         isCustom: false,
+        excludedChannelIds: [],
+        hiddenChannelIds: [],
         updatedAt: null,
       });
     }
@@ -4813,6 +4888,11 @@ async function handleAdminGetNetworks(request: Request, env: Env): Promise<Respo
     if (ov.keywords) {
       try { kw = JSON.parse(ov.keywords); } catch { kw = ov.keywords.split(',').map((k: string) => k.trim()); }
     }
+    let excluded: string[] = [];
+    try { excluded = JSON.parse(ov.excluded_channel_ids || '[]'); } catch {}
+    let hidden: string[] = [];
+    try { hidden = JSON.parse(ov.hidden_channel_ids || '[]'); } catch {}
+
     networks.push({
       id: ov.id,
       name: ov.name,
@@ -4823,6 +4903,8 @@ async function handleAdminGetNetworks(request: Request, env: Env): Promise<Respo
       isHidden: Boolean(ov.is_hidden),
       isDeleted: Boolean(ov.is_deleted),
       isCustom: Boolean(ov.is_custom),
+      excludedChannelIds: excluded,
+      hiddenChannelIds: hidden,
       updatedAt: ov.updated_at,
     });
   }
@@ -4842,6 +4924,8 @@ async function handleAdminSaveNetwork(request: Request, env: Env, networkIdParam
     return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
   }
 
+  await ensureNetworksTable(env.DB);
+
   try {
     const body = (await request.json()) as any;
     const id = String(networkIdParam || body.id || '').trim();
@@ -4849,30 +4933,45 @@ async function handleAdminSaveNetwork(request: Request, env: Env, networkIdParam
       return jsonResponse({ error: 'معرّف السلسلة مطلوب' }, 400);
     }
 
-    const name = String(body.name || '').trim();
+    const existing = await env.DB.prepare('SELECT * FROM network_overrides WHERE id = ?').bind(id).first<any>();
+
+    const name = String(body.name !== undefined ? body.name : (existing?.name || '')).trim();
     if (!name) {
       return jsonResponse({ error: 'اسم السلسلة مطلوب' }, 400);
     }
 
-    const description = body.description !== undefined && body.description !== null ? String(body.description).trim() : null;
-    const icon = body.icon ? String(body.icon).trim() : 'hub';
-    let keywordsStr = '[]';
-    if (Array.isArray(body.keywords)) {
-      keywordsStr = JSON.stringify(body.keywords);
-    } else if (typeof body.keywords === 'string') {
-      keywordsStr = JSON.stringify(body.keywords.split(',').map((k: string) => k.trim()).filter(Boolean));
+    const description = body.description !== undefined ? (body.description ? String(body.description).trim() : null) : (existing?.description ?? null);
+    const icon = body.icon ? String(body.icon).trim() : (existing?.icon || 'hub');
+    let keywordsStr = existing?.keywords || '[]';
+    if (body.keywords !== undefined) {
+      if (Array.isArray(body.keywords)) {
+        keywordsStr = JSON.stringify(body.keywords);
+      } else if (typeof body.keywords === 'string') {
+        keywordsStr = JSON.stringify(body.keywords.split(',').map((k: string) => k.trim()).filter(Boolean));
+      }
     }
 
-    const sortOrder = body.sortOrder !== undefined && body.sortOrder !== null ? Number(body.sortOrder) : null;
-    const isHidden = body.isHidden ? 1 : 0;
-    const isDeleted = body.isDeleted ? 1 : 0;
-    const isCustom = body.isCustom ? 1 : 0;
+    const sortOrder = body.sortOrder !== undefined && body.sortOrder !== null ? Number(body.sortOrder) : (existing?.sort_order ?? null);
+    const isHidden = body.isHidden !== undefined ? (body.isHidden ? 1 : 0) : (existing?.is_hidden ?? 0);
+    const isDeleted = body.isDeleted !== undefined ? (body.isDeleted ? 1 : 0) : (existing?.is_deleted ?? 0);
+    const isCustom = body.isCustom !== undefined ? (body.isCustom ? 1 : 0) : (existing?.is_custom ?? 0);
+
+    let excludedStr = existing?.excluded_channel_ids || '[]';
+    if (body.excludedChannelIds !== undefined) {
+      excludedStr = JSON.stringify(Array.isArray(body.excludedChannelIds) ? body.excludedChannelIds : []);
+    }
+
+    let hiddenStr = existing?.hidden_channel_ids || '[]';
+    if (body.hiddenChannelIds !== undefined) {
+      hiddenStr = JSON.stringify(Array.isArray(body.hiddenChannelIds) ? body.hiddenChannelIds : []);
+    }
+
     const now = new Date().toISOString();
 
     await env.DB.prepare(
       `INSERT INTO network_overrides (
-        id, name, description, icon, keywords, sort_order, is_hidden, is_deleted, is_custom, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, name, description, icon, keywords, sort_order, is_hidden, is_deleted, is_custom, excluded_channel_ids, hidden_channel_ids, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         description = excluded.description,
@@ -4882,14 +4981,58 @@ async function handleAdminSaveNetwork(request: Request, env: Env, networkIdParam
         is_hidden = excluded.is_hidden,
         is_deleted = excluded.is_deleted,
         is_custom = excluded.is_custom,
+        excluded_channel_ids = excluded.excluded_channel_ids,
+        hidden_channel_ids = excluded.hidden_channel_ids,
         updated_at = excluded.updated_at`
     )
-      .bind(id, name, description, icon, keywordsStr, sortOrder, isHidden, isDeleted, isCustom, now)
+      .bind(id, name, description, icon, keywordsStr, sortOrder, isHidden, isDeleted, isCustom, excludedStr, hiddenStr, now)
       .run();
 
     return jsonResponse({ success: true, message: 'تم حفظ وتحديث السلسلة بنجاح' });
   } catch (err: any) {
     return jsonResponse({ error: 'فشل حفظ السلسلة: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminReorderNetworks(request: Request, env: Env): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  await ensureNetworksTable(env.DB);
+
+  try {
+    const body = (await request.json()) as any;
+    const items = Array.isArray(body.items) ? body.items : [];
+    const now = new Date().toISOString();
+
+    const stmts = items
+      .filter((it: any) => it && typeof it.id === 'string')
+      .map((it: any) =>
+        env.DB.prepare(`
+          INSERT INTO network_overrides (id, name, sort_order, updated_at)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET sort_order = excluded.sort_order, updated_at = excluded.updated_at
+        `).bind(
+          it.id,
+          it.name || it.id,
+          it.sortOrder !== null && it.sortOrder !== undefined ? Number(it.sortOrder) : null,
+          now
+        )
+      );
+
+    if (stmts.length > 0) {
+      await env.DB.batch(stmts);
+    }
+
+    return jsonResponse({ success: true, message: 'تم حفظ ترتيب السلاسل بنجاح' });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل إعادة ترتيب السلاسل: ' + (err?.message || '') }, 500);
   }
 }
 
@@ -4902,6 +5045,8 @@ async function handleAdminDeleteNetwork(request: Request, env: Env, id: string):
   if (!env.DB) {
     return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
   }
+
+  await ensureNetworksTable(env.DB);
 
   try {
     const isDefault = DEFAULT_BACKEND_NETWORKS.some((d) => d.id.toLowerCase() === id.toLowerCase());
@@ -4924,6 +5069,10 @@ async function handleAdminDeleteNetwork(request: Request, env: Env, id: string):
 }
 
 async function handleGetPublicNetworks(env: Env): Promise<Response> {
+  if (env.DB) {
+    await ensureNetworksTable(env.DB);
+  }
+
   let dbOverrides: any[] = [];
   if (env.DB) {
     try {
@@ -4948,6 +5097,11 @@ async function handleGetPublicNetworks(env: Env): Promise<Response> {
       if (ov.keywords) {
         try { kw = JSON.parse(ov.keywords); } catch { kw = ov.keywords.split(',').map((k: string) => k.trim()); }
       }
+      let excluded: string[] = [];
+      try { excluded = JSON.parse(ov.excluded_channel_ids || '[]'); } catch {}
+      let hidden: string[] = [];
+      try { hidden = JSON.parse(ov.hidden_channel_ids || '[]'); } catch {}
+
       activeNetworks.push({
         id: def.id,
         name: ov.name || def.name,
@@ -4955,6 +5109,8 @@ async function handleGetPublicNetworks(env: Env): Promise<Response> {
         icon: ov.icon || def.icon,
         keywords: kw,
         sortOrder: ov.sort_order !== null && ov.sort_order !== undefined ? ov.sort_order : (i + 1) * 10,
+        excludedChannelIds: excluded,
+        hiddenChannelIds: hidden,
       });
       overrideMap.delete(def.id.toLowerCase());
     } else {
@@ -4965,6 +5121,8 @@ async function handleGetPublicNetworks(env: Env): Promise<Response> {
         icon: def.icon,
         keywords: def.keywords,
         sortOrder: (i + 1) * 10,
+        excludedChannelIds: [],
+        hiddenChannelIds: [],
       });
     }
   }
@@ -4975,6 +5133,11 @@ async function handleGetPublicNetworks(env: Env): Promise<Response> {
     if (ov.keywords) {
       try { kw = JSON.parse(ov.keywords); } catch { kw = ov.keywords.split(',').map((k: string) => k.trim()); }
     }
+    let excluded: string[] = [];
+    try { excluded = JSON.parse(ov.excluded_channel_ids || '[]'); } catch {}
+    let hidden: string[] = [];
+    try { hidden = JSON.parse(ov.hidden_channel_ids || '[]'); } catch {}
+
     activeNetworks.push({
       id: ov.id,
       name: ov.name,
@@ -4982,6 +5145,8 @@ async function handleGetPublicNetworks(env: Env): Promise<Response> {
       icon: ov.icon || 'hub',
       keywords: kw,
       sortOrder: ov.sort_order !== null && ov.sort_order !== undefined ? ov.sort_order : 9999,
+      excludedChannelIds: excluded,
+      hiddenChannelIds: hidden,
     });
   }
 
@@ -5371,6 +5536,202 @@ async function handleHlsProxy(request: Request, url: URL): Promise<Response> {
   });
 }
 
+// ==========================================
+// وظائف قنوات بث المسلسلات 24/7 (Simulated Live TV)
+// ==========================================
+
+let isSimulatedChannelsTableReady = false;
+
+async function ensureSimulatedChannelsTable(db: D1Database): Promise<void> {
+  if (isSimulatedChannelsTableReady) return;
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS simulated_channels_247 (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        logo TEXT,
+        category TEXT NOT NULL,
+        is_active INTEGER DEFAULT 1,
+        sort_order INTEGER,
+        playlists TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_simulated_channels_sort ON simulated_channels_247(sort_order);
+    `);
+    isSimulatedChannelsTableReady = true;
+  } catch (err) {
+    console.warn('[DB] Failed to ensure simulated_channels_247 table:', err);
+  }
+}
+
+async function handleAdminGetSimulatedChannels(request: Request, env: Env): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  if (env.DB) {
+    await ensureSimulatedChannelsTable(env.DB);
+  }
+
+  try {
+    const res = await env.DB.prepare(
+      'SELECT * FROM simulated_channels_247 ORDER BY CASE WHEN sort_order IS NOT NULL THEN sort_order ELSE 99999 END ASC, updated_at DESC'
+    ).all<any>();
+
+    const channels = (res.results || []).map((r) => {
+      let playlists = [];
+      try { playlists = JSON.parse(r.playlists || '[]'); } catch {}
+      return {
+        id: r.id,
+        name: r.name,
+        logo: r.logo,
+        category: r.category,
+        isActive: Boolean(r.is_active),
+        sortOrder: r.sort_order,
+        playlists,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      };
+    });
+
+    return jsonResponse({ channels });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل جلب قنوات المسلسلات 24/7: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminSaveSimulatedChannel(request: Request, env: Env, channelIdParam?: string): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  await ensureSimulatedChannelsTable(env.DB);
+
+  try {
+    const body = (await request.json()) as any;
+    let id = String(channelIdParam || body.id || '').trim();
+    if (!id) {
+      id = `sim247_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    }
+
+    const name = String(body.name || '').trim();
+    if (!name) {
+      return jsonResponse({ error: 'اسم القناة مطلوب' }, 400);
+    }
+
+    const logo = body.logo !== undefined ? String(body.logo).trim() : '';
+    const category = String(body.category || 'دراما').trim();
+    const isActive = body.isActive !== undefined ? (body.isActive ? 1 : 0) : 1;
+    const sortOrder = body.sortOrder !== undefined && body.sortOrder !== null ? Number(body.sortOrder) : null;
+
+    let playlistsStr = '[]';
+    if (Array.isArray(body.playlists)) {
+      playlistsStr = JSON.stringify(body.playlists);
+    } else if (typeof body.playlists === 'string') {
+      playlistsStr = body.playlists;
+    }
+
+    const now = new Date().toISOString();
+
+    await env.DB.prepare(`
+      INSERT INTO simulated_channels_247 (
+        id, name, logo, category, is_active, sort_order, playlists, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        logo = excluded.logo,
+        category = excluded.category,
+        is_active = excluded.is_active,
+        sort_order = excluded.sort_order,
+        playlists = excluded.playlists,
+        updated_at = excluded.updated_at
+    `).bind(
+      id, name, logo, category, isActive, sortOrder, playlistsStr, now, now
+    ).run();
+
+    return jsonResponse({ success: true, message: 'تم حفظ قناة 24/7 بنجاح', id });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل حفظ القناة: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminDeleteSimulatedChannel(request: Request, env: Env, id: string): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  await ensureSimulatedChannelsTable(env.DB);
+
+  try {
+    await env.DB.prepare('DELETE FROM simulated_channels_247 WHERE id = ?').bind(id).run();
+    return jsonResponse({ success: true, message: 'تم حذف قناة 24/7 بنجاح' });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل حذف القناة: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleGetPublicSimulatedChannels(env: Env): Promise<Response> {
+  if (env.DB) {
+    await ensureSimulatedChannelsTable(env.DB);
+  }
+
+  try {
+    const res = await env.DB.prepare(
+      'SELECT * FROM simulated_channels_247 WHERE is_active = 1 ORDER BY CASE WHEN sort_order IS NOT NULL THEN sort_order ELSE 99999 END ASC, updated_at DESC'
+    ).all<any>();
+
+    const channels = (res.results || []).map((r) => {
+      let playlists = [];
+      try { playlists = JSON.parse(r.playlists || '[]'); } catch {}
+
+      // دمج جميع الحلقات من كافة الأجزاء/القوائم بالترتيب في قائمة مسلسلة واحدة
+      const allEpisodes: any[] = [];
+      for (const pl of playlists) {
+        if (Array.isArray(pl.episodes)) {
+          for (const ep of pl.episodes) {
+            if (ep && ep.youtubeId) {
+              allEpisodes.push({
+                title: ep.title || 'حلقة',
+                youtubeId: ep.youtubeId,
+                duration: Number(ep.duration) || 1200,
+                seasonName: pl.title || '',
+              });
+            }
+          }
+        }
+      }
+
+      return {
+        id: r.id,
+        name: r.name,
+        logo: r.logo,
+        category: r.category,
+        sortOrder: r.sort_order,
+        playlists,
+        episodes: allEpisodes,
+      };
+    });
+
+    return jsonResponse({ channels }, 200, {
+      'Cache-Control': 'public, max-age=60',
+    });
+  } catch (err: any) {
+    return jsonResponse({ channels: [] });
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -5549,6 +5910,9 @@ export default {
     if (url.pathname === '/api/admin/networks' && request.method === 'POST') {
       return handleAdminSaveNetwork(request, env);
     }
+    if (url.pathname === '/api/admin/networks/reorder' && request.method === 'POST') {
+      return handleAdminReorderNetworks(request, env);
+    }
     if (url.pathname.startsWith('/api/admin/networks/')) {
       const idParam = decodeURIComponent(url.pathname.substring('/api/admin/networks/'.length));
       if (request.method === 'PUT' || request.method === 'POST') {
@@ -5560,6 +5924,28 @@ export default {
     }
     if (url.pathname === '/api/networks' && request.method === 'GET') {
       return handleGetPublicNetworks(env);
+    }
+
+    // ==========================================
+    // مسارات قنوات بث المسلسلات 24/7 (Simulated Live TV)
+    // ==========================================
+    if (url.pathname === '/api/admin/simulated-channels' && request.method === 'GET') {
+      return handleAdminGetSimulatedChannels(request, env);
+    }
+    if (url.pathname === '/api/admin/simulated-channels' && request.method === 'POST') {
+      return handleAdminSaveSimulatedChannel(request, env);
+    }
+    if (url.pathname.startsWith('/api/admin/simulated-channels/')) {
+      const idParam = decodeURIComponent(url.pathname.substring('/api/admin/simulated-channels/'.length));
+      if (request.method === 'PUT' || request.method === 'POST') {
+        return handleAdminSaveSimulatedChannel(request, env, idParam);
+      }
+      if (request.method === 'DELETE') {
+        return handleAdminDeleteSimulatedChannel(request, env, idParam);
+      }
+    }
+    if (url.pathname === '/api/simulated-channels' && request.method === 'GET') {
+      return handleGetPublicSimulatedChannels(env);
     }
 
     // 3. نقاط نهاية بوابة الموزعين (Reseller Portal)

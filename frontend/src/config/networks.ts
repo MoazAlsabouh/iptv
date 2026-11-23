@@ -14,6 +14,8 @@ export interface ChannelNetwork {
   isHidden?: boolean;
   isDeleted?: boolean;
   sortOrder?: number;
+  excludedChannelIds?: string[];
+  hiddenChannelIds?: string[];
   updatedAt?: string | null;
 }
 

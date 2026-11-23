@@ -148,7 +148,20 @@ export function groupChannelsByNetwork(
   const groups: CategoryGroup[] = [];
 
   for (const network of networkList) {
-    const matched = channels.filter((ch) => matchChannelToNetwork(ch, network));
+    if (network.isHidden || network.isDeleted) continue;
+
+    const excludedSet = new Set((network.excludedChannelIds || []).map((id) => id.toLowerCase().trim()));
+    const hiddenSet = new Set((network.hiddenChannelIds || []).map((id) => id.toLowerCase().trim()));
+
+    const matched = channels.filter((ch) => {
+      const chId = String(ch.id || '').toLowerCase().trim();
+      const chName = String(ch.name || '').toLowerCase().trim();
+      // استثناء القنوات المحذوفة أو المخفية محلياً من هذه السلسلة فقط
+      if (excludedSet.has(chId) || excludedSet.has(chName)) return false;
+      if (hiddenSet.has(chId) || hiddenSet.has(chName)) return false;
+      return matchChannelToNetwork(ch, network);
+    });
+
     if (matched.length > 0) {
       const sampleItem = matched.find((c) => Boolean(c.logo && c.logo.trim().length > 0));
       groups.push({

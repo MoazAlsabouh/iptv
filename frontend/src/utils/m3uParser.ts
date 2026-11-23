@@ -334,6 +334,7 @@ export interface ChannelOverride {
   isDeleted?: boolean;
   sortOrder?: number | null;
   isCustom?: boolean;
+  manualOverride?: boolean;
 }
 
 /**
@@ -397,6 +398,9 @@ export function applyChannelOverrides(
         streamType: ov.streamType || item.streamType || 'auto',
         isHidden: ov.isHidden !== undefined ? ov.isHidden : item.isHidden,
         sortOrder: ov.sortOrder !== undefined ? ov.sortOrder : item.sortOrder,
+        sources: ov.manualOverride && ov.streamUrl
+          ? [{ label: 'مصدر أساسي مثبت 🔒', url: ov.streamUrl }, ...(item.sources || []).filter((s) => s.url !== ov.streamUrl)]
+          : item.sources,
       };
 
       modifiedList.push(updatedItem);

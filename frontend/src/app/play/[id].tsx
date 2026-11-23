@@ -30,6 +30,12 @@ import { ChannelLogo } from '../../components/ChannelLogo';
 import { StreamSource, MediaItem } from '../../types/media';
 import { useAuth } from '../../context/AuthContext';
 import { shouldAutoProxy, getProxyStreamUrl } from '../../utils/proxy';
+import {
+  getVirtualLivePosition,
+  extractYouTubeId,
+  VirtualLiveEpisode,
+  VirtualLivePosition,
+} from '../../utils/virtualLive';
 
 /**
  * شاشة مشغل الفيديو بتصميم ملء الشاشة الداكن والتحكم الكامل بالريموت كنترول.
@@ -54,7 +60,73 @@ export function PlayerScreen(): React.JSX.Element {
     episode?: string;
     lang?: string;
     originalLanguage?: string;
+    episodes?: string;
   }>();
+
+  const isSimulated247 = useMemo(() => {
+    return params.type === 'simulated247';
+  }, [params.type]);
+
+  const [simulatedEpisodes, setSimulatedEpisodes] = useState<VirtualLiveEpisode[]>(() => {
+    if (params.type === 'simulated247' && params.episodes) {
+      try {
+        const parsed = JSON.parse(decodeURIComponent(params.episodes));
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch {}
+    }
+    return [];
+  });
+
+  const [virtualLivePos, setVirtualLivePos] = useState<VirtualLivePosition | null>(() => {
+    if (params.type === 'simulated247' && params.episodes) {
+      try {
+        const parsed = JSON.parse(decodeURIComponent(params.episodes));
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return getVirtualLivePosition(parsed);
+        }
+      } catch {}
+    }
+    return null;
+  });
+
+  // إذا لم يتم تمرير الحلقات مباشرة عبر params، نجلبها من السيرفر
+  useEffect(() => {
+    if (!isSimulated247 || simulatedEpisodes.length > 0) return;
+    let isMounted = true;
+    const fetchSimulatedChannel = async () => {
+      try {
+        const res = await fetch('https://iptv-backend.moaznsm.workers.dev/api/simulated-channels');
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && data.success && Array.isArray(data.channels)) {
+            const found = data.channels.find((c: any) => c.id === params.id);
+            if (found && Array.isArray(found.episodes)) {
+              setSimulatedEpisodes(found.episodes);
+              setVirtualLivePos(getVirtualLivePosition(found.episodes));
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+    };
+    fetchSimulatedChannel();
+    return () => {
+      isMounted = false;
+    };
+  }, [isSimulated247, simulatedEpisodes.length, params.id]);
+
+  // تحديث الموضع الافتراضي عند توفر الحلقات أو دورياً كل 10 ثوانٍ
+  useEffect(() => {
+    if (!isSimulated247 || simulatedEpisodes.length === 0) return;
+    const updatePos = () => {
+      const pos = getVirtualLivePosition(simulatedEpisodes);
+      setVirtualLivePos(pos);
+    };
+    updatePos();
+    const timer = setInterval(updatePos, 10000);
+    return () => clearInterval(timer);
+  }, [isSimulated247, simulatedEpisodes]);
 
   const rawFavoriteIds = useAppStore((state) => state.favoriteIds);
   const favoriteIds = Array.isArray(rawFavoriteIds) ? rawFavoriteIds : [];
@@ -110,6 +182,7 @@ export function PlayerScreen(): React.JSX.Element {
 
   // التحقق مما إذا كان المحتوى VOD (فيلم أو مسلسل)
   const isVod = useMemo(() => {
+    if (params.type === 'simulated247') return false;
     return (
       params.type === 'movie' ||
       params.type === 'tv' ||
@@ -270,7 +343,12 @@ export function PlayerScreen(): React.JSX.Element {
   }, [channels, channelId, liveChannel]);
 
   const effectiveChannelId = liveChannel ? liveChannel.id : channelId;
-  const effectiveTitle = liveChannel ? liveChannel.name : channelTitle;
+  const effectiveTitle = useMemo(() => {
+    if (isSimulated247 && virtualLivePos?.currentEpisode) {
+      return `${channelTitle || 'بث 24/7'} • ${virtualLivePos.currentEpisode.title}`;
+    }
+    return liveChannel ? liveChannel.name : channelTitle;
+  }, [isSimulated247, virtualLivePos, liveChannel, channelTitle]);
   const effectiveLogo = liveChannel ? (liveChannel.logo || '') : channelLogo;
 
   // 2. سياق القسم النشط للتنقل السريع (Zapping)
@@ -527,6 +605,11 @@ export function PlayerScreen(): React.JSX.Element {
 
   // رابط البث الفعلي بناءً على المصدر المختار
   const currentStreamUrl = useMemo(() => {
+    if (isSimulated247 && virtualLivePos?.currentEpisode) {
+      const ep = virtualLivePos.currentEpisode;
+      const ytId = extractYouTubeId(ep.youtubeId);
+      return `https://www.youtube.com/embed/${ytId}?start=${virtualLivePos.startAt}&autoplay=1&controls=0&rel=0&playsinline=1&enablejsapi=1`;
+    }
     let url = liveChannel ? liveChannel.streamUrl : rawStreamUrl;
     if (channelSources.length > 0 && channelSources[activeSourceIndex]) {
       url = channelSources[activeSourceIndex].url;
@@ -541,7 +624,7 @@ export function PlayerScreen(): React.JSX.Element {
       return getProxyStreamUrl(url);
     }
     return url;
-  }, [liveChannel, channelSources, activeSourceIndex, rawStreamUrl]);
+  }, [isSimulated247, virtualLivePos, liveChannel, channelSources, activeSourceIndex, rawStreamUrl]);
 
   const [isBuffering, setIsBuffering] = useState<boolean>(true);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
@@ -1152,6 +1235,11 @@ export function PlayerScreen(): React.JSX.Element {
             {/* عنوان وشعار القناة أو العمل */}
             {effectiveTitle ? (
               <View style={styles.titleBadge}>
+                {isSimulated247 && (
+                  <View style={{ backgroundColor: '#ef4444', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginRight: 6 }}>
+                    <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: 'bold' }}>مباشر LIVE</Text>
+                  </View>
+                )}
                 <ChannelLogo
                   uri={effectiveLogo}
                   name={effectiveTitle}
@@ -1227,7 +1315,7 @@ export function PlayerScreen(): React.JSX.Element {
             ) : null}
 
             {/* زر دليل القنوات والتنقل السريع للقنوات التلفزيونية */}
-            {!isVod && (
+            {!isVod && !isSimulated247 && (
               <Pressable
                 onPress={() => {
                   setSideMenuLevel('channels');

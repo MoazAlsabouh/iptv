@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS channel_overrides (
   is_deleted INTEGER DEFAULT 0,
   sort_order INTEGER,
   is_custom INTEGER DEFAULT 0,
+  manual_override INTEGER DEFAULT 0, -- تثبيت مصدر بث يدوي أساسي مقفل ضد التحديث التلقائي
   updated_at TEXT NOT NULL
 );
 
@@ -112,7 +113,24 @@ CREATE TABLE IF NOT EXISTS network_overrides (
   is_hidden INTEGER DEFAULT 0,
   is_deleted INTEGER DEFAULT 0,
   is_custom INTEGER DEFAULT 0,
+  excluded_channel_ids TEXT DEFAULT '[]', -- قنوات محذوفة من هذه السلسلة فقط
+  hidden_channel_ids TEXT DEFAULT '[]',   -- قنوات مخفية داخل هذه السلسلة فقط
   updated_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_network_overrides_sort ON network_overrides(sort_order);
+
+-- جدول قنوات بث المسلسلات 24/7 (Simulated Live TV)
+CREATE TABLE IF NOT EXISTS simulated_channels_247 (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  logo TEXT,
+  category TEXT NOT NULL, -- كوميديا، دراما، تاريخي، أنمي...
+  is_active INTEGER DEFAULT 1,
+  sort_order INTEGER,
+  playlists TEXT NOT NULL, -- JSON array of playlists / seasons: [{ id, title, episodes: [{ title, youtubeId, duration }] }]
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_simulated_channels_sort ON simulated_channels_247(sort_order);

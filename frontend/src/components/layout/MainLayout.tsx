@@ -15,6 +15,7 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   { id: 'channels', title: 'القنوات التلفزيونية', route: '/home', icon: 'live-tv' },
+  { id: 'simulated', title: 'بث المسلسلات 24/7', route: '/simulated', icon: 'ondemand-video' },
   { id: 'movies', title: 'الأفلام والمسلسلات', route: '/movies', icon: 'movie' },
   { id: 'favorites', title: 'المفضلة', route: '/favorites', icon: 'star' },
   { id: 'settings', title: 'الإعدادات', route: '/settings', icon: 'settings' },
