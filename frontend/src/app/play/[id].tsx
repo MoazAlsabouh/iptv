@@ -116,17 +116,15 @@ export function PlayerScreen(): React.JSX.Element {
     };
   }, [isSimulated247, simulatedEpisodes.length, params.id]);
 
-  // تحديث الموضع الافتراضي عند توفر الحلقات أو دورياً كل 10 ثوانٍ
+  // تهيئة الموضع اللحظي عند توفر الحلقات لأول مرة فقط دون قفز دوري في منتصف الحلقة
   useEffect(() => {
     if (!isSimulated247 || simulatedEpisodes.length === 0) return;
-    const updatePos = () => {
-      const pos = getVirtualLivePosition(simulatedEpisodes);
-      setVirtualLivePos(pos);
-    };
-    updatePos();
-    const timer = setInterval(updatePos, 10000);
-    return () => clearInterval(timer);
+    setVirtualLivePos((prev) => prev || getVirtualLivePosition(simulatedEpisodes));
   }, [isSimulated247, simulatedEpisodes]);
+
+  const [simulatedSyncKey, setSimulatedSyncKey] = useState<number>(0);
+  type TopControlTarget = 'back' | 'sync' | 'episodes' | 'quality' | 'channels';
+  const [focusedTopTarget, setFocusedTopTarget] = useState<TopControlTarget>('back');
 
   const rawFavoriteIds = useAppStore((state) => state.favoriteIds);
   const favoriteIds = Array.isArray(rawFavoriteIds) ? rawFavoriteIds : [];
@@ -603,12 +601,61 @@ export function PlayerScreen(): React.JSX.Element {
     setIsBuffering(true);
   }, [effectiveChannelId]);
 
+  // مزامنة لحظية فورية مع البث المباشر 24/7 عند رغبة المستخدم
+  const handleSyncToLive = useCallback(() => {
+    if (!isSimulated247 || simulatedEpisodes.length === 0) return;
+    const livePos = getVirtualLivePosition(simulatedEpisodes);
+    setVirtualLivePos(livePos);
+    setSimulatedSyncKey((prev) => prev + 1);
+    setIsBuffering(true);
+    showOsd(
+      `مزامنة البث المباشر: ${livePos.currentEpisode?.title || ''}`,
+      'sync'
+    );
+  }, [isSimulated247, simulatedEpisodes, showOsd]);
+
+  // المزامنة الذكية التلقائية عند انتهاء الحلقة (onEnded)
+  const handleEpisodeEnded = useCallback(() => {
+    if (!isSimulated247 || simulatedEpisodes.length === 0) return;
+
+    const currentIdx = virtualLivePos?.episodeIndex ?? 0;
+    const currentEp = virtualLivePos?.currentEpisode;
+
+    // استدعاء دالة المزامنة الحية لإعادة حساب الموضع في الدورة العالمية
+    const livePos = getVirtualLivePosition(simulatedEpisodes);
+
+    // التحقق مما إذا كانت الدالة أعادت نفس الحلقة التي انتهت للتو
+    const isSameEpisode =
+      livePos.episodeIndex === currentIdx ||
+      (currentEp && livePos.currentEpisode?.youtubeId === currentEp.youtubeId);
+
+    if (isSameEpisode) {
+      // حماية من التكرار: إذا انتهت الحلقة قبل مدتها المسجلة وأعادت الدالة نفس الحلقة،
+      // ننتقل إجبارياً إلى الحلقة التالية من الثانية 0 حتى لا تُعاد نفس الحلقة
+      const nextIndex = (currentIdx + 1) % simulatedEpisodes.length;
+      const nextEp = simulatedEpisodes[nextIndex];
+      setVirtualLivePos({
+        currentEpisode: nextEp,
+        episodeIndex: nextIndex,
+        startAt: 0,
+        totalDuration: livePos.totalDuration,
+      });
+      setSimulatedSyncKey((prev) => prev + 1);
+      showOsd(`الحلقة التالية: ${nextEp?.title || ''}`, 'skip-next');
+    } else {
+      // الحلقة التالية في البث الحي: تشغيلها من موضعها اللحظي (مثلاً بعد 15 أو 20 ثانية لتعويض أي انزياح)
+      setVirtualLivePos(livePos);
+      setSimulatedSyncKey((prev) => prev + 1);
+      showOsd(`مزامنة البث: ${livePos.currentEpisode?.title || ''}`, 'sync');
+    }
+  }, [isSimulated247, simulatedEpisodes, virtualLivePos, showOsd]);
+
   // رابط البث الفعلي بناءً على المصدر المختار
   const currentStreamUrl = useMemo(() => {
     if (isSimulated247 && virtualLivePos?.currentEpisode) {
       const ep = virtualLivePos.currentEpisode;
       const ytId = extractYouTubeId(ep.youtubeId);
-      return `https://www.youtube.com/embed/${ytId}?start=${virtualLivePos.startAt}&autoplay=1&controls=0&rel=0&playsinline=1&enablejsapi=1`;
+      return `https://www.youtube-nocookie.com/embed/${ytId}?start=${virtualLivePos.startAt}&autoplay=1&controls=0&rel=0&playsinline=1&enablejsapi=1`;
     }
     let url = liveChannel ? liveChannel.streamUrl : rawStreamUrl;
     if (channelSources.length > 0 && channelSources[activeSourceIndex]) {
@@ -616,7 +663,7 @@ export function PlayerScreen(): React.JSX.Element {
     }
     // تحويل روابط يوتيوب تلقائياً إلى صيغة التضمين الآمنة لمنع خطأ X-Frame-Options
     const sUrl = String(url || '');
-    if (sUrl && (sUrl.includes('youtube.com') || sUrl.includes('youtu.be'))) {
+    if (sUrl && (sUrl.includes('youtube.com') || sUrl.includes('youtube-nocookie.com') || sUrl.includes('youtu.be'))) {
       url = toYouTubeEmbedUrl(url);
     }
     // إذا كان الرابط ينتمي لنطاقات تفرض حظر 403 على المتصفحات، نوجهه مباشرة للبروكسي
@@ -1006,6 +1053,15 @@ export function PlayerScreen(): React.JSX.Element {
         return;
       }
       resetOverlayTimer();
+      // عند ظهور الواجهة والشريط العلوي محدد لقنوات 24/7
+      if (focusedControlSection === 'top' && isSimulated247) {
+        if (focusedTopTarget === 'back') {
+          setFocusedTopTarget('sync');
+        } else if (focusedTopTarget === 'sync' && hasMultiQuality) {
+          setFocusedTopTarget('quality');
+        }
+        return;
+      }
       // عند ظهور الواجهة والشريط السفلي محدد
       if (focusedControlSection === 'bottom' && !isEmbed) {
         const curIdx = bottomControlOrder.indexOf(focusedBottomTarget);
@@ -1014,7 +1070,7 @@ export function PlayerScreen(): React.JSX.Element {
         }
         return;
       }
-      if (!isVod) {
+      if (!isVod && !isSimulated247) {
         const curIdx = activeChannelListRef.current.findIndex((c) => c.id === effectiveChannelId);
         setFocusedDrawerChannelIndex(curIdx >= 0 ? curIdx : 0);
         setSideMenuLevel('channels');
@@ -1042,6 +1098,15 @@ export function PlayerScreen(): React.JSX.Element {
         return;
       }
       resetOverlayTimer();
+      // عند ظهور الواجهة والشريط العلوي محدد لقنوات 24/7
+      if (focusedControlSection === 'top' && isSimulated247) {
+        if (focusedTopTarget === 'quality') {
+          setFocusedTopTarget('sync');
+        } else if (focusedTopTarget === 'sync') {
+          setFocusedTopTarget('back');
+        }
+        return;
+      }
       // عند ظهور الواجهة والشريط السفلي محدد
       if (focusedControlSection === 'bottom' && !isEmbed) {
         const curIdx = bottomControlOrder.indexOf(focusedBottomTarget);
@@ -1066,6 +1131,21 @@ export function PlayerScreen(): React.JSX.Element {
         return;
       }
       resetOverlayTimer();
+      // إذا كان التركيز في القسم العلوي لقنوات 24/7
+      if (focusedControlSection === 'top' && isSimulated247) {
+        if (focusedTopTarget === 'sync') {
+          handleSyncToLive();
+          return;
+        }
+        if (focusedTopTarget === 'back') {
+          handleGoBack();
+          return;
+        }
+        if (focusedTopTarget === 'quality') {
+          setShowQualityModal(true);
+          return;
+        }
+      }
       // إذا كان التركيز في القسم السفلي
       if (focusedControlSection === 'bottom' && !isEmbed) {
         switch (focusedBottomTarget) {
@@ -1098,7 +1178,7 @@ export function PlayerScreen(): React.JSX.Element {
         }
         return;
       }
-      if (!isVod && !showSideMenu) {
+      if (!isVod && !isSimulated247 && !showSideMenu) {
         const curIdx = activeChannelListRef.current.findIndex((c) => c.id === effectiveChannelId);
         setFocusedDrawerChannelIndex(curIdx >= 0 ? curIdx : 0);
         setSideMenuLevel('channels');
@@ -1149,7 +1229,7 @@ export function PlayerScreen(): React.JSX.Element {
       {currentStreamUrl && !playbackError ? (
         <TVPlayer
           ref={playerRef}
-          key={`tv-player-${retryKey}-${activeSourceIndex}`}
+          key={`tv-player-${retryKey}-${activeSourceIndex}-${virtualLivePos?.episodeIndex ?? 0}-${simulatedSyncKey}`}
           streamUrl={currentStreamUrl}
           contentFit={contentFit}
           selectedLevel={selectedHlsLevel}
@@ -1158,6 +1238,7 @@ export function PlayerScreen(): React.JSX.Element {
           style={StyleSheet.absoluteFillObject}
           onBuffering={(buffering) => setIsBuffering(buffering)}
           onError={handlePlayerError}
+          onEnded={handleEpisodeEnded}
         />
       ) : !currentStreamUrl ? (
         <View style={styles.noUrlBox}>
@@ -1215,21 +1296,24 @@ export function PlayerScreen(): React.JSX.Element {
               onPress={handleGoBack}
               style={({ focused }) => [
                 styles.overlayBtn,
-                focused && styles.overlayBtnFocused,
+                (focused || (focusedControlSection === 'top' && focusedTopTarget === 'back')) && styles.overlayBtnFocused,
               ]}
             >
-              {({ focused }) => (
-                <View style={styles.btnRow}>
-                  <MaterialIcons
-                    name="arrow-back"
-                    size={22}
-                    color={focused ? '#000000' : '#ffffff'}
-                  />
-                  <Text style={[styles.overlayBtnText, focused && styles.overlayBtnTextFocused]}>
-                    خروج
-                  </Text>
-                </View>
-              )}
+              {({ focused }) => {
+                const isBtnFocused = focused || (focusedControlSection === 'top' && focusedTopTarget === 'back');
+                return (
+                  <View style={styles.btnRow}>
+                    <MaterialIcons
+                      name="arrow-back"
+                      size={22}
+                      color={isBtnFocused ? '#000000' : '#ffffff'}
+                    />
+                    <Text style={[styles.overlayBtnText, isBtnFocused && styles.overlayBtnTextFocused]}>
+                      خروج
+                    </Text>
+                  </View>
+                );
+              }}
             </Pressable>
 
             {/* عنوان وشعار القناة أو العمل */}
@@ -1254,6 +1338,36 @@ export function PlayerScreen(): React.JSX.Element {
                 </Text>
               </View>
             ) : null}
+
+            {/* زر مزامنة البث المباشر (لقنوات المسلسلات 24/7 فقط) */}
+            {isSimulated247 && (
+              <Pressable
+                onPress={() => {
+                  handleSyncToLive();
+                  resetOverlayTimer();
+                }}
+                style={({ focused }: any) => [
+                  styles.syncLiveBtn,
+                  (focused || (focusedControlSection === 'top' && focusedTopTarget === 'sync')) && styles.syncLiveBtnFocused,
+                ]}
+              >
+                {({ focused }: any) => {
+                  const isBtnFocused = Boolean(focused) || (focusedControlSection === 'top' && focusedTopTarget === 'sync');
+                  return (
+                    <View style={styles.btnRow}>
+                      <MaterialIcons
+                        name="sync"
+                        size={18}
+                        color={isBtnFocused ? '#000000' : '#10b981'}
+                      />
+                      <Text style={[styles.syncLiveBtnText, isBtnFocused && styles.syncLiveBtnTextFocused]}>
+                        مزامنة البث
+                      </Text>
+                    </View>
+                  );
+                }}
+              </Pressable>
+            )}
 
             {/* زر اختيار المواسم والحلقات للمسلسلات */}
             {isTvSeries && seasons.length > 0 ? (
@@ -1296,21 +1410,24 @@ export function PlayerScreen(): React.JSX.Element {
                 }}
                 style={({ focused }) => [
                   styles.qualityBtn,
-                  focused && styles.overlayBtnFocused,
+                  (focused || (focusedControlSection === 'top' && focusedTopTarget === 'quality')) && styles.overlayBtnFocused,
                 ]}
               >
-                {({ focused }) => (
-                  <View style={styles.btnRow}>
-                    <MaterialIcons
-                      name="tune"
-                      size={20}
-                      color={focused ? '#000000' : '#38bdf8'}
-                    />
-                    <Text style={[styles.qualityBtnText, focused && styles.overlayBtnTextFocused]}>
-                      السيرفرات / الجودة
-                    </Text>
-                  </View>
-                )}
+                {({ focused }) => {
+                  const isBtnFocused = focused || (focusedControlSection === 'top' && focusedTopTarget === 'quality');
+                  return (
+                    <View style={styles.btnRow}>
+                      <MaterialIcons
+                        name="tune"
+                        size={20}
+                        color={isBtnFocused ? '#000000' : '#38bdf8'}
+                      />
+                      <Text style={[styles.qualityBtnText, isBtnFocused && styles.overlayBtnTextFocused]}>
+                        السيرفرات / الجودة
+                      </Text>
+                    </View>
+                  );
+                }}
               </Pressable>
             ) : null}
 
@@ -2392,6 +2509,33 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     marginLeft: 6,
+  },
+  syncLiveBtn: {
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    borderWidth: 1.5,
+    borderColor: '#10b981',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 30,
+  },
+  syncLiveBtnFocused: {
+    backgroundColor: '#10b981',
+    borderColor: '#ffffff',
+    transform: [{ scale: 1.05 }],
+    shadowColor: '#10b981',
+    shadowOpacity: 0.8,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  syncLiveBtnText: {
+    color: '#10b981',
+    fontSize: 14,
+    fontWeight: '700',
+    marginLeft: 6,
+  },
+  syncLiveBtnTextFocused: {
+    color: '#000000',
+    fontWeight: '800',
   },
   favoriteBtn: {
     backgroundColor: 'rgba(15, 23, 42, 0.85)',

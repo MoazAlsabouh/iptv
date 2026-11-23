@@ -48,6 +48,7 @@ export interface TVPlayerProps {
   contentFit?: 'contain' | 'cover' | 'fill';
   onBuffering?: (isBuffering: boolean) => void;
   onError?: (errorMessage: string) => void;
+  onEnded?: () => void;
   onLevelsLoaded?: (levels: HlsLevelOption[]) => void;
   onPlaybackStateChange?: (state: TVPlayerPlaybackState) => void;
   selectedLevel?: number;
@@ -61,6 +62,7 @@ export function isEmbedStreamUrl(rawUrl: string, streamType?: string): boolean {
     streamType === 'youtube' ||
     streamType === 'iframe' ||
     safeStreamUrl.includes('youtube.com') ||
+    safeStreamUrl.includes('youtube-nocookie.com') ||
     safeStreamUrl.includes('youtu.be') ||
     safeStreamUrl.includes('/embed/') ||
     safeStreamUrl.includes('vidsrc') ||
@@ -74,8 +76,9 @@ export function isEmbedStreamUrl(rawUrl: string, streamType?: string): boolean {
 }
 
 /**
- * تحويل أي رابط يوتيوب بمختلف صيغه إلى صيغة التضمين (/embed/) مع معاملات التشغيل المناسبة
+ * تحويل أي رابط يوتيوب بمختلف صيغه إلى صيغة التضمين الآمنة الخالية من ملفات التتبع والإعلانات (youtube-nocookie.com/embed/)
  * يدعم: watch?v=, youtu.be/, /shorts/, /live/, /playlist?list=, والروابط المركبة (v + list)
+ * مع الإبقاء على controls=0 و autoplay=1 و start={startAt}
  */
 export function toYouTubeEmbedUrl(rawUrl: string): string {
   if (!rawUrl || typeof rawUrl !== 'string') return rawUrl || '';
@@ -117,13 +120,13 @@ export function toYouTubeEmbedUrl(rawUrl: string): string {
     }
 
     if (videoId && listId) {
-      return `https://www.youtube.com/embed/${videoId}?list=${encodeURIComponent(listId)}${startQuery}&autoplay=1&rel=0&playsinline=1&enablejsapi=1`;
+      return `https://www.youtube-nocookie.com/embed/${videoId}?list=${encodeURIComponent(listId)}${startQuery}&autoplay=1&controls=0&rel=0&playsinline=1&enablejsapi=1`;
     }
     if (videoId) {
-      return `https://www.youtube.com/embed/${videoId}?autoplay=1${startQuery}&rel=0&playsinline=1&enablejsapi=1`;
+      return `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&controls=0${startQuery}&rel=0&playsinline=1&enablejsapi=1`;
     }
     if (listId) {
-      return `https://www.youtube.com/embed/videoseries?list=${encodeURIComponent(listId)}${startQuery}&autoplay=1&rel=0&playsinline=1&enablejsapi=1`;
+      return `https://www.youtube-nocookie.com/embed/videoseries?list=${encodeURIComponent(listId)}${startQuery}&autoplay=1&controls=0&rel=0&playsinline=1&enablejsapi=1`;
     }
   } catch {
     const vMatch = trimmed.match(/(?:[?&]v=|youtu\.be\/|\/embed\/|\/shorts\/|\/live\/)([a-zA-Z0-9_-]{11})/);
@@ -134,13 +137,13 @@ export function toYouTubeEmbedUrl(rawUrl: string): string {
     const startQuery = startMatch ? `&start=${startMatch[1]}` : '';
 
     if (videoId && listId) {
-      return `https://www.youtube.com/embed/${videoId}?list=${encodeURIComponent(listId)}${startQuery}&autoplay=1&rel=0&playsinline=1&enablejsapi=1`;
+      return `https://www.youtube-nocookie.com/embed/${videoId}?list=${encodeURIComponent(listId)}${startQuery}&autoplay=1&controls=0&rel=0&playsinline=1&enablejsapi=1`;
     }
     if (videoId) {
-      return `https://www.youtube.com/embed/${videoId}?autoplay=1${startQuery}&rel=0&playsinline=1&enablejsapi=1`;
+      return `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&controls=0${startQuery}&rel=0&playsinline=1&enablejsapi=1`;
     }
     if (listId) {
-      return `https://www.youtube.com/embed/videoseries?list=${encodeURIComponent(listId)}${startQuery}&autoplay=1&rel=0&playsinline=1&enablejsapi=1`;
+      return `https://www.youtube-nocookie.com/embed/videoseries?list=${encodeURIComponent(listId)}${startQuery}&autoplay=1&controls=0&rel=0&playsinline=1&enablejsapi=1`;
     }
   }
 
@@ -163,6 +166,7 @@ export const TVPlayer = forwardRef<TVPlayerHandle, TVPlayerProps>(({
   contentFit = 'contain',
   onBuffering,
   onError,
+  onEnded,
   onLevelsLoaded,
   onPlaybackStateChange,
   selectedLevel = -1,
@@ -178,6 +182,8 @@ export const TVPlayer = forwardRef<TVPlayerHandle, TVPlayerProps>(({
   onBufferingRef.current = onBuffering;
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
+  const onEndedRef = useRef(onEnded);
+  onEndedRef.current = onEnded;
   const onLevelsLoadedRef = useRef(onLevelsLoaded);
   onLevelsLoadedRef.current = onLevelsLoaded;
   const onPlaybackStateChangeRef = useRef(onPlaybackStateChange);
@@ -188,6 +194,7 @@ export const TVPlayer = forwardRef<TVPlayerHandle, TVPlayerProps>(({
   const isYouTube =
     streamType === 'youtube' ||
     safeStreamUrl.includes('youtube.com') ||
+    safeStreamUrl.includes('youtube-nocookie.com') ||
     safeStreamUrl.includes('youtu.be');
 
   const isEmbedUrl = isEmbedStreamUrl(safeStreamUrl, streamType);
@@ -358,8 +365,17 @@ export const TVPlayer = forwardRef<TVPlayerHandle, TVPlayerProps>(({
           }
           if (!data || typeof data !== 'object') return;
 
+          // انتهاء تشغيل فيديو يوتيوب (state 0 = ENDED)
+          if (
+            (data.event === 'onStateChange' && (Number(data.info) === 0 || Number(data.data) === 0)) ||
+            (data.event === 'infoDelivery' && data.info && Number(data.info.playerState) === 0)
+          ) {
+            console.log('[TVPlayer] YouTube iframe video ended (state 0)');
+            onEndedRef.current?.();
+          }
+
           // أكواد أخطاء يوتيوب: 100 (محذوف)، 101/150 (معطل التضمين)، 152 (مقيد بالعمر)
-          if (data.event === 'onError' || data.info !== undefined) {
+          if (data.event === 'onError' || (data.info !== undefined && data.event !== 'onStateChange')) {
             const code = Number(data.info ?? data.data);
             if ([100, 101, 150, 152].includes(code)) {
               console.warn('[TVPlayer] YouTube iframe error received:', code);
@@ -463,9 +479,14 @@ export const TVPlayer = forwardRef<TVPlayerHandle, TVPlayerProps>(({
       onErrorRef.current?.('تعذر الاتصال بمصدر البث، يرجى إعادة المحاولة أو اختيار مصدر آخر');
     };
 
+    const onVideoEnded = () => {
+      onEndedRef.current?.();
+    };
+
     videoEl.addEventListener('playing', onPlaySuccess);
     videoEl.addEventListener('canplay', onPlaySuccess);
     videoEl.addEventListener('error', onVideoError);
+    videoEl.addEventListener('ended', onVideoEnded);
     videoEl.addEventListener('timeupdate', notifyWebPlaybackState);
     videoEl.addEventListener('pause', notifyWebPlaybackState);
     videoEl.addEventListener('play', notifyWebPlaybackState);
@@ -669,6 +690,7 @@ export const TVPlayer = forwardRef<TVPlayerHandle, TVPlayerProps>(({
       videoEl.removeEventListener('playing', onPlaySuccess);
       videoEl.removeEventListener('canplay', onPlaySuccess);
       videoEl.removeEventListener('error', onVideoError);
+      videoEl.removeEventListener('ended', onVideoEnded);
       videoEl.removeEventListener('timeupdate', notifyWebPlaybackState);
       videoEl.removeEventListener('pause', notifyWebPlaybackState);
       videoEl.removeEventListener('play', notifyWebPlaybackState);
@@ -785,6 +807,7 @@ export const TVPlayer = forwardRef<TVPlayerHandle, TVPlayerProps>(({
         style={style}
         onBuffering={onBuffering}
         onError={onError}
+        onEnded={onEnded}
       />
     );
   }
@@ -798,6 +821,7 @@ export const TVPlayer = forwardRef<TVPlayerHandle, TVPlayerProps>(({
       style={style}
       onBuffering={onBuffering}
       onError={onError}
+      onEnded={onEnded}
       onPlaybackStateChange={onPlaybackStateChange}
     />
   );
@@ -814,9 +838,10 @@ const NativeVideoPlayer = forwardRef<
     style?: StyleProp<ViewStyle>;
     onBuffering?: (isBuffering: boolean) => void;
     onError?: (errorMessage: string) => void;
+    onEnded?: () => void;
     onPlaybackStateChange?: (state: TVPlayerPlaybackState) => void;
   }
->(({ streamUrl, contentFit = 'contain', style, onBuffering, onError, onPlaybackStateChange }, ref) => {
+>(({ streamUrl, contentFit = 'contain', style, onBuffering, onError, onEnded, onPlaybackStateChange }, ref) => {
   // تحديد مصدر البث صراحةً كـ HLS لضمان تعرف ExoPlayer عليه على أندرويد والتلفاز
   const videoSource = useMemo(() => {
     if (!streamUrl) return '';
@@ -836,6 +861,20 @@ const NativeVideoPlayer = forwardRef<
 
   const onPlaybackStateChangeRef = useRef(onPlaybackStateChange);
   onPlaybackStateChangeRef.current = onPlaybackStateChange;
+  const onEndedNativeRef = useRef(onEnded);
+  onEndedNativeRef.current = onEnded;
+
+  useEffect(() => {
+    if (!player) return;
+    try {
+      const sub = (player as any).addListener?.('playToEnd', () => {
+        onEndedNativeRef.current?.();
+      });
+      return () => {
+        sub?.remove?.();
+      };
+    } catch {}
+  }, [player]);
 
   const syncPlaybackState = useCallback(() => {
     if (!player) return;
