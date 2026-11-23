@@ -8,8 +8,55 @@ if (Platform.OS !== 'web') {
   } catch {}
 }
 
-const DEFAULT_BASE_URL = 'https://tv.moazns.sy';
-const DEFAULT_REFERER = 'https://tv.moazns.sy/';
+const YOUTUBE_EMBED_BASE = 'https://iptv-backend.moaznsm.workers.dev/embed/yt';
+const CHROME_TV_USER_AGENT =
+  'Mozilla/5.0 (Linux; Android 13; TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+/**
+ * دالة مساعدة لاستخراج معرّف يوتيوب وثانية البداية من أي صيغة رابط
+ */
+export function extractYouTubeIdAndStart(rawUrl: string): { videoId: string; start: number } {
+  let videoId = '';
+  let start = 0;
+  if (!rawUrl) return { videoId, start };
+
+  const trimmed = rawUrl.trim();
+
+  // إذا كان المعرّف مجرداً بطول 11 حرفاً
+  if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) {
+    return { videoId: trimmed, start: 0 };
+  }
+
+  try {
+    const parsed = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`);
+    const startParam = parsed.searchParams.get('start') || parsed.searchParams.get('t') || '';
+    if (startParam) {
+      start = parseInt(startParam.replace('s', ''), 10) || 0;
+    }
+
+    if (parsed.hostname.includes('youtu.be')) {
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      videoId = parts[0] || '';
+    } else if (parsed.pathname.startsWith('/embed/yt')) {
+      videoId = parsed.searchParams.get('v') || '';
+    } else if (parsed.pathname.startsWith('/embed/')) {
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      videoId = parts[1] || '';
+    } else if (parsed.pathname.startsWith('/shorts/') || parsed.pathname.startsWith('/live/')) {
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      videoId = parts[1] || '';
+    } else {
+      videoId = parsed.searchParams.get('v') || '';
+    }
+  } catch {
+    const vMatch = trimmed.match(/(?:[?&]v=|youtu\.be\/|\/embed\/|\/shorts\/|\/live\/)([a-zA-Z0-9_-]{11})/);
+    const startMatch = trimmed.match(/[?&](?:start|t)=([0-9]+)/);
+    if (vMatch && vMatch[1]) videoId = vMatch[1];
+    if (startMatch && startMatch[1]) start = parseInt(startMatch[1], 10) || 0;
+  }
+
+  return { videoId, start: Math.max(0, start) };
+}
 
 export const TVEmbedPlayer: React.FC<{
   url: string;
@@ -30,37 +77,31 @@ export const TVEmbedPlayer: React.FC<{
     return () => clearTimeout(timer);
   }, [url, onBuffering]);
 
-  // معالجة رابط يوتيوب وضمان معاملات السياسة الجديدة واستبدال nocookie على منصات Native
-  const processedUrl = useMemo(() => {
-    let finalUrl = url || '';
-    const isYouTube =
-      finalUrl.includes('youtube.com') ||
-      finalUrl.includes('youtube-nocookie.com') ||
-      finalUrl.includes('youtu.be');
-
-    if (isYouTube) {
-      // على منصة Android / Native نستخدم youtube.com بدلاً من youtube-nocookie.com لتفادي Error 153
-      if (Platform.OS !== 'web' && finalUrl.includes('youtube-nocookie.com')) {
-        finalUrl = finalUrl.replace('youtube-nocookie.com', 'youtube.com');
-      }
-
-      // إضافة معاملات origin و widget_referrer و enablejsapi=1
-      const originParam = 'origin=https%3A%2F%2Ftv.moazns.sy';
-      const referrerParam = 'widget_referrer=https%3A%2F%2Ftv.moazns.sy';
-      const jsApiParam = 'enablejsapi=1';
-
-      const sep = finalUrl.includes('?') ? '&' : '?';
-      const additions: string[] = [];
-      if (!finalUrl.includes('origin=')) additions.push(originParam);
-      if (!finalUrl.includes('widget_referrer=')) additions.push(referrerParam);
-      if (!finalUrl.includes('enablejsapi=')) additions.push(jsApiParam);
-
-      if (additions.length > 0) {
-        finalUrl = `${finalUrl}${sep}${additions.join('&')}`;
-      }
-    }
-    return finalUrl;
+  // التحقق مما إذا كان الرابط يخص يوتيوب
+  const isYouTube = useMemo(() => {
+    const u = (url || '').toLowerCase();
+    return (
+      u.includes('youtube.com') ||
+      u.includes('youtube-nocookie.com') ||
+      u.includes('youtu.be') ||
+      u.includes('/embed/yt')
+    );
   }, [url]);
+
+  const ytInfo = useMemo(() => {
+    if (!isYouTube) return null;
+    return extractYouTubeIdAndStart(url);
+  }, [url, isYouTube]);
+
+  // تحديد رابط المصدر لـ WebView على Native
+  const webViewSource = useMemo(() => {
+    if (ytInfo && ytInfo.videoId) {
+      return {
+        uri: `${YOUTUBE_EMBED_BASE}?v=${encodeURIComponent(ytInfo.videoId)}&start=${ytInfo.start}`,
+      };
+    }
+    return { uri: url };
+  }, [ytInfo, url]);
 
   // استماع لرسائل انتهاء الفيديو (postMessage) على بيئة الويب
   useEffect(() => {
@@ -71,7 +112,8 @@ export const TVEmbedPlayer: React.FC<{
         if (
           event.origin &&
           (String(event.origin).includes('youtube.com') ||
-            String(event.origin).includes('youtube-nocookie.com'))
+            String(event.origin).includes('youtube-nocookie.com') ||
+            String(event.origin).includes('iptv-backend.moaznsm.workers.dev'))
         ) {
           let data = event.data;
           if (typeof data === 'string') {
@@ -86,7 +128,8 @@ export const TVEmbedPlayer: React.FC<{
           // انتهاء تشغيل فيديو يوتيوب (state 0 = ENDED)
           if (
             (data.event === 'onStateChange' && (Number(data.info) === 0 || Number(data.data) === 0)) ||
-            (data.event === 'infoDelivery' && data.info && Number(data.info.playerState) === 0)
+            (data.event === 'infoDelivery' && data.info && Number(data.info.playerState) === 0) ||
+            data.type === 'ended'
           ) {
             onEndedRef.current?.();
           }
@@ -104,69 +147,14 @@ export const TVEmbedPlayer: React.FC<{
     onBuffering?.(false);
   };
 
+  // على منصة Native / Android TV: تحميل صفحة Worker الموثقة كـ uri حقيقي
   if (Platform.OS !== 'web' && WebView) {
-    const escapedUrl = processedUrl.replace(/"/g, '&quot;');
-    const htmlContent = `<!DOCTYPE html>
-<html lang="ar">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <style>
-    * { box-sizing: border-box; }
-    html, body {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
-      background-color: #000;
-      overflow: hidden;
-    }
-    #player-frame {
-      width: 100%;
-      height: 100%;
-      border: 0;
-      display: block;
-    }
-  </style>
-</head>
-<body>
-  <iframe
-    id="player-frame"
-    src="${escapedUrl}"
-    referrerpolicy="strict-origin-when-cross-origin"
-    allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-    allowfullscreen
-  ></iframe>
-  <script>
-    (function() {
-      window.addEventListener('message', function(e) {
-        try {
-          var d = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
-          if (!d) return;
-          if ((d.event === 'onStateChange' && (Number(d.info) === 0 || Number(d.data) === 0)) ||
-              (d.event === 'infoDelivery' && d.info && Number(d.info.playerState) === 0)) {
-            if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
-              window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ended' }));
-            }
-          }
-        } catch(err) {}
-      });
-    })();
-  </script>
-</body>
-</html>`;
-
     return (
       <View style={[StyleSheet.absoluteFill, styles.container, style]}>
         <WebView
-          source={{
-            html: htmlContent,
-            baseUrl: DEFAULT_BASE_URL,
-            headers: {
-              Referer: DEFAULT_REFERER,
-            },
-          }}
+          source={webViewSource}
           style={styles.webview}
+          userAgent={CHROME_TV_USER_AGENT}
           javaScriptEnabled={true}
           domStorageEnabled={true}
           mediaPlaybackRequiresUserAction={false}
@@ -193,10 +181,11 @@ export const TVEmbedPlayer: React.FC<{
     );
   }
 
+  // على منصة Web: الإبقاء على iframe كما هو لأنه يعمل بنجاح
   return (
     <View style={[StyleSheet.absoluteFill, styles.container, style]}>
       <iframe
-        src={processedUrl}
+        src={url}
         style={{
           width: '100%',
           height: '100%',

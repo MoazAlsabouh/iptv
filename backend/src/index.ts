@@ -5537,6 +5537,93 @@ async function handleHlsProxy(request: Request, url: URL): Promise<Response> {
   });
 }
 
+/**
+ * صفحة تضمين يوتيوب خفيفة ومخصصة لـ Android TV WebView
+ * تحل خطأ Error 153 بشكل جذري عبر استضافة المشغل على أصل HTTPS حقيقي موثوق
+ */
+function handleYouTubeEmbed(request: Request): Response {
+  const url = new URL(request.url);
+  const videoId = (url.searchParams.get('v') || '').trim();
+  const startAt = Math.max(0, parseInt(url.searchParams.get('start') || '0', 10) || 0);
+
+  // تعقيم معرّف الفيديو
+  const safeVideoId = videoId.replace(/[^a-zA-Z0-9_-]/g, '');
+
+  const html = `<!DOCTYPE html>
+<html lang="ar">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>Telfazi Stream</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background-color: #000;
+    }
+    #player {
+      width: 100vw;
+      height: 100vh;
+      border: 0;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div id="player"></div>
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <script>
+    var player;
+    function onYouTubeIframeAPIReady() {
+      player = new YT.Player('player', {
+        videoId: '${safeVideoId}',
+        width: '100%',
+        height: '100%',
+        playerVars: {
+          autoplay: 1,
+          controls: 0,
+          rel: 0,
+          playsinline: 1,
+          start: ${startAt},
+          origin: 'https://iptv-backend.moaznsm.workers.dev',
+          enablejsapi: 1,
+          widget_referrer: 'https://iptv-backend.moaznsm.workers.dev'
+        },
+        events: {
+          onReady: function(event) {
+            try {
+              event.target.playVideo();
+            } catch(e) {}
+          },
+          onStateChange: function(event) {
+            // YT.PlayerState.ENDED = 0
+            if (event.data === 0) {
+              if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ended' }));
+              }
+            }
+          }
+        }
+      });
+    }
+  </script>
+</body>
+</html>`;
+
+  return new Response(html, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Referrer-Policy': 'strict-origin-when-cross-origin',
+      'Cache-Control': 'public, max-age=3600',
+      'Access-Control-Allow-Origin': '*',
+    },
+  });
+}
+
 // ==========================================
 // وظائف قنوات بث المسلسلات 24/7 (Simulated Live TV)
 // ==========================================
@@ -6147,6 +6234,14 @@ export default {
       (request.method === 'GET' || request.method === 'HEAD')
     ) {
       return handleAppVersion(env);
+    }
+
+    // نقطة نهاية تضمين يوتيوب المباشرة (لتجاوز خطأ Error 153 في Android TV WebView)
+    if (
+      (cleanPath === '/embed/yt' || url.pathname === '/embed/yt') &&
+      (request.method === 'GET' || request.method === 'HEAD')
+    ) {
+      return handleYouTubeEmbed(request);
     }
 
     // نقطة نهاية بروكسي بث HLS المباشر (تخطي حظر 403 للمتصفحات)

@@ -4,7 +4,7 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import { MaterialIcons } from '@expo/vector-icons';
 import Hls from 'hls.js';
 import { shouldAutoProxy, getProxyStreamUrl } from '../../utils/proxy';
-import { TVEmbedPlayer } from './TVEmbedPlayer';
+import { TVEmbedPlayer, extractYouTubeIdAndStart } from './TVEmbedPlayer';
 
 export interface HlsLevelOption {
   id: number; // -1 for auto
@@ -85,8 +85,21 @@ export function toYouTubeEmbedUrl(rawUrl: string): string {
   const trimmed = rawUrl.trim();
   if (!trimmed) return '';
 
-  if (!trimmed.includes('youtube.com') && !trimmed.includes('youtu.be') && !trimmed.includes('youtube-nocookie.com')) {
+  if (
+    !trimmed.includes('youtube.com') &&
+    !trimmed.includes('youtu.be') &&
+    !trimmed.includes('youtube-nocookie.com') &&
+    !trimmed.includes('/embed/yt')
+  ) {
     return trimmed;
+  }
+
+  // على منصة Native نوجّه يوتيوب لخادم التضمين المباشر لتفادي خطأ Error 153
+  if (Platform.OS !== 'web') {
+    const yt = extractYouTubeIdAndStart(trimmed);
+    if (yt.videoId) {
+      return `https://iptv-backend.moaznsm.workers.dev/embed/yt?v=${encodeURIComponent(yt.videoId)}&start=${yt.start}`;
+    }
   }
 
   try {
@@ -210,6 +223,12 @@ export const TVPlayer = forwardRef<TVPlayerHandle, TVPlayerProps>(({
     let url = safeStreamUrl;
 
     if (isYouTube) {
+      if (Platform.OS !== 'web') {
+        const yt = extractYouTubeIdAndStart(url);
+        if (yt.videoId) {
+          return `https://iptv-backend.moaznsm.workers.dev/embed/yt?v=${encodeURIComponent(yt.videoId)}&start=${yt.start}`;
+        }
+      }
       url = normalizeYouTubeEmbedUrl(url);
     }
 
