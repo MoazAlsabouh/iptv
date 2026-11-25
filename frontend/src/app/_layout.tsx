@@ -181,38 +181,26 @@ function NavigationGuard(): React.JSX.Element {
   const expoPathname = usePathname();
   const router = useRouter();
   const { token, isLoading } = useAuth();
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   // 1. فحص المقاطع عبر useSegments() من expo-router (يعمل بكفاءة عالية أثناء البناء الثابت والعميل)
   const firstSegment = segments && segments.length > 0 ? segments[0] : '';
-  const isSegmentPublic =
-    (segments as any[]).length === 0 || // الصفحة الرئيسية الجذرية /
-    firstSegment === 'admin' ||
-    firstSegment === 'reseller' ||
-    firstSegment === 'activate';
-
-  // 2. فحص المسار عبر window.location.pathname على الويب كبديل فوري متزامن
-  let browserPath = '';
-  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.pathname) {
-    browserPath = window.location.pathname.replace(/\/+$/, '') || '/';
-  }
-
-  // 3. فحص المسار عبر usePathname()
   const rawExpoPath = (expoPathname || '').replace(/\/+$/, '') || '/';
 
-  const isBrowserPathPublic =
-    browserPath === '/' ||
-    browserPath.startsWith('/admin') ||
-    browserPath.startsWith('/reseller') ||
-    browserPath.startsWith('/activate');
-
-  const isExpoPathPublic =
+  const isPublic =
+    (segments as any[]).length === 0 || // الصفحة الرئيسية الجذرية /
+    firstSegment === '' ||
+    firstSegment === 'admin' ||
+    firstSegment === 'reseller' ||
+    firstSegment === 'activate' ||
     rawExpoPath === '/' ||
     rawExpoPath.startsWith('/admin') ||
     rawExpoPath.startsWith('/reseller') ||
     rawExpoPath.startsWith('/activate');
-
-  // المسار عام إذا تحقق أي شرط من الشروط الثلاثة
-  const isPublic = isSegmentPublic || isBrowserPathPublic || isExpoPathPublic;
 
   useEffect(() => {
     // على التطبيقات الأصلية (أندرويد/تلفاز)، تجاوز صفحة الهبوط التسويقية والتوجه فوراً للمنصة
@@ -243,18 +231,14 @@ function NavigationGuard(): React.JSX.Element {
   // توجيه المستخدم المشترك خارج صفحة التفعيل فقط إذا كان في /activate
   useEffect(() => {
     if (isLoading) return;
-    if (
-      token &&
-      (firstSegment === 'activate' ||
-        rawExpoPath === '/activate' ||
-        browserPath === '/activate')
-    ) {
+    if (token && (firstSegment === 'activate' || rawExpoPath === '/activate')) {
       router.replace('/home');
     }
-  }, [token, isLoading, firstSegment, rawExpoPath, browserPath, router]);
+  }, [token, isLoading, firstSegment, rawExpoPath, router]);
 
-  // لا نعرض شاشة التحميل للمسارات العامة إطلاقاً حتى لو كان isLoading === true
-  if (isLoading && !isPublic) {
+  // لا نعرض شاشة التحميل إلا بعد اكتمال mount على العميل للمسارات المحمية فقط
+  // هذا يضمن تطابق شجرة DOM بنسبة 100% بين خادم الـ SSR وأول ريندر على المتصفح
+  if (isMounted && isLoading && !isPublic) {
     return (
       <View
         style={{

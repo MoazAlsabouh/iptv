@@ -79,18 +79,11 @@ function getInitialDeviceNameSync(): string {
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [token, setToken] = useState<string | null>(() => appStorage.getItemSync(TOKEN_KEY));
-  const [activationCode, setActivationCode] = useState<string | null>(() => appStorage.getItemSync(ACTIVATION_CODE_KEY));
-  const [subscription, setSubscription] = useState<SubscriptionInfo | null>(() => {
-    try {
-      const s = appStorage.getItemSync(SUB_KEY);
-      return s ? JSON.parse(s) : null;
-    } catch {
-      return null;
-    }
-  });
-  const [deviceId, setDeviceId] = useState<string>(getInitialDeviceIdSync);
-  const [deviceName, setDeviceName] = useState<string>(getInitialDeviceNameSync);
+  const [token, setToken] = useState<string | null>(null);
+  const [activationCode, setActivationCode] = useState<string | null>(null);
+  const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
+  const [deviceId, setDeviceId] = useState<string>('');
+  const [deviceName, setDeviceName] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   // مراجع لحفظ أحدث القيم لتجنب مشاكل الـ closures أثناء استدعاءات الخلفية

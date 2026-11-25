@@ -726,22 +726,27 @@ const PosterSlider: React.FC<PosterSliderProps> = ({
 export default function MoviesScreen(): React.JSX.Element {
   const router = useRouter();
   const { width } = useWindowDimensions();
+  const [hasMounted, setHasMounted] = useState<boolean>(false);
+  useEffect(() => {
+    setHasMounted(true);
+  }, []);
 
   // حساب الأعمدة ديناميكياً للشبكة في نتائج البحث والمفضلة
+  const effectiveWidth = hasMounted ? width : 0;
   const numColumns = useMemo(() => {
-    if (width >= 1600) return 6;
-    if (width >= 1150) return 5;
-    if (width >= 800) return 4;
-    if (width >= 520) return 3;
+    if (effectiveWidth >= 1600) return 6;
+    if (effectiveWidth >= 1150) return 5;
+    if (effectiveWidth >= 800) return 4;
+    if (effectiveWidth >= 520) return 3;
     return 2;
-  }, [width]);
+  }, [effectiveWidth]);
 
   const gridCardWidth = useMemo(() => {
     const horizontalPadding = 48;
     const gapTotal = (numColumns - 1) * 16;
-    const availableWidth = Math.max(300, width - horizontalPadding);
+    const availableWidth = Math.max(300, effectiveWidth - horizontalPadding);
     return Math.floor((availableWidth - gapTotal) / numColumns);
-  }, [width, numColumns]);
+  }, [effectiveWidth, numColumns]);
 
   // التصنيف المختار (الافتراضي: 'all')
   const [selectedCategory, setSelectedCategory] = useState<string>('all');

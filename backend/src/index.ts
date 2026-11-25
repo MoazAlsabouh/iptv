@@ -3864,8 +3864,8 @@ async function handleAdminUpdateVodSettings(request: Request, env: Env): Promise
 
 let isOverridesTableReady = false;
 
-async function ensureChannelOverridesTable(db: D1Database): Promise<void> {
-  if (isOverridesTableReady) return;
+async function ensureChannelOverridesTable(db?: D1Database): Promise<void> {
+  if (!db || isOverridesTableReady) return;
   try {
     await db.exec(`
       CREATE TABLE IF NOT EXISTS channel_overrides (
@@ -3899,31 +3899,54 @@ async function handleAdminGetChannelOverrides(request: Request, env: Env): Promi
     return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
   }
 
-  await ensureChannelOverridesTable(env.DB);
+  if (!env.DB) {
+    return jsonResponse(
+      { success: false, overrides: [], error: 'قاعدة البيانات غير متصلة' },
+      200,
+      {
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+      }
+    );
+  }
 
   try {
+    await ensureChannelOverridesTable(env.DB);
+
     const res = await env.DB.prepare(
       'SELECT * FROM channel_overrides ORDER BY CASE WHEN sort_order IS NOT NULL THEN sort_order ELSE 999999 END ASC, updated_at DESC'
     ).all<any>();
 
-    const overrides = (res.results || []).map((r) => ({
-      id: r.id,
-      name: r.name,
-      logo: r.logo,
-      category: r.category,
-      streamUrl: r.stream_url,
-      streamType: r.stream_type || 'auto',
-      isHidden: Boolean(r.is_hidden),
-      isDeleted: Boolean(r.is_deleted),
-      sortOrder: r.sort_order,
-      isCustom: Boolean(r.is_custom),
-      manualOverride: Boolean(r.manual_override),
-      updatedAt: r.updated_at,
+    const overrides = (res?.results || []).map((r: any) => ({
+      id: r?.id || '',
+      name: r?.name ?? null,
+      logo: r?.logo ?? null,
+      category: r?.category ?? null,
+      streamUrl: r?.stream_url ?? null,
+      streamType: r?.stream_type || 'auto',
+      isHidden: Boolean(r?.is_hidden),
+      isDeleted: Boolean(r?.is_deleted),
+      sortOrder: r?.sort_order !== null && r?.sort_order !== undefined ? Number(r.sort_order) : null,
+      isCustom: Boolean(r?.is_custom),
+      manualOverride: Boolean(r?.manual_override),
+      updatedAt: r?.updated_at || '',
     }));
 
-    return jsonResponse({ overrides });
+    return jsonResponse(
+      { success: true, overrides },
+      200,
+      {
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+      }
+    );
   } catch (err: any) {
-    return jsonResponse({ error: 'فشل جلب تخصيصات القنوات: ' + (err?.message || '') }, 500);
+    console.warn('[Admin] Failed to get channel overrides:', err);
+    return jsonResponse(
+      { success: false, overrides: [], error: 'فشل جلب تخصيصات القنوات: ' + (err?.message || '') },
+      200,
+      {
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+      }
+    );
   }
 }
 
@@ -3931,6 +3954,10 @@ async function handleAdminSaveChannelOverride(request: Request, env: Env): Promi
   const auth = await checkAdminAuth(request, env);
   if (!auth.authorized) {
     return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متوفرة' }, 500);
   }
 
   await ensureChannelOverridesTable(env.DB);
@@ -4008,6 +4035,10 @@ async function handleAdminUpdateChannelOverride(request: Request, env: Env, id: 
     return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
   }
 
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متوفرة' }, 500);
+  }
+
   await ensureChannelOverridesTable(env.DB);
 
   try {
@@ -4074,6 +4105,10 @@ async function handleAdminDeleteChannelOverride(request: Request, env: Env, id: 
     return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
   }
 
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متوفرة' }, 500);
+  }
+
   await ensureChannelOverridesTable(env.DB);
 
   try {
@@ -4106,6 +4141,10 @@ async function handleAdminReorderChannelOverrides(request: Request, env: Env): P
     return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
   }
 
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متوفرة' }, 500);
+  }
+
   await ensureChannelOverridesTable(env.DB);
 
   try {
@@ -4134,36 +4173,49 @@ async function handleAdminReorderChannelOverrides(request: Request, env: Env): P
 }
 
 async function handleGetPublicChannelOverrides(request: Request, env: Env): Promise<Response> {
-  await ensureChannelOverridesTable(env.DB);
+  if (!env.DB) {
+    return jsonResponse(
+      { success: false, overrides: [] },
+      200,
+      {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+      }
+    );
+  }
 
   try {
+    await ensureChannelOverridesTable(env.DB);
+
     const res = await env.DB.prepare(
       'SELECT * FROM channel_overrides ORDER BY CASE WHEN sort_order IS NOT NULL THEN sort_order ELSE 999999 END ASC, updated_at DESC'
     ).all<any>();
 
-    const overrides = (res.results || []).map((r) => ({
-      id: r.id,
-      name: r.name,
-      logo: r.logo,
-      category: r.category,
-      streamUrl: r.stream_url,
-      streamType: r.stream_type || 'auto',
-      isHidden: Boolean(r.is_hidden),
-      isDeleted: Boolean(r.is_deleted),
-      sortOrder: r.sort_order,
-      isCustom: Boolean(r.is_custom),
-      manualOverride: Boolean(r.manual_override),
+    const overrides = (res?.results || []).map((r: any) => ({
+      id: r?.id || '',
+      name: r?.name ?? null,
+      logo: r?.logo ?? null,
+      category: r?.category ?? null,
+      streamUrl: r?.stream_url ?? null,
+      streamType: r?.stream_type || 'auto',
+      isHidden: Boolean(r?.is_hidden),
+      isDeleted: Boolean(r?.is_deleted),
+      sortOrder: r?.sort_order !== null && r?.sort_order !== undefined ? Number(r.sort_order) : null,
+      isCustom: Boolean(r?.is_custom),
+      manualOverride: Boolean(r?.manual_override),
     }));
 
     return jsonResponse(
-      { overrides },
+      { success: true, overrides },
       200,
       {
         'Cache-Control': 'no-cache, no-store, must-revalidate',
       }
     );
   } catch (err: any) {
-    return jsonResponse({ overrides: [] });
+    console.warn('[Overrides] Failed to get public channel overrides:', err);
+    return jsonResponse({ success: false, overrides: [] }, 200, {
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+    });
   }
 }
 

@@ -48,7 +48,11 @@ export default function ActivateScreen(): React.JSX.Element {
     }
   }, [activationCode]);
 
-  const isWide = width >= 768;
+  const [hasMounted, setHasMounted] = useState<boolean>(false);
+  React.useEffect(() => {
+    setHasMounted(true);
+  }, []);
+  const isWide = hasMounted ? width >= 768 : false;
   const [activeFocus, setActiveFocus] = useState<'input' | 'submit'>('input');
   const [inputFocused, setInputFocused] = useState<boolean>(false);
   const inputRef = useRef<any>(null);

@@ -41,7 +41,11 @@ interface NavGroupItem {
 export default function DashboardScreen(): React.JSX.Element {
   const router = useRouter();
   const { width } = useWindowDimensions();
-  const isWide = width >= 900;
+  const [hasMounted, setHasMounted] = useState<boolean>(false);
+  useEffect(() => {
+    setHasMounted(true);
+  }, []);
+  const isWide = hasMounted ? width >= 900 : false;
   const isMobileDevice = Platform.OS !== 'web' && !Platform.isTV;
 
   const rawFavoriteIds = useAppStore((state) => state.favoriteIds);

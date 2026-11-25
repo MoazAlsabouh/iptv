@@ -78,15 +78,13 @@ async function persistFavoritesLocally(records: FavoriteRecord[]) {
   } catch {}
 }
 
-const initialFavs = loadInitialFavoritesSync();
-
 export const useAppStore = create<AppState>((set, get) => ({
   isChildMode: false,
   pinCode: null,
   playlistUrl: DEFAULT_BACKEND_M3U_URL,
-  favoriteIds: initialFavs.favoriteIds,
-  vodFavorites: initialFavs.vodFavorites,
-  channelFavorites: initialFavs.channelFavorites,
+  favoriteIds: [],
+  vodFavorites: [],
+  channelFavorites: [],
   isFavoritesLoaded: false,
   activeDashboardTab: 'category',
   isSidebarFocused: false,

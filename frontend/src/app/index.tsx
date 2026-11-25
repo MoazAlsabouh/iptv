@@ -24,9 +24,13 @@ export const DEFAULT_VERSION_NAME = '1.0.5';
 export default function LandingPage(): React.JSX.Element {
   const router = useRouter();
   const { width } = useWindowDimensions();
-  const isWide = width >= 960;
-  const isTablet = width >= 640 && width < 960;
-  const isMobile = width < 640;
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  const isWide = mounted ? width >= 960 : false;
+  const isTablet = mounted ? (width >= 640 && width < 960) : false;
+  const isMobile = mounted ? width < 640 : true;
 
   const { token } = useAuth();
   const [toastMessage, setToastMessage] = useState<string | null>(null);

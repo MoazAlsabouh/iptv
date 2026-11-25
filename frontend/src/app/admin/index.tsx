@@ -223,7 +223,11 @@ const ADMIN_STORAGE_KEY = 'iptv_admin_key';
 export default function AdminScreen(): React.JSX.Element {
   const router = useRouter();
   const { width } = useWindowDimensions();
-  const isWide = width >= 960;
+  const [hasMounted, setHasMounted] = useState<boolean>(false);
+  useEffect(() => {
+    setHasMounted(true);
+  }, []);
+  const isWide = hasMounted ? width >= 960 : false;
 
   // المصادقة
   const [adminToken, setAdminToken] = useState<string>('');
@@ -1364,7 +1368,7 @@ export default function AdminScreen(): React.JSX.Element {
   const fetchChannelOverrides = useCallback(async () => {
     setChannelOverridesLoading(true);
     try {
-      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/channels/overrides`, {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/channels/overrides?t=${Date.now()}`, {
         headers: getAuthHeaders(),
       });
       if (res.ok) {
