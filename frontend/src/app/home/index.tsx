@@ -408,8 +408,9 @@ export default function DashboardScreen(): React.JSX.Element {
     },
   });
 
-  // حالة التحميل
-  if (isLoading) {
+  // حالة التحميل — نُرجئها خلف hasMounted لضمان أن أول ريندر على العميل
+  // يطابق ما أنتجه SSR (شجرة المحتوى الفارغة) وليس <ActivityIndicator>
+  if (hasMounted && isLoading) {
     return (
       <View style={styles.centerContainer}>
         <ActivityIndicator size="large" color="#38bdf8" />
@@ -419,8 +420,8 @@ export default function DashboardScreen(): React.JSX.Element {
     );
   }
 
-  // حالة الخطأ
-  if (isError) {
+  // حالة الخطأ — نُرجئها أيضاً خلف hasMounted
+  if (hasMounted && isError) {
     return (
       <View style={styles.centerContainer}>
         <MaterialIcons name="error-outline" size={60} color="#ef4444" />

@@ -8,8 +8,7 @@ import { AuthProvider, useAuth } from '../context/AuthContext';
 import { MainLayout } from '../components/layout/MainLayout';
 import { UpdateModal } from '../components/UpdateModal';
 
-// تحميل الخطوط عبر expo-font على الويب مباشرة من المتصفح
-// هذا يمنع @expo/vector-icons من طلب ملفات الخط من /assets/node_modules/... نهائياً
+// تحميل الخطوط عبر expo-font على الويب مباشرة من المتصفح (كدعم runtime إضافي فوق +html.tsx)
 if (Platform.OS === 'web' && typeof window !== 'undefined') {
   Font.loadAsync({
     MaterialIcons: '/fonts/MaterialIcons.ttf',
@@ -32,103 +31,9 @@ if (Platform.OS === 'web' && typeof window !== 'undefined') {
   });
 }
 
-// حقن تعريفات الخطوط الصريحة في document.head فوراً على بيئة الويب كدعم إضافي
-if (Platform.OS === 'web' && typeof document !== 'undefined') {
-  const fontStyleId = 'expo-vector-icons-fonts';
-  if (!document.getElementById(fontStyleId)) {
-    const styleEl = document.createElement('style');
-    styleEl.id = fontStyleId;
-    styleEl.textContent = `
-      @font-face {
-        font-family: 'MaterialIcons';
-        src: url('/fonts/MaterialIcons.ttf') format('truetype');
-        font-display: swap;
-      }
-      @font-face {
-        font-family: 'material';
-        src: url('/fonts/MaterialIcons.ttf') format('truetype');
-        font-display: swap;
-      }
-      @font-face {
-        font-family: 'Ionicons';
-        src: url('/fonts/Ionicons.ttf') format('truetype');
-        font-display: swap;
-      }
-      @font-face {
-        font-family: 'ionicons';
-        src: url('/fonts/Ionicons.ttf') format('truetype');
-        font-display: swap;
-      }
-      @font-face {
-        font-family: 'MaterialCommunityIcons';
-        src: url('/fonts/MaterialCommunityIcons.ttf') format('truetype');
-        font-display: swap;
-      }
-      @font-face {
-        font-family: 'material-community';
-        src: url('/fonts/MaterialCommunityIcons.ttf') format('truetype');
-        font-display: swap;
-      }
-      @font-face {
-        font-family: 'Feather';
-        src: url('/fonts/Feather.ttf') format('truetype');
-        font-display: swap;
-      }
-      @font-face {
-        font-family: 'feather';
-        src: url('/fonts/Feather.ttf') format('truetype');
-        font-display: swap;
-      }
-      @font-face {
-        font-family: 'FontAwesome';
-        src: url('/fonts/FontAwesome.ttf') format('truetype');
-        font-display: swap;
-      }
-      @font-face {
-        font-family: 'AntDesign';
-        src: url('/fonts/AntDesign.ttf') format('truetype');
-        font-display: swap;
-      }
-      @font-face {
-        font-family: 'Fontisto';
-        src: url('/fonts/Fontisto.ttf') format('truetype');
-        font-display: swap;
-      }
-      @font-face {
-        font-family: 'Octicons';
-        src: url('/fonts/Octicons.ttf') format('truetype');
-        font-display: swap;
-      }
-      @font-face {
-        font-family: 'SimpleLineIcons';
-        src: url('/fonts/SimpleLineIcons.ttf') format('truetype');
-        font-display: swap;
-      }
-      @font-face {
-        font-family: 'Foundation';
-        src: url('/fonts/Foundation.ttf') format('truetype');
-        font-display: swap;
-      }
-      @font-face {
-        font-family: 'Zocial';
-        src: url('/fonts/Zocial.ttf') format('truetype');
-        font-display: swap;
-      }
-    `;
-    document.head.prepend(styleEl);
-  }
-
-  // ضبط عنوان الصفحة والأيقونة (Favicon) للهوية البصرية الجديدة
-  document.title = 'تلفازي | Telfazi';
-  let link = document.querySelector("link[rel*='icon']") as HTMLLinkElement;
-  if (!link) {
-    link = document.createElement('link');
-    link.rel = 'shortcut icon';
-    document.head.appendChild(link);
-  }
-  link.href = '/icon.png';
-
-  // معالجة تلقائية لأخطاء تحميل الحزم والوحدات المجزأة (Chunks) مثل AsyncRequireError عند نشر إصدار جديد أو انقطاع الشبكة
+// معالجة تلقائية لأخطاء تحميل الحزم (AsyncRequireError / ChunkLoadError)
+// لا نلمس DOM بشكل متزامن أثناء تحميل الوحدة حتى لا نسبب Hydration mismatch
+if (Platform.OS === 'web' && typeof window !== 'undefined') {
   const win = window as any;
   if (!win.__telfazi_chunk_handler_attached) {
     win.__telfazi_chunk_handler_attached = true;
@@ -153,10 +58,9 @@ if (Platform.OS === 'web' && typeof document !== 'undefined') {
         if (isChunkError) {
           const lastReload = window.sessionStorage?.getItem('telfazi_chunk_reload');
           const now = Date.now();
-          // منع الدخول في حلقة إعادة تحميل متكررة إذا حدثت خلال آخر 10 ثوانٍ
           if (!lastReload || now - Number(lastReload) > 10000) {
             window.sessionStorage?.setItem('telfazi_chunk_reload', String(now));
-            console.warn('[ChunkReload] تم رصد خطأ في تحميل الحزمة المجزأة، جاري إعادة تحميل الصفحة لجلب أحدث إصدار...');
+            console.warn('[ChunkReload] تم رصد خطأ في تحميل الحزمة، جاري إعادة التحميل...');
             window.location.reload();
           }
         }
