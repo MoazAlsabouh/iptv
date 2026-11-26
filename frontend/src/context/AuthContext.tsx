@@ -27,6 +27,7 @@ export interface AuthContextType {
   deviceId: string;
   deviceName: string;
   isLoading: boolean;
+  isAuthReady: boolean;
   activate: (code: string, deviceName?: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   refreshAuth: () => Promise<void>;
@@ -85,6 +86,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [deviceId, setDeviceId] = useState<string>('');
   const [deviceName, setDeviceName] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isAuthReady, setIsAuthReady] = useState<boolean>(false);
 
   // مراجع لحفظ أحدث القيم لتجنب مشاكل الـ closures أثناء استدعاءات الخلفية
   const tokenRef = useRef<string | null>(token);
@@ -227,7 +229,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               } catch {}
             }
           }
+        }
 
+        // تم استرجاع كل البيانات المخزنة محلياً بنجاح، نعلن جاهزية بيانات التوثيق الأولية
+        if (isMounted) {
+          setIsAuthReady(true);
+        }
+
+        if (savedToken) {
           // استعادة المفضلات من التخزين المحلي فوراً
           useAppStore.getState().loadFavoritesFromStorage?.();
 
@@ -302,6 +311,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.warn('[Auth] Failed to initialize auth:', err);
       } finally {
         if (isMounted) {
+          setIsAuthReady(true);
           setIsLoading(false);
         }
       }
@@ -433,6 +443,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         deviceId,
         deviceName,
         isLoading,
+        isAuthReady,
         activate,
         logout,
         refreshAuth,

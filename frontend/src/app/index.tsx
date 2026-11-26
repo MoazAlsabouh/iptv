@@ -141,29 +141,14 @@ export default function LandingPage(): React.JSX.Element {
           </View>
         </View>
 
-        <a
-          href="/home"
-          style={{
-            textDecoration: 'none',
-            display: 'flex',
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 8,
-            backgroundColor: 'rgba(14, 165, 233, 0.15)',
-            borderWidth: 1,
-            borderStyle: 'solid',
-            borderColor: '#0EA5E9',
-            paddingLeft: 18,
-            paddingRight: 18,
-            paddingTop: 10,
-            paddingBottom: 10,
-            borderRadius: 12,
-            cursor: 'pointer',
-          }}
+        <Pressable
+          onPress={handleEnterPlatform}
+          style={styles.navCtaBtn}
+          accessibilityRole="button"
         >
           <MaterialIcons name="login" size={18} color="#ffffff" />
           <Text style={styles.navCtaBtnText}>الدخول للمنصة</Text>
-        </a>
+        </Pressable>
       </View>
 
       <ScrollView
@@ -194,23 +179,10 @@ export default function LandingPage(): React.JSX.Element {
 
           {/* زر الدعوة الأساسي */}
           <View style={styles.heroCtaWrapper}>
-            <a
-              href="/home"
-              style={{
-                textDecoration: 'none',
-                display: 'flex',
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 10,
-                backgroundColor: '#38bdf8',
-                paddingLeft: 32,
-                paddingRight: 32,
-                paddingTop: 16,
-                paddingBottom: 16,
-                borderRadius: 14,
-                cursor: 'pointer',
-                boxShadow: '0 8px 16px rgba(56, 189, 248, 0.4)',
-              }}
+            <Pressable
+              onPress={handleEnterPlatform}
+              style={styles.primaryCtaBtn}
+              accessibilityRole="button"
             >
               <Text style={styles.primaryCtaBtnText}>ابدأ المشاهدة الآن</Text>
               <MaterialIcons
@@ -218,7 +190,7 @@ export default function LandingPage(): React.JSX.Element {
                 size={24}
                 color="#070b14"
               />
-            </a>
+            </Pressable>
           </View>
 
           {/* مؤشرات سريعة */}
@@ -284,26 +256,10 @@ export default function LandingPage(): React.JSX.Element {
                 </View>
               </View>
 
-              <a
-                href={downloadUrl || DEFAULT_DOWNLOAD_URL}
-                style={{
-                  textDecoration: 'none',
-                  display: 'flex',
-                  flexDirection: 'row',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  gap: 8,
-                  backgroundColor: 'rgba(14, 165, 233, 0.1)',
-                  borderWidth: 1,
-                  borderStyle: 'solid',
-                  borderColor: '#0EA5E9',
-                  paddingTop: 14,
-                  paddingBottom: 14,
-                  paddingLeft: 16,
-                  paddingRight: 16,
-                  borderRadius: 12,
-                  cursor: 'pointer',
-                }}
+              <Pressable
+                onPress={handleDownloadSmartTV}
+                style={styles.downloadBtn}
+                accessibilityRole="button"
               >
                 <MaterialIcons name="android" size={20} color="#38bdf8" />
                 <Text style={styles.downloadBtnText}>
@@ -319,7 +275,7 @@ export default function LandingPage(): React.JSX.Element {
                     v{versionName}
                   </Text>
                 </View>
-              </a>
+              </Pressable>
               <Text style={styles.downloadSubMeta}>ملف APK مباشر • v{versionName} • متوافق مع الريموت</Text>
               <View style={styles.directUrlBox}>
                 <MaterialIcons name="link" size={14} color="#38bdf8" />
@@ -360,26 +316,16 @@ export default function LandingPage(): React.JSX.Element {
                 </View>
               </View>
 
-              <a
-                href={downloadUrl || DEFAULT_DOWNLOAD_URL}
-                style={{
-                  textDecoration: 'none',
-                  display: 'flex',
-                  flexDirection: 'row',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  gap: 8,
-                  backgroundColor: 'rgba(129, 140, 248, 0.1)',
-                  borderWidth: 1,
-                  borderStyle: 'solid',
-                  borderColor: '#818cf8',
-                  paddingTop: 14,
-                  paddingBottom: 14,
-                  paddingLeft: 16,
-                  paddingRight: 16,
-                  borderRadius: 12,
-                  cursor: 'pointer',
-                }}
+              <Pressable
+                onPress={handleDownloadMobile}
+                style={[
+                  styles.downloadBtn,
+                  {
+                    backgroundColor: 'rgba(129, 140, 248, 0.1)',
+                    borderColor: '#818cf8',
+                  },
+                ]}
+                accessibilityRole="button"
               >
                 <MaterialIcons name="android" size={20} color="#818cf8" />
                 <Text style={[styles.downloadBtnText, { color: '#818cf8' }]}>
@@ -388,7 +334,7 @@ export default function LandingPage(): React.JSX.Element {
                 <View style={styles.btnVersionTag}>
                   <Text style={styles.btnVersionText}>v{versionName}</Text>
                 </View>
-              </a>
+              </Pressable>
               <Text style={styles.downloadSubMeta}>ملف APK مباشر • v{versionName} • أندرويد 6.0 وما فوق</Text>
               <View style={styles.directUrlBox}>
                 <MaterialIcons name="link" size={14} color="#818cf8" />
@@ -462,23 +408,10 @@ export default function LandingPage(): React.JSX.Element {
           <Text style={styles.bottomBannerSub}>
             أدخل كود الاشتراك الخاص بك وابدأ البث المباشر على الفور
           </Text>
-          <a
-            href="/home"
-            style={{
-              textDecoration: 'none',
-              display: 'flex',
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 10,
-              backgroundColor: '#38bdf8',
-              paddingLeft: 32,
-              paddingRight: 32,
-              paddingTop: 16,
-              paddingBottom: 16,
-              borderRadius: 14,
-              cursor: 'pointer',
-              boxShadow: '0 8px 16px rgba(56, 189, 248, 0.4)',
-            }}
+          <Pressable
+            onPress={handleEnterPlatform}
+            style={styles.primaryCtaBtn}
+            accessibilityRole="button"
           >
             <Text style={styles.primaryCtaBtnText}>الدخول للمنصة الآن</Text>
             <MaterialIcons
@@ -486,7 +419,7 @@ export default function LandingPage(): React.JSX.Element {
               size={20}
               color="#070b14"
             />
-          </a>
+          </Pressable>
         </View>
 
         {/* ==========================================

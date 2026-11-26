@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ActivityIndicator, Platform } from 'react-native';
-import { Slot, usePathname, useRouter, useSegments } from 'expo-router';
+import { Slot, usePathname, useRouter } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as Font from 'expo-font';
@@ -81,84 +81,58 @@ if (Platform.OS === 'web' && typeof window !== 'undefined') {
  * حارس التنقل العام للتحقق من وجود اشتراك نشط وتوجيه المستخدمين
  */
 function NavigationGuard(): React.JSX.Element {
-  const segments = useSegments();
   const expoPathname = usePathname();
   const router = useRouter();
-  const { token, isLoading } = useAuth();
+  const { token, isLoading, isAuthReady } = useAuth();
   const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
-  // 1. فحص المقاطع عبر useSegments() من expo-router (يعمل بكفاءة عالية أثناء البناء الثابت والعميل)
-  const firstSegment = segments && segments.length > 0 ? segments[0] : '';
   const rawExpoPath = (expoPathname || '').replace(/\/+$/, '') || '/';
 
   const isPublic =
-    (segments as any[]).length === 0 || // الصفحة الرئيسية الجذرية /
-    firstSegment === '' ||
-    firstSegment === 'admin' ||
-    firstSegment === 'reseller' ||
-    firstSegment === 'activate' ||
     rawExpoPath === '/' ||
     rawExpoPath.startsWith('/admin') ||
     rawExpoPath.startsWith('/reseller') ||
     rawExpoPath.startsWith('/activate');
 
   useEffect(() => {
-    // على التطبيقات الأصلية (أندرويد/تلفاز)، تجاوز صفحة الهبوط التسويقية والتوجه فوراً للمنصة
+    // 1. التطبيقات الأصلية (أندرويد / Android TV): تجاوز صفحة الهبوط فوراً
     if (Platform.OS !== 'web') {
-      if (isLoading) return;
+      if (!isAuthReady || isLoading) return;
       if (token) {
-        if (firstSegment === '' || firstSegment === 'activate' || rawExpoPath === '/' || rawExpoPath === '/activate') {
+        if (rawExpoPath === '/' || rawExpoPath === '/activate') {
           router.replace('/home');
         }
       } else {
-        if (firstSegment === '' || rawExpoPath === '/') {
+        if (rawExpoPath === '/') {
           router.replace('/activate');
         }
       }
       return;
     }
 
-    // منع أي تحويل تلقائي للمسارات العامة لمنع التعليق
-    if (isPublic) return;
+    // 2. بيئة الويب (Web):
+    // ننتظر حتى يكتمل الـ mount وتكتمل قراءة بيانات التوثيق من التخزين المحلي / الكوكيز
+    if (!isMounted || !isAuthReady || isLoading) return;
 
-    if (isLoading) return;
+    // المسارات العامة (صفحة الهبوط، الإدارة، الموزعين): لا نقوم بأي توجيه قسري
+    if (isPublic) {
+      // فقط في حال كان المشترك مفعلاً بالفعل وتواجد داخل صفحة التفعيل /activate، نحوله للرئيسية
+      if (token && rawExpoPath === '/activate') {
+        router.replace('/home');
+      }
+      return;
+    }
 
+    // المسارات المحمية (/home, /movies, /simulated, إلخ):
+    // إذا لم يتوفر اشتراك بعد اكتمال التحقق تماماً، نوجّهه لشاشة التفعيل حصراً
     if (!token) {
       router.replace('/activate');
     }
-  }, [token, isLoading, router, isPublic, firstSegment, rawExpoPath]);
-
-  // توجيه المستخدم المشترك خارج صفحة التفعيل فقط إذا كان في /activate
-  useEffect(() => {
-    if (isLoading) return;
-    if (token && (firstSegment === 'activate' || rawExpoPath === '/activate')) {
-      router.replace('/home');
-    }
-  }, [token, isLoading, firstSegment, rawExpoPath, router]);
-
-  // لا نعرض شاشة التحميل إلا بعد اكتمال mount على العميل للمسارات المحمية فقط
-  // هذا يضمن تطابق شجرة DOM بنسبة 100% بين خادم الـ SSR وأول ريندر على المتصفح
-  if (isMounted && isLoading && !isPublic) {
-    return (
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: '#0B1120',
-          justifyContent: 'center',
-          alignItems: 'center',
-        }}
-      >
-        <ActivityIndicator size="large" color="#0EA5E9" />
-        <Text style={{ color: '#94a3b8', marginTop: 16, fontSize: 16, fontWeight: '700' }}>
-          جاري التحقق من الاشتراك...
-        </Text>
-      </View>
-    );
-  }
+  }, [isMounted, isAuthReady, isLoading, token, isPublic, rawExpoPath, router]);
 
   // المسارات التي تعمل بملء الشاشة دون الشريط الجانبي (المشغل، صفحة البداية، وصفحات الإدارة/التفعيل)
   const isFullscreen =
@@ -170,6 +144,8 @@ function NavigationGuard(): React.JSX.Element {
     rawExpoPath.startsWith('/admin') ||
     rawExpoPath.startsWith('/reseller');
 
+  // نحافظ دائماً على بقاء <Slot /> داخل شجرة الرندر وعدم استبدالها بشاشة تحميل منفصلة
+  // حتى لا يتم تفكيك حالة التوجيه الحالية في Expo Router وإعادة المستخدم قسراً إلى الجذر (/)
   return isFullscreen ? (
     <Slot />
   ) : (
