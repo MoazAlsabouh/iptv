@@ -15,6 +15,7 @@ import { ChannelLogo } from '../../components/ChannelLogo';
 import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 import { useAppStore } from '../../store/useAppStore';
 import { getVirtualLivePosition, VirtualLiveEpisode } from '../../utils/virtualLive';
+import { setActiveSimulatedChannel } from '../../utils/simulatedChannelStore';
 
 const BACKEND_BASE_URL = 'https://iptv-backend.moaznsm.workers.dev';
 
@@ -154,16 +155,22 @@ export default function SimulatedChannelsScreen(): React.JSX.Element {
   const handleOpenChannel = useCallback(
     (channel: PublicSimulatedChannel) => {
       if (!channel) return;
+
+      // حفظ بيانات القناة والحلقات في المخزن المحلي لمنع تضخم الرابط وخطأ HTTP 413
+      setActiveSimulatedChannel({
+        id: channel.id,
+        name: channel.name,
+        logo: channel.logo || '',
+        category: channel.category || 'مسلسلات 24/7',
+        episodes: channel.episodes || [],
+        createdAt: channel.createdAt ? String(channel.createdAt) : '',
+      });
+
       router.push({
         pathname: '/play/[id]',
         params: {
           id: channel.id,
-          title: encodeURIComponent(channel.name),
-          logo: encodeURIComponent(channel.logo || ''),
           type: 'simulated247',
-          category: encodeURIComponent(channel.category || 'مسلسلات 24/7'),
-          episodes: encodeURIComponent(JSON.stringify(channel.episodes || [])),
-          createdAt: channel.createdAt ? String(channel.createdAt) : '',
         },
       });
     },

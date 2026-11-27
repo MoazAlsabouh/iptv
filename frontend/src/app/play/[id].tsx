@@ -36,6 +36,11 @@ import {
   VirtualLiveEpisode,
   VirtualLivePosition,
 } from '../../utils/virtualLive';
+import {
+  getActiveSimulatedChannel,
+  setActiveSimulatedChannel,
+  ActiveSimulatedChannelData,
+} from '../../utils/simulatedChannelStore';
 
 /**
  * شاشة مشغل الفيديو بتصميم ملء الشاشة الداكن والتحكم الكامل بالريموت كنترول.
@@ -64,40 +69,42 @@ export function PlayerScreen(): React.JSX.Element {
     createdAt?: string;
   }>();
 
+  const channelId = useMemo(() => {
+    if (!params.id) return '';
+    return typeof params.id === 'string' ? params.id : params.id[0] || '';
+  }, [params.id]);
+
   const isSimulated247 = useMemo(() => {
     return params.type === 'simulated247';
   }, [params.type]);
+
+  const [channelData, setChannelData] = useState<ActiveSimulatedChannelData | null>(null);
 
   const [channelCreatedAt, setChannelCreatedAt] = useState<string | null>(() => {
     return params.createdAt ? decodeURIComponent(params.createdAt) : null;
   });
 
-  const [simulatedEpisodes, setSimulatedEpisodes] = useState<VirtualLiveEpisode[]>(() => {
-    if (params.type === 'simulated247' && params.episodes) {
-      try {
-        const parsed = JSON.parse(decodeURIComponent(params.episodes));
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch {}
-    }
-    return [];
-  });
+  const [simulatedEpisodes, setSimulatedEpisodes] = useState<VirtualLiveEpisode[]>([]);
 
-  const [virtualLivePos, setVirtualLivePos] = useState<VirtualLivePosition | null>(() => {
-    if (params.type === 'simulated247' && params.episodes) {
-      try {
-        const parsed = JSON.parse(decodeURIComponent(params.episodes));
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const cAt = params.createdAt ? decodeURIComponent(params.createdAt) : null;
-          return getVirtualLivePosition(parsed, cAt);
-        }
-      } catch {}
-    }
-    return null;
-  });
+  // نهيئ الموضع بـ null لمنع أي اختلاف في Date.now() بين SSR والمتصفح تفادياً لخطأ Hydration mismatch (#418)
+  const [virtualLivePos, setVirtualLivePos] = useState<VirtualLivePosition | null>(null);
 
-  // إذا لم يتم تمرير الحلقات مباشرة عبر params، نجلبها من السيرفر
+  // جلب بيانات قناة البث 24/7 من الذاكرة أو من الخادم عند الدخول المباشر للرابط/التحديث
   useEffect(() => {
-    if (!isSimulated247 || simulatedEpisodes.length > 0) return;
+    if (!isSimulated247 || !channelId) return;
+
+    // 1. المحاولة من الذاكرة / التخزين المؤقت أولاً
+    const cached = getActiveSimulatedChannel(channelId);
+    if (cached && Array.isArray(cached.episodes) && cached.episodes.length > 0) {
+      setChannelData(cached);
+      const cAt = cached.createdAt || cached.created_at || (params.createdAt ? decodeURIComponent(params.createdAt) : null);
+      if (cAt) setChannelCreatedAt(cAt);
+      setSimulatedEpisodes(cached.episodes);
+      setVirtualLivePos(getVirtualLivePosition(cached.episodes, cAt));
+      return;
+    }
+
+    // 2. إذا لم تكن موجودة في الذاكرة (مثلاً عند الدخول المباشر للرابط أو عمل Refresh)، نجلبها من الخادم
     let isMounted = true;
     const fetchSimulatedChannel = async () => {
       try {
@@ -108,24 +115,26 @@ export function PlayerScreen(): React.JSX.Element {
           const data = await res.json();
           const rawChannels = data?.channels ?? data?.simulatedChannels ?? (Array.isArray(data) ? data : []);
           if (isMounted && Array.isArray(rawChannels)) {
-            const found = rawChannels.find((c: any) => c.id === params.id);
-            if (found && Array.isArray(found.episodes)) {
+            const found = rawChannels.find((c: any) => c.id === channelId);
+            if (found && Array.isArray(found.episodes) && found.episodes.length > 0) {
+              setActiveSimulatedChannel(found);
+              setChannelData(found);
               const chCreatedAt = found.createdAt || found.created_at || null;
               if (chCreatedAt) setChannelCreatedAt(chCreatedAt);
               setSimulatedEpisodes(found.episodes);
-              setVirtualLivePos(getVirtualLivePosition(found.episodes, chCreatedAt || channelCreatedAt));
+              setVirtualLivePos(getVirtualLivePosition(found.episodes, chCreatedAt));
             }
           }
         }
-      } catch {
-        // ignore
+      } catch (err) {
+        console.warn('[PlayerScreen] Failed to fetch simulated channel fallback:', err);
       }
     };
     fetchSimulatedChannel();
     return () => {
       isMounted = false;
     };
-  }, [isSimulated247, simulatedEpisodes.length, params.id, channelCreatedAt]);
+  }, [isSimulated247, channelId, params.createdAt]);
 
   // تهيئة الموضع اللحظي عند توفر الحلقات لأول مرة فقط دون قفز دوري في منتصف الحلقة
   useEffect(() => {
@@ -141,11 +150,6 @@ export function PlayerScreen(): React.JSX.Element {
   const toggleFavorite = useAppStore((state) => state.toggleFavorite);
   const { channels, categories, countries, networks, totalChannels } = useMediaData();
   const { token } = useAuth();
-
-  const channelId = useMemo(() => {
-    if (!params.id) return '';
-    return typeof params.id === 'string' ? params.id : params.id[0] || '';
-  }, [params.id]);
 
   const isFavorite = useMemo(() => {
     return Boolean(channelId && favoriteIds.includes(channelId));
@@ -353,11 +357,12 @@ export function PlayerScreen(): React.JSX.Element {
   const effectiveChannelId = liveChannel ? liveChannel.id : channelId;
   const effectiveTitle = useMemo(() => {
     if (isSimulated247 && virtualLivePos?.currentEpisode) {
-      return `${channelTitle || 'بث 24/7'} • ${virtualLivePos.currentEpisode.title}`;
+      const chName = channelData?.name || channelData?.title || channelTitle || 'بث 24/7';
+      return `${chName} • ${virtualLivePos.currentEpisode.title}`;
     }
-    return liveChannel ? liveChannel.name : channelTitle;
-  }, [isSimulated247, virtualLivePos, liveChannel, channelTitle]);
-  const effectiveLogo = liveChannel ? (liveChannel.logo || '') : channelLogo;
+    return liveChannel ? liveChannel.name : (channelData?.name || channelData?.title || channelTitle);
+  }, [isSimulated247, virtualLivePos, liveChannel, channelTitle, channelData]);
+  const effectiveLogo = liveChannel ? (liveChannel.logo || '') : (channelData?.logo || channelLogo);
 
   // 2. سياق القسم النشط للتنقل السريع (Zapping)
   const [activeCategoryName, setActiveCategoryName] = useState<string>(() => {

@@ -426,7 +426,12 @@ export const TVPlayer = forwardRef<TVPlayerHandle, TVPlayerProps>(({
   const videoHtmlRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
   const [needsUserPlay, setNeedsUserPlay] = useState<boolean>(false);
+  const [isMounted, setIsMounted] = useState<boolean>(false);
   const nativePlayerRef = useRef<TVPlayerHandle | null>(null);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   // تخزين دوال رد الاتصال في refs لتجنب إعادة تشغيل useEffect عند كل re-render
   const onBufferingRef = useRef(onBuffering);
@@ -999,6 +1004,11 @@ export const TVPlayer = forwardRef<TVPlayerHandle, TVPlayerProps>(({
   };
 
   if (Platform.OS === 'web') {
+    // منع رندر عناصر DOM الخاصة بالمشغل على السيرفر قبل الـ hydration لتفادي Minified React error #418
+    if (!isMounted) {
+      return <View style={[styles.container, style]} />;
+    }
+
     if (isEmbedUrl) {
       if (isYouTube) {
         return (
