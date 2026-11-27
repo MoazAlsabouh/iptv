@@ -133,7 +133,6 @@ export function PlayerScreen(): React.JSX.Element {
     setVirtualLivePos((prev) => prev || getVirtualLivePosition(simulatedEpisodes, channelCreatedAt));
   }, [isSimulated247, simulatedEpisodes, channelCreatedAt]);
 
-  const [simulatedSyncKey, setSimulatedSyncKey] = useState<number>(0);
   type TopControlTarget = 'back' | 'sync' | 'episodes' | 'quality' | 'channels';
   const [focusedTopTarget, setFocusedTopTarget] = useState<TopControlTarget>('back');
 
@@ -617,15 +616,14 @@ export function PlayerScreen(): React.JSX.Element {
     if (!isSimulated247 || simulatedEpisodes.length === 0) return;
     const livePos = getVirtualLivePosition(simulatedEpisodes, channelCreatedAt);
     setVirtualLivePos(livePos);
-    setSimulatedSyncKey((prev) => prev + 1);
-    setIsBuffering(true);
+    // انتقال سلس في الخلفية دون وميض شاشة التحميل أو تصفير المشغل
     showOsd(
       `مزامنة البث المباشر: ${livePos.currentEpisode?.title || ''}`,
       'sync'
     );
   }, [isSimulated247, simulatedEpisodes, channelCreatedAt, showOsd]);
 
-  // المزامنة الذكية التلقائية عند انتهاء الحلقة (onEnded)
+  // المزامنة الذكية التلقائية عند انتهاء الحلقة (onEnded) دون إعادة بناء المشغل
   const handleEpisodeEnded = useCallback(() => {
     if (!isSimulated247 || simulatedEpisodes.length === 0) return;
 
@@ -651,12 +649,10 @@ export function PlayerScreen(): React.JSX.Element {
         startAt: 0,
         totalDuration: livePos.totalDuration,
       });
-      setSimulatedSyncKey((prev) => prev + 1);
       showOsd(`الحلقة التالية: ${nextEp?.title || ''}`, 'skip-next');
     } else {
       // الحلقة التالية في البث الحي: تشغيلها من موضعها اللحظي (مثلاً بعد 15 أو 20 ثانية لتعويض أي انزياح)
       setVirtualLivePos(livePos);
-      setSimulatedSyncKey((prev) => prev + 1);
       showOsd(`مزامنة البث: ${livePos.currentEpisode?.title || ''}`, 'sync');
     }
   }, [isSimulated247, simulatedEpisodes, channelCreatedAt, virtualLivePos, showOsd]);
@@ -669,7 +665,7 @@ export function PlayerScreen(): React.JSX.Element {
       if (Platform.OS !== 'web') {
         return `https://iptv-backend.moaznsm.workers.dev/embed/yt?v=${encodeURIComponent(ytId)}&start=${virtualLivePos.startAt}`;
       }
-      return `https://www.youtube-nocookie.com/embed/${ytId}?start=${virtualLivePos.startAt}&autoplay=1&controls=0&rel=0&playsinline=1&enablejsapi=1`;
+      return `https://www.youtube-nocookie.com/embed/${ytId}?start=${virtualLivePos.startAt}&autoplay=1&controls=0&rel=0&playsinline=1&enablejsapi=1&cc_load_policy=0&iv_load_policy=3`;
     }
     let url = liveChannel ? liveChannel.streamUrl : rawStreamUrl;
     if (channelSources.length > 0 && channelSources[activeSourceIndex]) {
@@ -689,6 +685,32 @@ export function PlayerScreen(): React.JSX.Element {
 
   const [isBuffering, setIsBuffering] = useState<boolean>(true);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const [showBufferingOverlay, setShowBufferingOverlay] = useState<boolean>(false);
+  const bufferingDebounceTimerRef = useRef<any>(null);
+
+  // فترة سماح (Grace Period) مدتها 1800ms قبل إظهار شاشة المزامنة / التحميل لمنع الوميض عند التبديل السريع
+  useEffect(() => {
+    if (bufferingDebounceTimerRef.current) {
+      clearTimeout(bufferingDebounceTimerRef.current);
+      bufferingDebounceTimerRef.current = null;
+    }
+
+    if (isBuffering && !playbackError && currentStreamUrl) {
+      bufferingDebounceTimerRef.current = setTimeout(() => {
+        setShowBufferingOverlay(true);
+      }, 1800);
+    } else {
+      setShowBufferingOverlay(false);
+    }
+
+    return () => {
+      if (bufferingDebounceTimerRef.current) {
+        clearTimeout(bufferingDebounceTimerRef.current);
+        bufferingDebounceTimerRef.current = null;
+      }
+    };
+  }, [isBuffering, playbackError, currentStreamUrl]);
+
   const [retryKey, setRetryKey] = useState<number>(0);
   const [showOverlay, setShowOverlay] = useState<boolean>(true);
 
@@ -1243,7 +1265,7 @@ export function PlayerScreen(): React.JSX.Element {
       {currentStreamUrl && !playbackError ? (
         <TVPlayer
           ref={playerRef}
-          key={`tv-player-${retryKey}-${activeSourceIndex}-${virtualLivePos?.episodeIndex ?? 0}-${simulatedSyncKey}`}
+          key={`tv-player-${retryKey}-${activeSourceIndex}-${isSimulated247 ? 'simulated' : effectiveChannelId}`}
           streamUrl={currentStreamUrl}
           contentFit={contentFit}
           selectedLevel={selectedHlsLevel}
@@ -2061,8 +2083,8 @@ export function PlayerScreen(): React.JSX.Element {
         </View>
       )}
 
-      {/* 5. مؤشر التحميل المؤقت */}
-      {isBuffering && !playbackError && currentStreamUrl ? (
+      {/* 5. مؤشر التحميل المؤقت بفترة سماح تمنع الوميض عند الانتقال السريع */}
+      {showBufferingOverlay && !playbackError && currentStreamUrl ? (
         <View style={styles.bufferingContainer} pointerEvents="none">
           <ActivityIndicator size="large" color="#38bdf8" />
           <Text style={styles.bufferingText}>
@@ -2070,6 +2092,8 @@ export function PlayerScreen(): React.JSX.Element {
               ? 'جاري الاتصال بمصدر بث بديل...'
               : isVod
               ? 'جاري تحميل الفيديو...'
+              : isSimulated247
+              ? 'جاري مزامنة البث...'
               : 'جاري تهيئة البث المباشر...'}
           </Text>
         </View>

@@ -5640,6 +5640,8 @@ function handleYouTubeEmbed(request: Request): Response {
           rel: 0,
           playsinline: 1,
           start: ${startAt},
+          cc_load_policy: 0,
+          iv_load_policy: 3,
           origin: 'https://iptv-backend.moaznsm.workers.dev',
           enablejsapi: 1,
           widget_referrer: 'https://iptv-backend.moaznsm.workers.dev'
@@ -5647,10 +5649,22 @@ function handleYouTubeEmbed(request: Request): Response {
         events: {
           onReady: function(event) {
             try {
+              event.target.unloadModule('captions');
+              event.target.unloadModule('cc');
+            } catch(e) {}
+            try {
               event.target.playVideo();
             } catch(e) {}
           },
           onStateChange: function(event) {
+            checkWatchdog(event.data);
+            // YT.PlayerState.PLAYING = 1
+            if (event.data === 1) {
+              try {
+                event.target.unloadModule('captions');
+                event.target.unloadModule('cc');
+              } catch(e) {}
+            }
             // YT.PlayerState.ENDED = 0
             if (event.data === 0) {
               if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
@@ -5661,6 +5675,93 @@ function handleYouTubeEmbed(request: Request): Response {
         }
       });
     }
+
+    var lastValidTime = ${startAt || 0};
+    var timeTrackingInterval = null;
+    var watchdogTimer = null;
+
+    function startTimeTracking() {
+      if (timeTrackingInterval) clearInterval(timeTrackingInterval);
+      timeTrackingInterval = setInterval(function() {
+        try {
+          if (player && typeof player.getCurrentTime === 'function' && typeof player.getPlayerState === 'function') {
+            if (player.getPlayerState() === 1) {
+              var cur = player.getCurrentTime();
+              if (typeof cur === 'number' && cur > 0) {
+                lastValidTime = Math.floor(cur);
+              }
+            }
+          }
+        } catch(e) {}
+      }, 1000);
+    }
+
+    function stopTimeTracking() {
+      if (timeTrackingInterval) {
+        clearInterval(timeTrackingInterval);
+        timeTrackingInterval = null;
+      }
+    }
+
+    function checkWatchdog(state) {
+      if (watchdogTimer) {
+        clearTimeout(watchdogTimer);
+        watchdogTimer = null;
+      }
+      if (state === 1) {
+        startTimeTracking();
+        return;
+      }
+      if (state === 0) {
+        stopTimeTracking();
+        return;
+      }
+      if (state === -1 || state === 2) {
+        watchdogTimer = setTimeout(function() {
+          try {
+            var curState = player && typeof player.getPlayerState === 'function' ? player.getPlayerState() : -1;
+            if (curState === -1 || curState === 2) {
+              console.log('[Watchdog] Auto-recovering playback at second: ' + lastValidTime);
+              if (lastValidTime > 5) {
+                var resumeSec = Math.max(0, lastValidTime - 5);
+                player.seekTo(resumeSec, true);
+              }
+              player.playVideo();
+              try { player.unloadModule('captions'); player.unloadModule('cc'); } catch(e) {}
+            }
+          } catch(err) {}
+        }, 1500);
+      }
+    }
+
+    function loadNextVideo(vid, startSec) {
+      lastValidTime = startSec || 0;
+      if (player && typeof player.loadVideoById === 'function') {
+        player.loadVideoById({
+          videoId: vid,
+          startSeconds: startSec || 0
+        });
+        try {
+          player.unloadModule('captions');
+          player.unloadModule('cc');
+        } catch(e) {}
+        try {
+          player.playVideo();
+        } catch(e) {}
+      }
+    }
+    window.loadNextVideo = loadNextVideo;
+
+    function handleIncomingMessage(e) {
+      try {
+        var data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+        if (data && data.action === 'loadVideo' && data.videoId) {
+          loadNextVideo(data.videoId, data.startSeconds);
+        }
+      } catch(err) {}
+    }
+    window.addEventListener('message', handleIncomingMessage);
+    document.addEventListener('message', handleIncomingMessage);
   </script>
 </body>
 </html>`;

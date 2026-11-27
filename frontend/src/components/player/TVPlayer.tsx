@@ -133,7 +133,7 @@ export function toYouTubeEmbedUrl(rawUrl: string): string {
     }
 
     const domain = Platform.OS !== 'web' ? 'www.youtube.com' : 'www.youtube-nocookie.com';
-    const policyParams = 'autoplay=1&controls=0&rel=0&playsinline=1&enablejsapi=1&origin=https%3A%2F%2Ftv.moazns.sy&widget_referrer=https%3A%2F%2Ftv.moazns.sy';
+    const policyParams = 'autoplay=1&controls=0&rel=0&playsinline=1&enablejsapi=1&cc_load_policy=0&iv_load_policy=3&origin=https%3A%2F%2Ftv.moazns.sy&widget_referrer=https%3A%2F%2Ftv.moazns.sy';
 
     if (videoId && listId) {
       return `https://${domain}/embed/${videoId}?list=${encodeURIComponent(listId)}${startQuery}&${policyParams}`;
@@ -153,7 +153,7 @@ export function toYouTubeEmbedUrl(rawUrl: string): string {
     const startQuery = startMatch ? `&start=${startMatch[1]}` : '';
 
     const domain = Platform.OS !== 'web' ? 'www.youtube.com' : 'www.youtube-nocookie.com';
-    const policyParams = 'autoplay=1&controls=0&rel=0&playsinline=1&enablejsapi=1&origin=https%3A%2F%2Ftv.moazns.sy&widget_referrer=https%3A%2F%2Ftv.moazns.sy';
+    const policyParams = 'autoplay=1&controls=0&rel=0&playsinline=1&enablejsapi=1&cc_load_policy=0&iv_load_policy=3&origin=https%3A%2F%2Ftv.moazns.sy&widget_referrer=https%3A%2F%2Ftv.moazns.sy';
 
     if (videoId && listId) {
       return `https://${domain}/embed/${videoId}?list=${encodeURIComponent(listId)}${startQuery}&${policyParams}`;
@@ -172,6 +172,238 @@ export function toYouTubeEmbedUrl(rawUrl: string): string {
 export function normalizeYouTubeEmbedUrl(url: string): string {
   return toYouTubeEmbedUrl(url);
 }
+
+/**
+ * مشغل يوتيوب المخصص لبيئة الويب باستخدام YouTube IFrame API الرسمي.
+ * يضمن الانتقال السلس التلقائي بين الحلقات عبر player.loadVideoById دون إعادة بناء المشغل
+ * مع إيقاف الترجمة إجبارياً عبر unloadModule('captions') و unloadModule('cc').
+ */
+const YouTubeWebPlayer: React.FC<{
+  url: string;
+  style?: StyleProp<ViewStyle>;
+  onBuffering?: (isBuffering: boolean) => void;
+  onError?: (err: string) => void;
+  onEnded?: () => void;
+}> = ({ url, style, onBuffering, onError, onEnded }) => {
+  const containerRef = useRef<any>(null);
+  const playerRef = useRef<any>(null);
+  const onEndedRef = useRef(onEnded);
+  onEndedRef.current = onEnded;
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
+  const onBufferingRef = useRef(onBuffering);
+  onBufferingRef.current = onBuffering;
+
+  const ytInfo = useMemo(() => extractYouTubeIdAndStart(url), [url]);
+  const currentVideoIdRef = useRef<string>(ytInfo.videoId);
+  const lastValidTimeRef = useRef<number>(ytInfo.start || 0);
+  const watchdogTimerRef = useRef<any>(null);
+  const timeTrackingIntervalRef = useRef<any>(null);
+
+  const startTimeTracking = () => {
+    if (timeTrackingIntervalRef.current) clearInterval(timeTrackingIntervalRef.current);
+    timeTrackingIntervalRef.current = setInterval(() => {
+      try {
+        if (playerRef.current && typeof playerRef.current.getCurrentTime === 'function') {
+          const cur = playerRef.current.getCurrentTime();
+          if (typeof cur === 'number' && cur > 0) {
+            lastValidTimeRef.current = Math.floor(cur);
+          }
+        }
+      } catch (e) {}
+    }, 1000);
+  };
+
+  const stopTimeTracking = () => {
+    if (timeTrackingIntervalRef.current) {
+      clearInterval(timeTrackingIntervalRef.current);
+      timeTrackingIntervalRef.current = null;
+    }
+  };
+
+  // مراقب أمان تلقائي (Auto-Play Watchdog):
+  // إذا دخل المشغل في حالة UNSTARTED (-1) أو PAUSED (2) دون رغبة المستخدم لأكثر من 1.5 ثانية:
+  // استدعاء playVideo مع الرجوع 5 ثوانٍ للخلف لتعويض أي انقطاع
+  const triggerWatchdog = (state: number) => {
+    if (watchdogTimerRef.current) {
+      clearTimeout(watchdogTimerRef.current);
+      watchdogTimerRef.current = null;
+    }
+
+    if (state === 1) { // PLAYING
+      startTimeTracking();
+      return;
+    }
+
+    if (state === 0) { // ENDED
+      stopTimeTracking();
+      return;
+    }
+
+    if (state === -1 || state === 2) {
+      watchdogTimerRef.current = setTimeout(() => {
+        try {
+          if (!playerRef.current) return;
+          const curState = playerRef.current.getPlayerState ? playerRef.current.getPlayerState() : -1;
+          if (curState === -1 || curState === 2) {
+            console.log('[YouTubeWebPlayer Watchdog] Auto-recovering playback at second:', lastValidTimeRef.current);
+            if (lastValidTimeRef.current > 5) {
+              const resumeSec = Math.max(0, lastValidTimeRef.current - 5);
+              playerRef.current.seekTo(resumeSec, true);
+            }
+            playerRef.current.playVideo();
+            try {
+              playerRef.current.unloadModule('captions');
+              playerRef.current.unloadModule('cc');
+            } catch (e) {}
+          }
+        } catch (err) {}
+      }, 1500);
+    }
+  };
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+
+    let destroyed = false;
+
+    const initPlayer = () => {
+      const win = window as any;
+      if (!win.YT || !win.YT.Player || !containerRef.current || playerRef.current || destroyed) return;
+
+      try {
+        playerRef.current = new win.YT.Player(containerRef.current, {
+          videoId: ytInfo.videoId,
+          width: '100%',
+          height: '100%',
+          playerVars: {
+            autoplay: 1,
+            controls: 0,
+            rel: 0,
+            playsinline: 1,
+            start: ytInfo.start,
+            cc_load_policy: 0,
+            iv_load_policy: 3,
+            enablejsapi: 1,
+            origin: window.location.origin,
+            widget_referrer: window.location.origin,
+          },
+          events: {
+            onReady: (event: any) => {
+              if (destroyed) return;
+              try {
+                event.target.unloadModule('captions');
+                event.target.unloadModule('cc');
+              } catch (e) {}
+              try {
+                event.target.playVideo();
+              } catch (e) {}
+              onBufferingRef.current?.(false);
+            },
+            onStateChange: (event: any) => {
+              if (destroyed) return;
+              triggerWatchdog(event.data);
+              const win = window as any;
+              // 1 = PLAYING
+              if (event.data === 1 || event.data === win?.YT?.PlayerState?.PLAYING) {
+                try {
+                  event.target.unloadModule('captions');
+                  event.target.unloadModule('cc');
+                } catch (e) {}
+                onBufferingRef.current?.(false);
+              }
+              // 0 = ENDED
+              if (event.data === 0 || event.data === win?.YT?.PlayerState?.ENDED) {
+                onEndedRef.current?.();
+              }
+            },
+            onError: (event: any) => {
+              if (destroyed) return;
+              onErrorRef.current?.(`فيديو يوتيوب غير متاح (كود ${event.data})`);
+            },
+          },
+        });
+      } catch (err) {
+        console.warn('[YouTubeWebPlayer] Init error:', err);
+      }
+    };
+
+    const loadApi = () => {
+      const win = window as any;
+      if (win.YT && win.YT.Player) {
+        initPlayer();
+        return;
+      }
+
+      if (!document.getElementById('yt-iframe-api-script')) {
+        const tag = document.createElement('script');
+        tag.id = 'yt-iframe-api-script';
+        tag.src = 'https://www.youtube.com/iframe_api';
+        document.head.appendChild(tag);
+      }
+
+      const prevOnReady = win.onYouTubeIframeAPIReady;
+      win.onYouTubeIframeAPIReady = () => {
+        if (typeof prevOnReady === 'function') prevOnReady();
+        initPlayer();
+      };
+    };
+
+    loadApi();
+
+    return () => {
+      destroyed = true;
+      stopTimeTracking();
+      if (watchdogTimerRef.current) {
+        clearTimeout(watchdogTimerRef.current);
+        watchdogTimerRef.current = null;
+      }
+      if (playerRef.current) {
+        try {
+          playerRef.current.destroy();
+        } catch {}
+        playerRef.current = null;
+      }
+    };
+  }, []);
+
+  // التبديل السلس للحلقة التالية دون إعادة بناء المشغل
+  useEffect(() => {
+    if (!ytInfo.videoId) return;
+
+    if (playerRef.current && typeof playerRef.current.loadVideoById === 'function') {
+      if (currentVideoIdRef.current !== ytInfo.videoId) {
+        currentVideoIdRef.current = ytInfo.videoId;
+        lastValidTimeRef.current = ytInfo.start || 0;
+        playerRef.current.loadVideoById({
+          videoId: ytInfo.videoId,
+          startSeconds: ytInfo.start || 0,
+        });
+        try {
+          playerRef.current.unloadModule('captions');
+          playerRef.current.unloadModule('cc');
+        } catch (e) {}
+        try {
+          playerRef.current.playVideo();
+        } catch (e) {}
+      }
+    }
+  }, [ytInfo.videoId, ytInfo.start]);
+
+  return (
+    <View style={[styles.container, style]}>
+      <div
+        ref={containerRef}
+        style={{
+          width: '100%',
+          height: '100%',
+          border: 'none',
+          backgroundColor: '#000000',
+        }}
+      />
+    </View>
+  );
+};
 
 /**
  * مشغل فيديو متطور يدعم شاشات التلفاز والويب وأجهزة Android/iOS.
@@ -768,6 +1000,18 @@ export const TVPlayer = forwardRef<TVPlayerHandle, TVPlayerProps>(({
 
   if (Platform.OS === 'web') {
     if (isEmbedUrl) {
+      if (isYouTube) {
+        return (
+          <YouTubeWebPlayer
+            url={finalEmbedUrl}
+            style={style}
+            onBuffering={onBuffering}
+            onError={onError}
+            onEnded={onEnded}
+          />
+        );
+      }
+
       return (
         <View style={[styles.container, style]}>
           <iframe

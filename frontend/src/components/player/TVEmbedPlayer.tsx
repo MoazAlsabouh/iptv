@@ -67,6 +67,7 @@ export const TVEmbedPlayer: React.FC<{
 }> = ({ url, style, onBuffering, onError, onEnded }) => {
   const onEndedRef = useRef(onEnded);
   onEndedRef.current = onEnded;
+  const webViewRef = useRef<any>(null);
 
   useEffect(() => {
     // مهلة أمان قصيرة لإخفاء مؤشر التحميل تلقائياً في وضع السيرفرات المدمجة
@@ -93,15 +94,44 @@ export const TVEmbedPlayer: React.FC<{
     return extractYouTubeIdAndStart(url);
   }, [url, isYouTube]);
 
-  // تحديد رابط المصدر لـ WebView على Native
-  const webViewSource = useMemo(() => {
+  const currentVideoIdRef = useRef<string>(ytInfo?.videoId || '');
+
+  // تحديد رابط المصدر الأولي لـ WebView دون إعادة تحميل عند التنقل بين الحلقات
+  const initialSourceRef = useRef<any>(null);
+  if (!initialSourceRef.current) {
     if (ytInfo && ytInfo.videoId) {
-      return {
+      initialSourceRef.current = {
         uri: `${YOUTUBE_EMBED_BASE}?v=${encodeURIComponent(ytInfo.videoId)}&start=${ytInfo.start}`,
       };
+    } else {
+      initialSourceRef.current = { uri: url };
     }
-    return { uri: url };
-  }, [ytInfo, url]);
+  }
+
+  // على أندرويد/الشاشات: تمرير الحلقة التالية لنفس المشغل عبر loadVideoById مباشرة دون unmount/remount
+  useEffect(() => {
+    if (!ytInfo?.videoId || Platform.OS === 'web') return;
+
+    if (currentVideoIdRef.current && currentVideoIdRef.current !== ytInfo.videoId) {
+      currentVideoIdRef.current = ytInfo.videoId;
+      const js = `
+        (function() {
+          try {
+            if (typeof loadNextVideo === 'function') {
+              loadNextVideo('${ytInfo.videoId}', ${ytInfo.start});
+            } else if (window.player && typeof window.player.loadVideoById === 'function') {
+              window.player.loadVideoById({ videoId: '${ytInfo.videoId}', startSeconds: ${ytInfo.start} });
+              try { window.player.unloadModule('captions'); window.player.unloadModule('cc'); } catch(e){}
+            }
+          } catch(e) {}
+        })();
+        true;
+      `;
+      webViewRef.current?.injectJavaScript(js);
+    } else if (!currentVideoIdRef.current && ytInfo.videoId) {
+      currentVideoIdRef.current = ytInfo.videoId;
+    }
+  }, [ytInfo?.videoId, ytInfo?.start]);
 
   // استماع لرسائل انتهاء الفيديو (postMessage) على بيئة الويب
   useEffect(() => {
@@ -147,12 +177,13 @@ export const TVEmbedPlayer: React.FC<{
     onBuffering?.(false);
   };
 
-  // على منصة Native / Android TV: تحميل صفحة Worker الموثقة كـ uri حقيقي
+  // على منصة Native / Android TV: تحميل صفحة Worker الموثقة كـ uri حقيقي مع استقرار المشغل
   if (Platform.OS !== 'web' && WebView) {
     return (
       <View style={[StyleSheet.absoluteFill, styles.container, style]}>
         <WebView
-          source={webViewSource}
+          ref={webViewRef}
+          source={isYouTube ? initialSourceRef.current : { uri: url }}
           style={styles.webview}
           userAgent={CHROME_TV_USER_AGENT}
           javaScriptEnabled={true}
