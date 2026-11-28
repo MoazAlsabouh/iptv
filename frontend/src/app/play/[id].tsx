@@ -40,7 +40,9 @@ import {
   getActiveSimulatedChannel,
   setActiveSimulatedChannel,
   ActiveSimulatedChannelData,
+  SimulatedAdRule,
 } from '../../utils/simulatedChannelStore';
+import { AdVideoPlayer } from '../../components/player/AdVideoPlayer';
 
 /**
  * شاشة مشغل الفيديو بتصميم ملء الشاشة الداكن والتحكم الكامل بالريموت كنترول.
@@ -628,6 +630,118 @@ export function PlayerScreen(): React.JSX.Element {
     );
   }, [isSimulated247, simulatedEpisodes, channelCreatedAt, showOsd]);
 
+  // --- محرك الإعلانات الذكي لقنوات بث 24/7 (Smart MP4 Ads Engine) ---
+  const [activeAd, setActiveAd] = useState<{ rule: SimulatedAdRule } | null>(null);
+  const [adCountdown, setAdCountdown] = useState<number>(0);
+  const isAdPlaying = Boolean(activeAd);
+
+  const completedEpisodesCountRef = useRef<number>(0);
+  const watchedMinutesRef = useRef<number>(0);
+  const pendingResumeActionRef = useRef<(() => void) | null>(null);
+  const adCountdownIntervalRef = useRef<any>(null);
+  const adWatchdogTimerRef = useRef<any>(null);
+
+  // استدعاء إنهاء الإعلان واستئناف البث المباشر
+  const finishAd = useCallback(() => {
+    if (adCountdownIntervalRef.current) {
+      clearInterval(adCountdownIntervalRef.current);
+      adCountdownIntervalRef.current = null;
+    }
+    if (adWatchdogTimerRef.current) {
+      clearTimeout(adWatchdogTimerRef.current);
+      adWatchdogTimerRef.current = null;
+    }
+    setActiveAd(null);
+    const resume = pendingResumeActionRef.current;
+    pendingResumeActionRef.current = null;
+    if (resume) {
+      resume();
+    }
+  }, []);
+
+  // تشغيل إعلان ذكي مع مؤقت تنازلي ومراقب أمان وطلب تسجيل المشاهدة
+  const triggerAd = useCallback((rule: SimulatedAdRule, onResume: () => void) => {
+    if (!rule || !rule.videoUrl) {
+      onResume();
+      return;
+    }
+
+    if (adCountdownIntervalRef.current) clearInterval(adCountdownIntervalRef.current);
+    if (adWatchdogTimerRef.current) clearTimeout(adWatchdogTimerRef.current);
+
+    pendingResumeActionRef.current = onResume;
+    setActiveAd({ rule });
+    setAdCountdown(rule.duration || 15);
+
+    // تسجيل ظهور الإعلان في الخلفية (Fire-and-forget impression ping)
+    try {
+      fetch(`https://iptv-backend.moaznsm.workers.dev/api/ads/${encodeURIComponent(rule.adId)}/impression`, {
+        method: 'POST',
+      }).catch(() => {});
+    } catch {}
+
+    // بدء العد التنازلي للشارة
+    adCountdownIntervalRef.current = setInterval(() => {
+      setAdCountdown((prev) => Math.max(0, prev - 1));
+    }, 1000);
+
+    // مراقب الأمان (Watchdog): إذا تجاوز تشغيل الإعلان duration + 5 ثوانٍ، يتم إنهائه فوراً
+    const maxDurationMs = ((rule.duration || 15) + 5) * 1000;
+    adWatchdogTimerRef.current = setTimeout(() => {
+      console.warn('[AdEngine Watchdog] Ad playback exceeded duration limit, resuming stream');
+      finishAd();
+    }, maxDurationMs);
+  }, [finishAd]);
+
+  // دالة مساعدة للبحث عن قاعدة إعلانات مفعّلة لنوع معين
+  const findAdRule = useCallback((type: 'EPISODE_COUNT' | 'TIME_INTERVAL'): SimulatedAdRule | null => {
+    if (!channelData?.adRules || !Array.isArray(channelData.adRules) || channelData.adRules.length === 0) {
+      return null;
+    }
+    return channelData.adRules.find((r) => r.triggerType === type && r.triggerValue > 0) || null;
+  }, [channelData?.adRules]);
+
+  // مراقبة وقت المشاهدة لقواعد TIME_INTERVAL
+  useEffect(() => {
+    if (!isSimulated247) return;
+    const timeRule = findAdRule('TIME_INTERVAL');
+    if (!timeRule) return;
+
+    const interval = setInterval(() => {
+      // احتساب الدقائق فقط أثناء التشغيل الفعلي وليس أثناء التوقف أو التحميل أو تشغيل إعلان آخر
+      if (!isAdPlaying && !isBuffering && !playbackError && playbackState?.isPlaying) {
+        watchedMinutesRef.current += 1;
+        if (watchedMinutesRef.current >= timeRule.triggerValue) {
+          watchedMinutesRef.current = 0;
+          const currentSec = (playerRef.current?.getCurrentTime ? playerRef.current.getCurrentTime() : 0) || 0;
+          // إيقاف المشغل دون عمل unmount
+          try {
+            playerRef.current?.pause();
+          } catch {}
+
+          triggerAd(timeRule, () => {
+            // استئناف البث مع الرجوع 5 ثوانٍ للخلف لتعويض أي انقطاع
+            const resumeSec = Math.max(0, currentSec - 5);
+            try {
+              playerRef.current?.seekTo(resumeSec);
+              playerRef.current?.play();
+            } catch {}
+          });
+        }
+      }
+    }, 60000); // كل 60 ثانية
+
+    return () => clearInterval(interval);
+  }, [isSimulated247, findAdRule, isAdPlaying, isBuffering, playbackError, playbackState?.isPlaying, triggerAd]);
+
+  // تنظيف مؤقتات الإعلانات عند تفكيك المكون
+  useEffect(() => {
+    return () => {
+      if (adCountdownIntervalRef.current) clearInterval(adCountdownIntervalRef.current);
+      if (adWatchdogTimerRef.current) clearTimeout(adWatchdogTimerRef.current);
+    };
+  }, []);
+
   // المزامنة الذكية التلقائية عند انتهاء الحلقة (onEnded) دون إعادة بناء المشغل
   const handleEpisodeEnded = useCallback(() => {
     if (!isSimulated247 || simulatedEpisodes.length === 0) return;
@@ -643,24 +757,46 @@ export function PlayerScreen(): React.JSX.Element {
       livePos.episodeIndex === currentIdx ||
       (currentEp && livePos.currentEpisode?.youtubeId === currentEp.youtubeId);
 
-    if (isSameEpisode) {
-      // حماية من التكرار: إذا انتهت الحلقة قبل مدتها المسجلة وأعادت الدالة نفس الحلقة،
-      // ننتقل إجبارياً إلى الحلقة التالية من الثانية 0 حتى لا تُعاد نفس الحلقة
-      const nextIndex = (currentIdx + 1) % simulatedEpisodes.length;
-      const nextEp = simulatedEpisodes[nextIndex];
-      setVirtualLivePos({
-        currentEpisode: nextEp,
-        episodeIndex: nextIndex,
-        startAt: 0,
-        totalDuration: livePos.totalDuration,
+    const nextIndex = (currentIdx + 1) % simulatedEpisodes.length;
+    const nextEp = simulatedEpisodes[nextIndex];
+
+    const proceedToNextEpisode = () => {
+      if (isSameEpisode) {
+        // حماية من التكرار: إذا انتهت الحلقة قبل مدتها المسجلة وأعادت الدالة نفس الحلقة،
+        // ننتقل إجبارياً إلى الحلقة التالية من الثانية 0 حتى لا تُعاد نفس الحلقة
+        setVirtualLivePos({
+          currentEpisode: nextEp,
+          episodeIndex: nextIndex,
+          startAt: 0,
+          totalDuration: livePos.totalDuration,
+        });
+        showOsd(`الحلقة التالية: ${nextEp?.title || ''}`, 'skip-next');
+      } else {
+        // الحلقة التالية في البث الحي: تشغيلها من موضعها اللحظي
+        setVirtualLivePos(livePos);
+        showOsd(`مزامنة البث: ${livePos.currentEpisode?.title || ''}`, 'sync');
+      }
+    };
+
+    // التحقق من قاعدة عدد الحلقات (EPISODE_COUNT)
+    completedEpisodesCountRef.current += 1;
+    const epRule = findAdRule('EPISODE_COUNT');
+    if (epRule && completedEpisodesCountRef.current % epRule.triggerValue === 0) {
+      triggerAd(epRule, () => {
+        // بعد انتهاء الإعلان، تبدأ الحلقة التالية من الثانية 0
+        setVirtualLivePos({
+          currentEpisode: nextEp,
+          episodeIndex: nextIndex,
+          startAt: 0,
+          totalDuration: livePos.totalDuration,
+        });
+        showOsd(`الحلقة التالية: ${nextEp?.title || ''}`, 'skip-next');
       });
-      showOsd(`الحلقة التالية: ${nextEp?.title || ''}`, 'skip-next');
-    } else {
-      // الحلقة التالية في البث الحي: تشغيلها من موضعها اللحظي (مثلاً بعد 15 أو 20 ثانية لتعويض أي انزياح)
-      setVirtualLivePos(livePos);
-      showOsd(`مزامنة البث: ${livePos.currentEpisode?.title || ''}`, 'sync');
+      return;
     }
-  }, [isSimulated247, simulatedEpisodes, channelCreatedAt, virtualLivePos, showOsd]);
+
+    proceedToNextEpisode();
+  }, [isSimulated247, simulatedEpisodes, channelCreatedAt, virtualLivePos, showOsd, findAdRule, triggerAd]);
 
   // رابط البث الفعلي بناءً على المصدر المختار
   const currentStreamUrl = useMemo(() => {
@@ -987,6 +1123,12 @@ export function PlayerScreen(): React.JSX.Element {
   // إدارة التنقل الموحد بالريموت كنترول ولوحة المفاتيح عبر useTVRemoteNavigation
   useTVRemoteNavigation({
     onBack: () => {
+      // 0. الخروج الفوري عند تشغيل إعلان
+      if (isAdPlaying) {
+        finishAd();
+        handleGoBack();
+        return true;
+      }
       // 1. إغلاق القوائم المنبثقة أولاً
       if (showAudioModal) {
         setShowAudioModal(false);
@@ -1268,25 +1410,50 @@ export function PlayerScreen(): React.JSX.Element {
     <View style={styles.rootContainer}>
       {/* 1. مشغل الفيديو HLS */}
       {currentStreamUrl && !playbackError ? (
-        <TVPlayer
-          ref={playerRef}
-          key={`tv-player-${retryKey}-${activeSourceIndex}-${isSimulated247 ? 'simulated' : effectiveChannelId}`}
-          streamUrl={currentStreamUrl}
-          contentFit={contentFit}
-          selectedLevel={selectedHlsLevel}
-          onLevelsLoaded={(levels) => setHlsLevels(levels)}
-          onPlaybackStateChange={(state) => setPlaybackState(state)}
-          style={StyleSheet.absoluteFillObject}
-          onBuffering={(buffering) => setIsBuffering(buffering)}
-          onError={handlePlayerError}
-          onEnded={handleEpisodeEnded}
-        />
+        <View
+          style={[
+            StyleSheet.absoluteFillObject,
+            isAdPlaying && { opacity: 0, pointerEvents: 'none' },
+          ]}
+        >
+          <TVPlayer
+            ref={playerRef}
+            key={`tv-player-${retryKey}-${activeSourceIndex}-${isSimulated247 ? 'simulated' : effectiveChannelId}`}
+            streamUrl={currentStreamUrl}
+            contentFit={contentFit}
+            selectedLevel={selectedHlsLevel}
+            onLevelsLoaded={(levels) => setHlsLevels(levels)}
+            onPlaybackStateChange={(state) => setPlaybackState(state)}
+            style={StyleSheet.absoluteFillObject}
+            onBuffering={(buffering) => setIsBuffering(buffering)}
+            onError={handlePlayerError}
+            onEnded={handleEpisodeEnded}
+          />
+        </View>
       ) : !currentStreamUrl ? (
         <View style={styles.noUrlBox}>
           <MaterialIcons name="link-off" size={64} color="#ef4444" />
           <Text style={styles.noUrlText}>رابط تشغيل القناة غير متوفر</Text>
         </View>
       ) : null}
+
+      {/* مشغل الإعلانات الذكي بطبقة علوية دون unmount لمشغل يوتيوب */}
+      {isAdPlaying && activeAd && (
+        <View style={styles.adOverlayContainer} pointerEvents="box-none">
+          <AdVideoPlayer
+            videoUrl={activeAd.rule.videoUrl}
+            contentFit={contentFit}
+            onEnded={finishAd}
+            onError={finishAd}
+          />
+          <View style={styles.adBadgeContainer} pointerEvents="none">
+            <MaterialIcons name="campaign" size={18} color="#38bdf8" />
+            <Text style={styles.adBadgeText}>
+              {`فاصل إعلاني • ${adCountdown} ثانية`}
+            </Text>
+          </View>
+        </View>
+      )}
 
       {/* مؤشر جلب السيرفرات الهجينة الذكية */}
       {isLoadingSources && (
@@ -1299,7 +1466,7 @@ export function PlayerScreen(): React.JSX.Element {
       )}
 
       {/* 2. طبقة حساسة للنقر لاستعادة الواجهة عند اختفائها وفتح قائمة القنوات بالريموت */}
-      {!showSideMenu && !playbackError && !showQualityModal && (
+      {!showSideMenu && !playbackError && !showQualityModal && !isAdPlaying && (
         <Pressable
           hasTVPreferredFocus={!showSideMenu && !playbackError}
           focusable={true}
@@ -2401,7 +2568,7 @@ export function PlayerScreen(): React.JSX.Element {
 
       {/* 7. شريط التحكم السفلي المخصص لريموت التلفاز واللمس */}
       <TVPlayerControls
-        visible={showOverlay && !playbackError && !showSideMenu}
+        visible={showOverlay && !playbackError && !showSideMenu && !isAdPlaying}
         isEmbed={isEmbed}
         playbackState={playbackState}
         focusedTarget={focusedControlSection === 'bottom' ? focusedBottomTarget : null}
@@ -2456,6 +2623,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     position: 'relative',
     overflow: 'hidden',
+  },
+  adOverlayContainer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 90,
+  },
+  adBadgeContainer: {
+    position: 'absolute',
+    top: 36,
+    right: 36,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.4)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    zIndex: 99,
+  },
+  adBadgeText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: 'bold',
   },
   overlayBar: {
     position: 'absolute',

@@ -15,7 +15,7 @@ import { ChannelLogo } from '../../components/ChannelLogo';
 import { useTVRemoteNavigation } from '../../hooks/useTVRemoteNavigation';
 import { useAppStore } from '../../store/useAppStore';
 import { getVirtualLivePosition, VirtualLiveEpisode } from '../../utils/virtualLive';
-import { setActiveSimulatedChannel } from '../../utils/simulatedChannelStore';
+import { setActiveSimulatedChannel, SimulatedAdRule } from '../../utils/simulatedChannelStore';
 
 const BACKEND_BASE_URL = 'https://iptv-backend.moaznsm.workers.dev';
 
@@ -29,6 +29,7 @@ export interface PublicSimulatedChannel {
   episodes: VirtualLiveEpisode[];
   createdAt?: number | string;
   updatedAt?: number | string;
+  adRules?: SimulatedAdRule[];
 }
 
 const DEFAULT_CATEGORIES = [
@@ -164,6 +165,7 @@ export default function SimulatedChannelsScreen(): React.JSX.Element {
         category: channel.category || 'مسلسلات 24/7',
         episodes: channel.episodes || [],
         createdAt: channel.createdAt ? String(channel.createdAt) : '',
+        adRules: channel.adRules || [],
       });
 
       router.push({

@@ -4,7 +4,7 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import { MaterialIcons } from '@expo/vector-icons';
 import Hls from 'hls.js';
 import { shouldAutoProxy, getProxyStreamUrl } from '../../utils/proxy';
-import { TVEmbedPlayer, extractYouTubeIdAndStart } from './TVEmbedPlayer';
+import { TVEmbedPlayer, TVEmbedPlayerHandle, extractYouTubeIdAndStart } from './TVEmbedPlayer';
 
 export interface HlsLevelOption {
   id: number; // -1 for auto
@@ -40,6 +40,7 @@ export interface TVPlayerHandle {
   toggleMute: () => void;
   selectAudioTrack: (trackId: string | number) => void;
   selectSubtitleTrack: (trackId: string | number | null) => void;
+  getCurrentTime?: () => number;
 }
 
 export interface TVPlayerProps {
@@ -178,13 +179,16 @@ export function normalizeYouTubeEmbedUrl(url: string): string {
  * يضمن الانتقال السلس التلقائي بين الحلقات عبر player.loadVideoById دون إعادة بناء المشغل
  * مع إيقاف الترجمة إجبارياً عبر unloadModule('captions') و unloadModule('cc').
  */
-const YouTubeWebPlayer: React.FC<{
-  url: string;
-  style?: StyleProp<ViewStyle>;
-  onBuffering?: (isBuffering: boolean) => void;
-  onError?: (err: string) => void;
-  onEnded?: () => void;
-}> = ({ url, style, onBuffering, onError, onEnded }) => {
+const YouTubeWebPlayer = forwardRef<
+  TVPlayerHandle,
+  {
+    url: string;
+    style?: StyleProp<ViewStyle>;
+    onBuffering?: (isBuffering: boolean) => void;
+    onError?: (err: string) => void;
+    onEnded?: () => void;
+  }
+>(({ url, style, onBuffering, onError, onEnded }, ref) => {
   const containerRef = useRef<any>(null);
   const playerRef = useRef<any>(null);
   const onEndedRef = useRef(onEnded);
@@ -199,6 +203,63 @@ const YouTubeWebPlayer: React.FC<{
   const lastValidTimeRef = useRef<number>(ytInfo.start || 0);
   const watchdogTimerRef = useRef<any>(null);
   const timeTrackingIntervalRef = useRef<any>(null);
+
+  useImperativeHandle(ref, () => ({
+    play: () => {
+      try {
+        playerRef.current?.playVideo?.();
+      } catch {}
+    },
+    pause: () => {
+      try {
+        playerRef.current?.pauseVideo?.();
+      } catch {}
+    },
+    togglePlayPause: () => {
+      try {
+        const s = playerRef.current?.getPlayerState?.();
+        if (s === 1) {
+          playerRef.current?.pauseVideo?.();
+        } else {
+          playerRef.current?.playVideo?.();
+        }
+      } catch {}
+    },
+    seekBy: (secs: number) => {
+      try {
+        const cur = (typeof playerRef.current?.getCurrentTime === 'function' ? playerRef.current.getCurrentTime() : lastValidTimeRef.current) || 0;
+        const target = Math.max(0, cur + secs);
+        playerRef.current?.seekTo?.(target, true);
+        lastValidTimeRef.current = target;
+      } catch {}
+    },
+    seekTo: (secs: number) => {
+      try {
+        playerRef.current?.seekTo?.(secs, true);
+        lastValidTimeRef.current = secs;
+      } catch {}
+    },
+    toggleMute: () => {
+      try {
+        if (playerRef.current?.isMuted?.()) {
+          playerRef.current?.unMute?.();
+        } else {
+          playerRef.current?.mute?.();
+        }
+      } catch {}
+    },
+    selectAudioTrack: () => {},
+    selectSubtitleTrack: () => {},
+    getCurrentTime: () => {
+      try {
+        const cur = playerRef.current?.getCurrentTime?.();
+        if (typeof cur === 'number' && cur > 0) return cur;
+        return lastValidTimeRef.current || 0;
+      } catch {
+        return lastValidTimeRef.current || 0;
+      }
+    },
+  }));
 
   const startTimeTracking = () => {
     if (timeTrackingIntervalRef.current) clearInterval(timeTrackingIntervalRef.current);
@@ -403,7 +464,7 @@ const YouTubeWebPlayer: React.FC<{
       />
     </View>
   );
-};
+});
 
 /**
  * مشغل فيديو متطور يدعم شاشات التلفاز والويب وأجهزة Android/iOS.
@@ -428,6 +489,8 @@ export const TVPlayer = forwardRef<TVPlayerHandle, TVPlayerProps>(({
   const [needsUserPlay, setNeedsUserPlay] = useState<boolean>(false);
   const [isMounted, setIsMounted] = useState<boolean>(false);
   const nativePlayerRef = useRef<TVPlayerHandle | null>(null);
+  const youtubeWebPlayerRef = useRef<TVPlayerHandle | null>(null);
+  const embedPlayerRef = useRef<TVEmbedPlayerHandle | null>(null);
 
   useEffect(() => {
     setIsMounted(true);
@@ -540,6 +603,24 @@ export const TVPlayer = forwardRef<TVPlayerHandle, TVPlayerProps>(({
   // إتاحة التحكم الخارجي عبر useImperativeHandle
   useImperativeHandle(ref, () => {
     if (Platform.OS !== 'web') {
+      if (isEmbedUrl) {
+        return {
+          play: () => embedPlayerRef.current?.play(),
+          pause: () => embedPlayerRef.current?.pause(),
+          togglePlayPause: () => {
+            embedPlayerRef.current?.pause();
+          },
+          seekBy: (secs) => {
+            const cur = embedPlayerRef.current?.getCurrentTime() || 0;
+            embedPlayerRef.current?.seekTo(Math.max(0, cur + secs));
+          },
+          seekTo: (secs) => embedPlayerRef.current?.seekTo(secs),
+          toggleMute: () => {},
+          selectAudioTrack: () => {},
+          selectSubtitleTrack: () => {},
+          getCurrentTime: () => embedPlayerRef.current?.getCurrentTime() || 0,
+        };
+      }
       return {
         play: () => nativePlayerRef.current?.play(),
         pause: () => nativePlayerRef.current?.pause(),
@@ -549,10 +630,25 @@ export const TVPlayer = forwardRef<TVPlayerHandle, TVPlayerProps>(({
         toggleMute: () => nativePlayerRef.current?.toggleMute(),
         selectAudioTrack: (tId) => nativePlayerRef.current?.selectAudioTrack(tId),
         selectSubtitleTrack: (tId) => nativePlayerRef.current?.selectSubtitleTrack(tId),
+        getCurrentTime: () => nativePlayerRef.current?.getCurrentTime?.() || 0,
       };
     }
 
     // على الويب:
+    if (isEmbedUrl && isYouTube) {
+      return {
+        play: () => youtubeWebPlayerRef.current?.play(),
+        pause: () => youtubeWebPlayerRef.current?.pause(),
+        togglePlayPause: () => youtubeWebPlayerRef.current?.togglePlayPause(),
+        seekBy: (secs) => youtubeWebPlayerRef.current?.seekBy(secs),
+        seekTo: (secs) => youtubeWebPlayerRef.current?.seekTo(secs),
+        toggleMute: () => youtubeWebPlayerRef.current?.toggleMute(),
+        selectAudioTrack: () => {},
+        selectSubtitleTrack: () => {},
+        getCurrentTime: () => youtubeWebPlayerRef.current?.getCurrentTime?.() || 0,
+      };
+    }
+
     return {
       play: () => {
         const videoEl = videoHtmlRef.current;
@@ -612,8 +708,9 @@ export const TVPlayer = forwardRef<TVPlayerHandle, TVPlayerProps>(({
           notifyWebPlaybackState();
         }
       },
+      getCurrentTime: () => videoHtmlRef.current?.currentTime || 0,
     };
-  }, [notifyWebPlaybackState]);
+  }, [notifyWebPlaybackState, isEmbedUrl, isYouTube]);
 
   // استماع لرسائل أخطاء يوتيوب (postMessage) من الـ iframe للتنقل التلقائي عند الحظر أو تقييد العمر
   useEffect(() => {
@@ -1013,6 +1110,7 @@ export const TVPlayer = forwardRef<TVPlayerHandle, TVPlayerProps>(({
       if (isYouTube) {
         return (
           <YouTubeWebPlayer
+            ref={youtubeWebPlayerRef}
             url={finalEmbedUrl}
             style={style}
             onBuffering={onBuffering}
@@ -1092,6 +1190,7 @@ export const TVPlayer = forwardRef<TVPlayerHandle, TVPlayerProps>(({
   if (isEmbedUrl) {
     return (
       <TVEmbedPlayer
+        ref={embedPlayerRef}
         url={finalEmbedUrl}
         style={style}
         onBuffering={onBuffering}
@@ -1265,6 +1364,13 @@ const NativeVideoPlayer = forwardRef<
         }
         syncPlaybackState();
       } catch {}
+    },
+    getCurrentTime: () => {
+      try {
+        return (player as any).currentTime || 0;
+      } catch {
+        return 0;
+      }
     },
   }), [player, syncPlaybackState]);
 

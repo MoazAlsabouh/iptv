@@ -1,6 +1,16 @@
 import { Platform } from 'react-native';
 import { VirtualLiveEpisode } from './virtualLive';
 
+export interface SimulatedAdRule {
+  id: string;
+  adId: string;
+  title: string;
+  videoUrl: string;
+  duration: number;
+  triggerType: 'EPISODE_COUNT' | 'TIME_INTERVAL';
+  triggerValue: number;
+}
+
 export interface ActiveSimulatedChannelData {
   id: string;
   name: string;
@@ -8,6 +18,7 @@ export interface ActiveSimulatedChannelData {
   category: string;
   episodes: VirtualLiveEpisode[];
   createdAt?: string | number | null;
+  adRules?: SimulatedAdRule[];
 }
 
 // مخزن الذاكرة المحلي (In-memory Store) لنقل البيانات بين الشاشات دون تضخيم الـ URL

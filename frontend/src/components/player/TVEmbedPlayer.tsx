@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, forwardRef, useImperativeHandle } from 'react';
 import { View, StyleSheet, StyleProp, ViewStyle, Platform } from 'react-native';
 
 let WebView: any = null;
@@ -58,13 +58,28 @@ export function extractYouTubeIdAndStart(rawUrl: string): { videoId: string; sta
   return { videoId, start: Math.max(0, start) };
 }
 
-export const TVEmbedPlayer: React.FC<{
+export interface TVEmbedPlayerHandle {
+  play: () => void;
+  pause: () => void;
+  seekTo: (seconds: number) => void;
+  getCurrentTime: () => number;
+}
+
+export interface TVEmbedPlayerProps {
   url: string;
   style?: StyleProp<ViewStyle>;
   onBuffering?: (isBuffering: boolean) => void;
   onError?: (err: string) => void;
   onEnded?: () => void;
-}> = ({ url, style, onBuffering, onError, onEnded }) => {
+}
+
+export const TVEmbedPlayer = forwardRef<TVEmbedPlayerHandle, TVEmbedPlayerProps>(({
+  url,
+  style,
+  onBuffering,
+  onError,
+  onEnded,
+}, ref) => {
   const onEndedRef = useRef(onEnded);
   onEndedRef.current = onEnded;
   const webViewRef = useRef<any>(null);
@@ -95,6 +110,55 @@ export const TVEmbedPlayer: React.FC<{
   }, [url, isYouTube]);
 
   const currentVideoIdRef = useRef<string>(ytInfo?.videoId || '');
+
+  const currentSecRef = useRef<number>(ytInfo?.start || 0);
+
+  useImperativeHandle(ref, () => ({
+    play: () => {
+      try {
+        webViewRef.current?.injectJavaScript(`
+          (function() {
+            try {
+              if (window.player && typeof window.player.playVideo === 'function') {
+                window.player.playVideo();
+              }
+            } catch(e) {}
+          })();
+          true;
+        `);
+      } catch {}
+    },
+    pause: () => {
+      try {
+        webViewRef.current?.injectJavaScript(`
+          (function() {
+            try {
+              if (window.player && typeof window.player.pauseVideo === 'function') {
+                window.player.pauseVideo();
+              }
+            } catch(e) {}
+          })();
+          true;
+        `);
+      } catch {}
+    },
+    seekTo: (seconds: number) => {
+      try {
+        currentSecRef.current = seconds;
+        webViewRef.current?.injectJavaScript(`
+          (function() {
+            try {
+              if (window.player && typeof window.player.seekTo === 'function') {
+                window.player.seekTo(${seconds}, true);
+              }
+            } catch(e) {}
+          })();
+          true;
+        `);
+      } catch {}
+    },
+    getCurrentTime: () => currentSecRef.current,
+  }));
 
   // تحديد رابط المصدر الأولي لـ WebView دون إعادة تحميل عند التنقل بين الحلقات
   const initialSourceRef = useRef<any>(null);
@@ -229,7 +293,7 @@ export const TVEmbedPlayer: React.FC<{
       />
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: {
