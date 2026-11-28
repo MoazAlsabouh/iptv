@@ -126,6 +126,41 @@ export interface SimulatedChannelItem {
   updatedAt?: string;
 }
 
+export interface AdItem {
+  id: string;
+  title: string;
+  videoUrl: string;
+  video_url?: string;
+  duration: number;
+  maxImpressions: number | null;
+  max_impressions?: number | null;
+  currentImpressions: number;
+  current_impressions?: number;
+  isActive: boolean;
+  is_active?: number;
+  createdAt: string;
+  created_at?: string;
+}
+
+export interface AdRuleItem {
+  id: string;
+  channelId: string;
+  channel_id?: string;
+  channelName?: string;
+  adId: string;
+  ad_id?: string;
+  adTitle?: string;
+  adVideoUrl?: string;
+  adDuration?: number;
+  triggerType: 'EPISODE_COUNT' | 'TIME_INTERVAL';
+  trigger_type?: string;
+  triggerValue: number;
+  trigger_value?: number;
+  isActive: boolean;
+  is_active?: number;
+  createdAt: string;
+}
+
 interface SubscriptionCode {
   id: number;
   code: string;
@@ -239,7 +274,7 @@ export default function AdminScreen(): React.JSX.Element {
   const [authLoading, setAuthLoading] = useState<boolean>(false);
 
   // التنقل بين التبويبات الرئيسية
-  const [activeTab, setActiveTab] = useState<'codes' | 'resellers' | 'vod' | 'arabic_vod' | 'networks' | 'channels' | 'simulated'>('codes');
+  const [activeTab, setActiveTab] = useState<'codes' | 'resellers' | 'vod' | 'arabic_vod' | 'networks' | 'channels' | 'simulated' | 'ads'>('codes');
 
   // إعدادات وسيرفرات الأفلام والمسلسلات
   const [vodSettings, setVodSettings] = useState<VodSettings>(DEFAULT_VOD_SETTINGS);
@@ -367,6 +402,39 @@ export default function AdminScreen(): React.JSX.Element {
         episodes: [],
       },
     ],
+  });
+
+  // إدارة إعلانات البث 24/7 (Ads & Rules)
+  const [ads, setAds] = useState<AdItem[]>([]);
+  const [adRules, setAdRules] = useState<AdRuleItem[]>([]);
+  const [adsLoading, setAdsLoading] = useState<boolean>(false);
+  const [showAdModal, setShowAdModal] = useState<boolean>(false);
+  const [savingAd, setSavingAd] = useState<boolean>(false);
+  const [editingAd, setEditingAd] = useState<AdItem>({
+    id: '',
+    title: '',
+    videoUrl: '',
+    duration: 15,
+    maxImpressions: null,
+    currentImpressions: 0,
+    isActive: true,
+    createdAt: '',
+  });
+
+  const [showRuleModal, setShowRuleModal] = useState<boolean>(false);
+  const [savingRule, setSavingRule] = useState<boolean>(false);
+  const [editingRule, setEditingRule] = useState<{
+    channelId: string;
+    adId: string;
+    triggerType: 'EPISODE_COUNT' | 'TIME_INTERVAL';
+    triggerValue: number;
+    isActive: boolean;
+  }>({
+    channelId: 'ALL',
+    adId: '',
+    triggerType: 'EPISODE_COUNT',
+    triggerValue: 2,
+    isActive: true,
   });
 
   // إدارة سلاسل وباقات القنوات (Networks) عبر الـ Backend و D1
@@ -1637,6 +1705,186 @@ export default function AdminScreen(): React.JSX.Element {
     }
   };
 
+  // وظائف إدارة إعلانات البث (24/7) وقواعدها
+  const fetchAds = useCallback(async () => {
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/ads?t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAds(Array.isArray(data?.ads) ? data.ads : []);
+      }
+    } catch (err) {
+      console.warn('[Admin] Failed to fetch ads:', err);
+    }
+  }, [getAuthHeaders]);
+
+  const fetchAdRules = useCallback(async () => {
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/ad-rules?t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAdRules(Array.isArray(data?.rules) ? data.rules : []);
+      }
+    } catch (err) {
+      console.warn('[Admin] Failed to fetch ad rules:', err);
+    }
+  }, [getAuthHeaders]);
+
+  const fetchAdsAndRules = useCallback(async () => {
+    setAdsLoading(true);
+    await Promise.all([fetchAds(), fetchAdRules()]);
+    fetchSimulatedChannels();
+    setAdsLoading(false);
+  }, [fetchAds, fetchAdRules, fetchSimulatedChannels]);
+
+  const handleSaveAd = async () => {
+    if (!editingAd.title.trim()) {
+      setStatusMessage('يرجى إدخال اسم أو عنوان الإعلان');
+      return;
+    }
+    if (!editingAd.videoUrl.trim()) {
+      setStatusMessage('يرجى إدخال رابط فيديو الإعلان (MP4)');
+      return;
+    }
+    setSavingAd(true);
+    try {
+      const isNew = !editingAd.id;
+      const url = isNew
+        ? `${BACKEND_BASE_URL}/api/admin/ads`
+        : `${BACKEND_BASE_URL}/api/admin/ads/${encodeURIComponent(editingAd.id)}`;
+      const method = isNew ? 'POST' : 'PUT';
+      const res = await fetch(url, {
+        method,
+        headers: {
+          ...getAuthHeaders(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title: editingAd.title.trim(),
+          videoUrl: editingAd.videoUrl.trim(),
+          duration: Number(editingAd.duration) || 15,
+          maxImpressions: editingAd.maxImpressions ? Number(editingAd.maxImpressions) : null,
+          isActive: editingAd.isActive,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setStatusMessage(isNew ? 'تمت إضافة الإعلان بنجاح' : 'تم تحديث الإعلان بنجاح');
+        setShowAdModal(false);
+        fetchAds();
+      } else {
+        setStatusMessage(data.error || 'فشل حفظ الإعلان');
+      }
+    } catch (err: any) {
+      setStatusMessage('خطأ في الاتصال: ' + (err?.message || ''));
+    } finally {
+      setSavingAd(false);
+    }
+  };
+
+  const handleToggleAdActive = async (ad: AdItem) => {
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/ads/${encodeURIComponent(ad.id)}`, {
+        method: 'PUT',
+        headers: {
+          ...getAuthHeaders(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          isActive: !ad.isActive,
+        }),
+      });
+      if (res.ok) {
+        setAds((prev) => prev.map((a) => (a.id === ad.id ? { ...a, isActive: !ad.isActive } : a)));
+        setStatusMessage(ad.isActive ? 'تم إيقاف الإعلان' : 'تم تفعيل الإعلان');
+      }
+    } catch {
+      setStatusMessage('فشل تغيير حالة الإعلان');
+    }
+  };
+
+  const handleDeleteAd = async (id: string) => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (!window.confirm('هل أنت متأكد من حذف هذا الإعلان وجميع قواعد الربط المرتبطة به؟')) return;
+    }
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/ads/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        setStatusMessage('تم حذف الإعلان وقواعده بنجاح');
+        fetchAdsAndRules();
+      } else {
+        setStatusMessage('فشل حذف الإعلان');
+      }
+    } catch {
+      setStatusMessage('خطأ أثناء حذف الإعلان');
+    }
+  };
+
+  const handleSaveRule = async () => {
+    if (!editingRule.adId) {
+      setStatusMessage('يرجى اختيار الإعلان');
+      return;
+    }
+    setSavingRule(true);
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/ad-rules`, {
+        method: 'POST',
+        headers: {
+          ...getAuthHeaders(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          channelId: editingRule.channelId,
+          adId: editingRule.adId,
+          triggerType: editingRule.triggerType,
+          triggerValue: Math.max(1, Number(editingRule.triggerValue) || 1),
+          isActive: editingRule.isActive,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setStatusMessage('تمت إضافة قاعدة الإعلان بنجاح');
+        setShowRuleModal(false);
+        fetchAdRules();
+      } else {
+        setStatusMessage(data.error || 'فشل حفظ القاعدة');
+      }
+    } catch (err: any) {
+      setStatusMessage('خطأ في الاتصال: ' + (err?.message || ''));
+    } finally {
+      setSavingRule(false);
+    }
+  };
+
+  const handleDeleteRule = async (id: string) => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (!window.confirm('هل أنت متأكد من حذف هذه القاعدة؟')) return;
+    }
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/admin/ad-rules/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        setStatusMessage('تم حذف القاعدة بنجاح');
+        fetchAdRules();
+      } else {
+        setStatusMessage('فشل حذف القاعدة');
+      }
+    } catch {
+      setStatusMessage('خطأ أثناء حذف القاعدة');
+    }
+  };
+
   // وظائف ترتيب باقات القنوات والتحكم بنطاق القنوات التابعة
   const handleMoveNetworkPriority = async (networkId: string, direction: 'up' | 'down') => {
     const currentList = adminNetworks.length > 0 ? [...adminNetworks] : [...DEFAULT_NETWORKS];
@@ -1841,6 +2089,8 @@ export default function AdminScreen(): React.JSX.Element {
         fetchChannelOverrides();
       } else if (activeTab === 'simulated') {
         fetchSimulatedChannels();
+      } else if (activeTab === 'ads') {
+        fetchAdsAndRules();
       }
     }
   }, [
@@ -1854,6 +2104,7 @@ export default function AdminScreen(): React.JSX.Element {
     fetchAdminNetworks,
     fetchChannelOverrides,
     fetchSimulatedChannels,
+    fetchAdsAndRules,
   ]);
 
   // تسجيل الدخول للإدارة
@@ -2286,6 +2537,7 @@ export default function AdminScreen(): React.JSX.Element {
               else if (activeTab === 'networks') fetchAdminNetworks();
               else if (activeTab === 'channels') fetchChannelOverrides();
               else if (activeTab === 'simulated') fetchSimulatedChannels();
+              else if (activeTab === 'ads') fetchAdsAndRules();
             }}
           >
             <MaterialIcons name="refresh" size={18} color="#38bdf8" />
@@ -2428,6 +2680,25 @@ export default function AdminScreen(): React.JSX.Element {
             ]}
           >
             بث المسلسلات 24/7 ({simulatedChannels.length})
+          </Text>
+        </Pressable>
+
+        <Pressable
+          style={[styles.mainNavTab, activeTab === 'ads' && styles.mainNavTabActive]}
+          onPress={() => setActiveTab('ads')}
+        >
+          <MaterialIcons
+            name="campaign"
+            size={20}
+            color={activeTab === 'ads' ? '#ec4899' : '#94a3b8'}
+          />
+          <Text
+            style={[
+              styles.mainNavTabText,
+              activeTab === 'ads' && styles.mainNavTabTextActive,
+            ]}
+          >
+            إعلانات البث (24/7) ({ads.length})
           </Text>
         </Pressable>
       </View>
@@ -5076,6 +5347,217 @@ export default function AdminScreen(): React.JSX.Element {
               </View>
             )}
           </View>
+        ) : activeTab === 'ads' ? (
+          /* ==========================================
+             تبويب إعلانات البث (24/7) وقواعد الربط
+             ========================================== */
+          <View style={styles.channelsTabContainer}>
+            {/* 1. قسم إعلانات الفيديو المباشرة */}
+            <View style={styles.resellersHeaderRow}>
+              <View>
+                <Text style={styles.sectionTitle}>إعلانات الفيديو المباشرة (MP4)</Text>
+                <Text style={styles.sectionSub}>
+                  إدارة فيديوهات الإعلانات المباشرة (مثل روابط Cloudflare R2)، وتحديد المدة والحد الأقصى لمرات الظهور.
+                </Text>
+              </View>
+
+              <Pressable
+                style={[styles.addCustomChannelBtn, { backgroundColor: '#ec4899' }]}
+                onPress={() => {
+                  setEditingAd({
+                    id: '',
+                    title: '',
+                    videoUrl: '',
+                    duration: 15,
+                    maxImpressions: null,
+                    currentImpressions: 0,
+                    isActive: true,
+                    createdAt: '',
+                  });
+                  setShowAdModal(true);
+                }}
+              >
+                <MaterialIcons name="add-circle" size={18} color="#ffffff" />
+                <Text style={[styles.addCustomChannelBtnText, { color: '#ffffff' }]}>+ إضافة إعلان جديد</Text>
+              </Pressable>
+            </View>
+
+            {adsLoading ? (
+              <View style={{ padding: 40, alignItems: 'center' }}>
+                <ActivityIndicator size="large" color="#ec4899" />
+              </View>
+            ) : ads.length === 0 ? (
+              <View style={{ padding: 32, alignItems: 'center', backgroundColor: '#0f172a', borderRadius: 12, marginBottom: 32 }}>
+                <MaterialIcons name="campaign" size={48} color="#64748b" />
+                <Text style={{ color: '#94a3b8', fontSize: 16, marginTop: 12 }}>لا توجد إعلانات مضافة حتى الآن</Text>
+                <Text style={{ color: '#64748b', fontSize: 13, marginTop: 4 }}>
+                  انقر على "+ إضافة إعلان جديد" لإضافة فيديو إعلاني مباشر بصيغة MP4.
+                </Text>
+              </View>
+            ) : (
+              <View style={[styles.channelsGrid, { marginBottom: 36 }]}>
+                {ads.map((ad) => {
+                  const isActive = Boolean(ad.isActive);
+                  const isLimited = ad.maxImpressions !== null && ad.maxImpressions > 0;
+                  const isExpired = isLimited && ad.currentImpressions >= (ad.maxImpressions || 0);
+
+                  return (
+                    <View key={ad.id} style={[styles.channelCardItem, { borderColor: isExpired ? '#ef444450' : isActive ? 'rgba(236, 72, 153, 0.3)' : 'rgba(255, 255, 255, 0.08)' }]}>
+                      <View style={styles.channelCardHeader}>
+                        <View style={[styles.channelLogoWrapper, { backgroundColor: '#1e1b4b', justifyContent: 'center', alignItems: 'center' }]}>
+                          <MaterialIcons name="play-circle-filled" size={28} color="#ec4899" />
+                        </View>
+                        <View style={styles.channelCardInfo}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text style={styles.channelCardName}>{ad.title}</Text>
+                            <View
+                              style={{
+                                backgroundColor: isExpired ? '#ef444425' : isActive ? '#10b98125' : '#64748b25',
+                                paddingHorizontal: 6,
+                                paddingVertical: 2,
+                                borderRadius: 4,
+                              }}
+                            >
+                              <Text
+                                style={{
+                                  fontSize: 10,
+                                  fontWeight: 'bold',
+                                  color: isExpired ? '#ef4444' : isActive ? '#10b981' : '#94a3b8',
+                                }}
+                              >
+                                {isExpired ? 'مكتمل' : isActive ? 'نشط' : 'معطل'}
+                              </Text>
+                            </View>
+                          </View>
+                          <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }}>
+                            المدة: {ad.duration} ثانية • المشاهدات: {ad.currentImpressions} / {isLimited ? ad.maxImpressions : 'غير محدود'}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View style={{ marginHorizontal: 12, marginTop: 8, padding: 8, backgroundColor: '#0b1120', borderRadius: 6 }}>
+                        <Text numberOfLines={1} style={{ color: '#38bdf8', fontSize: 11 }}>
+                          {ad.videoUrl}
+                        </Text>
+                      </View>
+
+                      <View style={[styles.channelCardActionsRow, { justifyContent: 'flex-end', marginTop: 12 }]}>
+                        <View style={styles.actionBtnsGroup}>
+                          <Pressable
+                            style={[styles.channelActionBtn, { borderColor: isActive ? '#f59e0b40' : '#10b98140' }]}
+                            onPress={() => handleToggleAdActive(ad)}
+                          >
+                            <MaterialIcons name={isActive ? 'pause' : 'play-arrow'} size={16} color={isActive ? '#f59e0b' : '#10b981'} />
+                            <Text style={[styles.channelActionBtnText, { color: isActive ? '#f59e0b' : '#10b981' }]}>
+                              {isActive ? 'إيقاف' : 'تفعيل'}
+                            </Text>
+                          </Pressable>
+
+                          <Pressable
+                            style={styles.channelActionBtn}
+                            onPress={() => {
+                              setEditingAd(ad);
+                              setShowAdModal(true);
+                            }}
+                          >
+                            <MaterialIcons name="edit" size={16} color="#38bdf8" />
+                            <Text style={[styles.channelActionBtnText, { color: '#38bdf8' }]}>تعديل</Text>
+                          </Pressable>
+
+                          <Pressable
+                            style={[styles.channelActionBtn, { borderColor: '#ef444430' }]}
+                            onPress={() => handleDeleteAd(ad.id)}
+                          >
+                            <MaterialIcons name="delete" size={16} color="#ef4444" />
+                            <Text style={[styles.channelActionBtnText, { color: '#ef4444' }]}>حذف</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+
+            {/* 2. قسم قواعد ربط الإعلانات بالقنوات */}
+            <View style={[styles.resellersHeaderRow, { borderTopWidth: 1, borderTopColor: 'rgba(255, 255, 255, 0.08)', paddingTop: 28 }]}>
+              <View>
+                <Text style={styles.sectionTitle}>قواعد تشغيل الإعلانات على القنوات</Text>
+                <Text style={styles.sectionSub}>
+                  تحديد متى يظهر الإعلان على القنوات (إما بعد عدد حلقات محدد أو كل مدة زمنية بالدقائق).
+                </Text>
+              </View>
+
+              <Pressable
+                style={[styles.addCustomChannelBtn, { backgroundColor: '#a855f7' }]}
+                disabled={ads.length === 0}
+                onPress={() => {
+                  setEditingRule({
+                    channelId: 'ALL',
+                    adId: ads[0]?.id || '',
+                    triggerType: 'EPISODE_COUNT',
+                    triggerValue: 2,
+                    isActive: true,
+                  });
+                  setShowRuleModal(true);
+                }}
+              >
+                <MaterialIcons name="playlist-add" size={18} color="#ffffff" />
+                <Text style={[styles.addCustomChannelBtnText, { color: '#ffffff' }]}>+ إضافة قاعدة جديدة</Text>
+              </Pressable>
+            </View>
+
+            {adRules.length === 0 ? (
+              <View style={{ padding: 32, alignItems: 'center', backgroundColor: '#0f172a', borderRadius: 12 }}>
+                <MaterialIcons name="rule" size={48} color="#64748b" />
+                <Text style={{ color: '#94a3b8', fontSize: 16, marginTop: 12 }}>لا توجد قواعد ربط مضافة حتى الآن</Text>
+                <Text style={{ color: '#64748b', fontSize: 13, marginTop: 4 }}>
+                  انقر على "+ إضافة قاعدة جديدة" لربط إعلان بقناة محددة أو بجميع القنوات.
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.channelsGrid}>
+                {adRules.map((rule) => {
+                  return (
+                    <View key={rule.id} style={styles.channelCardItem}>
+                      <View style={styles.channelCardHeader}>
+                        <View style={[styles.channelLogoWrapper, { backgroundColor: '#2e1065', justifyContent: 'center', alignItems: 'center' }]}>
+                          <MaterialIcons name="auto-awesome" size={24} color="#c084fc" />
+                        </View>
+                        <View style={styles.channelCardInfo}>
+                          <Text style={styles.channelCardName}>
+                            {rule.channelName || (rule.channelId === 'ALL' ? 'جميع القنوات' : rule.channelId)}
+                          </Text>
+                          <Text style={{ color: '#ec4899', fontSize: 12, fontWeight: 'bold', marginTop: 2 }}>
+                            الإعلان: {rule.adTitle} ({rule.adDuration} ثانية)
+                          </Text>
+                          <View style={{ marginTop: 4, flexDirection: 'row', alignItems: 'center' }}>
+                            <View style={{ backgroundColor: '#1e293b', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                              <Text style={{ color: '#38bdf8', fontSize: 11 }}>
+                                {rule.triggerType === 'EPISODE_COUNT'
+                                  ? `بعد كل ${rule.triggerValue} حلقة`
+                                  : `كل ${rule.triggerValue} دقيقة`}
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+                      </View>
+
+                      <View style={[styles.channelCardActionsRow, { justifyContent: 'flex-end', marginTop: 12 }]}>
+                        <Pressable
+                          style={[styles.channelActionBtn, { borderColor: '#ef444430' }]}
+                          onPress={() => handleDeleteRule(rule.id)}
+                        >
+                          <MaterialIcons name="delete" size={16} color="#ef4444" />
+                          <Text style={[styles.channelActionBtnText, { color: '#ef4444' }]}>حذف القاعدة</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+          </View>
         ) : null}
       </ScrollView>
 
@@ -6367,6 +6849,243 @@ export default function AdminScreen(): React.JSX.Element {
                   <ActivityIndicator size="small" color="#000000" />
                 ) : (
                   <Text style={[styles.modalConfirmBtnText, { color: '#000000' }]}>حفظ قناة المسلسلات</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ==========================================
+          مودال إضافة / تعديل إعلان بث 24/7
+          ========================================== */}
+      <Modal visible={showAdModal} transparent animationType="fade">
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHeaderTitleRow}>
+                <MaterialIcons name="campaign" size={24} color="#ec4899" />
+                <Text style={styles.modalTitle}>{editingAd.id ? 'تعديل الإعلان' : 'إضافة إعلان جديد'}</Text>
+              </View>
+              <Pressable onPress={() => setShowAdModal(false)}>
+                <MaterialIcons name="close" size={22} color="#94a3b8" />
+              </Pressable>
+            </View>
+
+            <ScrollView style={{ maxHeight: 480 }}>
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>عنوان أو اسم الإعلان: *</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={editingAd.title}
+                  onChangeText={(val) => setEditingAd((prev) => ({ ...prev, title: val }))}
+                  placeholder="مثال: إعلان برجر كينغ / رعاية موسم رمضان"
+                  placeholderTextColor="#64748b"
+                />
+              </View>
+
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>رابط فيديو الإعلان المباشر (MP4): *</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={editingAd.videoUrl}
+                  onChangeText={(val) => setEditingAd((prev) => ({ ...prev, videoUrl: val }))}
+                  placeholder="https://pub-...r2.dev/ads/promo.mp4"
+                  placeholderTextColor="#64748b"
+                  autoCapitalize="none"
+                />
+                <Text style={{ color: '#64748b', fontSize: 11, marginTop: 4 }}>
+                  رابط MP4 مباشر وسريع (مثل Cloudflare R2 أو سيرفر استضافة موثوق).
+                </Text>
+              </View>
+
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <View style={[styles.modalFieldGroup, { flex: 1 }]}>
+                  <Text style={styles.modalLabel}>مدة الإعلان (بالثواني):</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={String(editingAd.duration || 15)}
+                    onChangeText={(val) => setEditingAd((prev) => ({ ...prev, duration: Number(val) || 15 }))}
+                    placeholder="15"
+                    placeholderTextColor="#64748b"
+                    keyboardType="numeric"
+                  />
+                </View>
+
+                <View style={[styles.modalFieldGroup, { flex: 1 }]}>
+                  <Text style={styles.modalLabel}>الحد الأقصى للمشاهدات:</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={editingAd.maxImpressions !== null && editingAd.maxImpressions !== undefined ? String(editingAd.maxImpressions) : ''}
+                    onChangeText={(val) => {
+                      const num = parseInt(val, 10);
+                      setEditingAd((prev) => ({ ...prev, maxImpressions: isNaN(num) || num <= 0 ? null : num }));
+                    }}
+                    placeholder="فارغ = غير محدود"
+                    placeholderTextColor="#64748b"
+                    keyboardType="numeric"
+                  />
+                </View>
+              </View>
+
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>حالة الإعلان:</Text>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <Pressable
+                    style={[styles.streamTypeOption, editingAd.isActive && styles.streamTypeOptionActive]}
+                    onPress={() => setEditingAd((prev) => ({ ...prev, isActive: true }))}
+                  >
+                    <Text style={[styles.streamTypeOptionText, editingAd.isActive && styles.streamTypeOptionTextActive]}>
+                      نشط ومتاح
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={[styles.streamTypeOption, !editingAd.isActive && styles.streamTypeOptionActive]}
+                    onPress={() => setEditingAd((prev) => ({ ...prev, isActive: false }))}
+                  >
+                    <Text style={[styles.streamTypeOptionText, !editingAd.isActive && styles.streamTypeOptionTextActive]}>
+                      معطل مؤقتاً
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <Pressable style={styles.modalCancelBtn} onPress={() => setShowAdModal(false)}>
+                <Text style={styles.modalCancelBtnText}>إلغاء</Text>
+              </Pressable>
+
+              <Pressable
+                style={[styles.modalConfirmBtn, { backgroundColor: '#ec4899' }]}
+                onPress={handleSaveAd}
+                disabled={savingAd}
+              >
+                {savingAd ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text style={[styles.modalConfirmBtnText, { color: '#ffffff' }]}>
+                    {editingAd.id ? 'حفظ التعديلات' : 'إضافة الإعلان'}
+                  </Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ==========================================
+          مودال إضافة قاعدة ربط إعلان بقناة
+          ========================================== */}
+      <Modal visible={showRuleModal} transparent animationType="fade">
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHeaderTitleRow}>
+                <MaterialIcons name="playlist-add" size={24} color="#a855f7" />
+                <Text style={styles.modalTitle}>إضافة قاعدة تشغيل إعلان</Text>
+              </View>
+              <Pressable onPress={() => setShowRuleModal(false)}>
+                <MaterialIcons name="close" size={22} color="#94a3b8" />
+              </Pressable>
+            </View>
+
+            <ScrollView style={{ maxHeight: 480 }}>
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>اختر القناة المستهدفة:</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexDirection: 'row', gap: 6, marginVertical: 4 }}>
+                  <Pressable
+                    style={[styles.streamTypeOption, editingRule.channelId === 'ALL' && styles.streamTypeOptionActive, { marginRight: 6 }]}
+                    onPress={() => setEditingRule((prev) => ({ ...prev, channelId: 'ALL' }))}
+                  >
+                    <Text style={[styles.streamTypeOptionText, editingRule.channelId === 'ALL' && styles.streamTypeOptionTextActive]}>
+                      ★ جميع قنوات بث 24
+                    </Text>
+                  </Pressable>
+                  {simulatedChannels.map((ch) => (
+                    <Pressable
+                      key={ch.id}
+                      style={[styles.streamTypeOption, editingRule.channelId === ch.id && styles.streamTypeOptionActive, { marginRight: 6 }]}
+                      onPress={() => setEditingRule((prev) => ({ ...prev, channelId: ch.id }))}
+                    >
+                      <Text style={[styles.streamTypeOptionText, editingRule.channelId === ch.id && styles.streamTypeOptionTextActive]}>
+                        {ch.name}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              </View>
+
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>اختر الإعلان المراد تشغيله: *</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 4 }}>
+                  {ads.map((ad) => (
+                    <Pressable
+                      key={ad.id}
+                      style={[styles.streamTypeOption, editingRule.adId === ad.id && styles.streamTypeOptionActive]}
+                      onPress={() => setEditingRule((prev) => ({ ...prev, adId: ad.id }))}
+                    >
+                      <Text style={[styles.streamTypeOptionText, editingRule.adId === ad.id && styles.streamTypeOptionTextActive]}>
+                        {ad.title} ({ad.duration} ث)
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>نوع شرط التشغيل (Trigger Type):</Text>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <Pressable
+                    style={[styles.streamTypeOption, editingRule.triggerType === 'EPISODE_COUNT' && styles.streamTypeOptionActive]}
+                    onPress={() => setEditingRule((prev) => ({ ...prev, triggerType: 'EPISODE_COUNT' }))}
+                  >
+                    <Text style={[styles.streamTypeOptionText, editingRule.triggerType === 'EPISODE_COUNT' && styles.streamTypeOptionTextActive]}>
+                      بعد عدد محدد من الحلقات
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={[styles.streamTypeOption, editingRule.triggerType === 'TIME_INTERVAL' && styles.streamTypeOptionActive]}
+                    onPress={() => setEditingRule((prev) => ({ ...prev, triggerType: 'TIME_INTERVAL' }))}
+                  >
+                    <Text style={[styles.streamTypeOptionText, editingRule.triggerType === 'TIME_INTERVAL' && styles.streamTypeOptionTextActive]}>
+                      كل فترة زمنية بالدقائق
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalLabel}>
+                  {editingRule.triggerType === 'EPISODE_COUNT' ? 'عدد الحلقات (مثلاً 2 لحلقتين):' : 'عدد الدقائق (مثلاً 20 لدقيقة):'}
+                </Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={String(editingRule.triggerValue || '')}
+                  onChangeText={(val) => setEditingRule((prev) => ({ ...prev, triggerValue: Math.max(1, parseInt(val, 10) || 1) }))}
+                  placeholder={editingRule.triggerType === 'EPISODE_COUNT' ? 'مثال: 2' : 'مثال: 20'}
+                  placeholderTextColor="#64748b"
+                  keyboardType="numeric"
+                />
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <Pressable style={styles.modalCancelBtn} onPress={() => setShowRuleModal(false)}>
+                <Text style={styles.modalCancelBtnText}>إلغاء</Text>
+              </Pressable>
+
+              <Pressable
+                style={[styles.modalConfirmBtn, { backgroundColor: '#a855f7' }]}
+                onPress={handleSaveRule}
+                disabled={savingRule || !editingRule.adId}
+              >
+                {savingRule ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text style={[styles.modalConfirmBtnText, { color: '#ffffff' }]}>إضافة القاعدة</Text>
                 )}
               </Pressable>
             </View>

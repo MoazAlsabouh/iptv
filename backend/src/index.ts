@@ -753,7 +753,7 @@ function jsonResponse(data: any, status: number = 200, extraHeaders?: Record<str
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Key, Cache-Control, Pragma, *',
       ...(extraHeaders || {}),
     },
@@ -5949,12 +5949,41 @@ async function handleAdminDeleteSimulatedChannel(request: Request, env: Env, id:
 async function handleGetPublicSimulatedChannels(env: Env): Promise<Response> {
   if (env.DB) {
     await ensureSimulatedChannelsTable(env.DB);
+    await ensureAdsTables(env.DB);
   }
 
   try {
     const res = await env.DB.prepare(
       'SELECT * FROM simulated_channels_247 WHERE is_active = 1 ORDER BY CASE WHEN sort_order IS NOT NULL THEN sort_order ELSE 99999 END ASC, updated_at DESC'
     ).all<any>();
+
+    // جلب قواعد الإعلانات النشطة لقنوات البث 24/7 المرتبطة بإعلانات نشطة لم تتجاوز حد الظهور
+    let activeRules: any[] = [];
+    if (env.DB) {
+      try {
+        const rulesRes = await env.DB.prepare(`
+          SELECT 
+            r.id as rule_id,
+            r.channel_id,
+            r.trigger_type,
+            r.trigger_value,
+            a.id as ad_id,
+            a.title as ad_title,
+            a.video_url,
+            a.duration
+          FROM channel_ad_rules r
+          JOIN ads a ON r.ad_id = a.id
+          WHERE r.is_active = 1 
+            AND a.is_active = 1 
+            AND (a.max_impressions IS NULL OR a.current_impressions < a.max_impressions)
+        `).all<any>();
+        if (rulesRes && Array.isArray(rulesRes.results)) {
+          activeRules = rulesRes.results;
+        }
+      } catch (err) {
+        console.warn('[Ads] Failed to fetch active ad rules for simulated channels:', err);
+      }
+    }
 
     const channels = (res.results || []).map((r) => {
       let playlists = [];
@@ -5977,6 +6006,19 @@ async function handleGetPublicSimulatedChannels(env: Env): Promise<Response> {
         }
       }
 
+      // إرفاق القواعد النشطة فقط الخاصة بهذه القناة أو العامة لكافة القنوات
+      const channelRules = activeRules
+        .filter((rule) => rule.channel_id === 'ALL' || rule.channel_id === r.id)
+        .map((rule) => ({
+          id: rule.rule_id,
+          adId: rule.ad_id,
+          title: rule.ad_title,
+          videoUrl: rule.video_url,
+          duration: Number(rule.duration) || 15,
+          triggerType: rule.trigger_type,
+          triggerValue: Number(rule.trigger_value) || 1,
+        }));
+
       return {
         id: r.id,
         name: r.name,
@@ -5985,6 +6027,7 @@ async function handleGetPublicSimulatedChannels(env: Env): Promise<Response> {
         sortOrder: r.sort_order,
         playlists,
         episodes: allEpisodes,
+        adRules: channelRules,
         createdAt: r.created_at,
         updatedAt: r.updated_at,
       };
@@ -6349,6 +6392,375 @@ async function handleAdminImportYouTubePlaylist(request: Request, env: Env): Pro
   }
 }
 
+// ==========================================
+// إدارة الإعلانات الذكية لقنوات «بث 24» (Ads & Rules)
+// ==========================================
+
+let isAdsTablesReady = false;
+
+async function ensureAdsTables(db: D1Database): Promise<void> {
+  if (isAdsTablesReady) return;
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS ads (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        video_url TEXT NOT NULL,
+        duration INTEGER NOT NULL DEFAULT 15,
+        max_impressions INTEGER DEFAULT NULL,
+        current_impressions INTEGER NOT NULL DEFAULT 0,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_ads_active ON ads(is_active);
+
+      CREATE TABLE IF NOT EXISTS channel_ad_rules (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL,
+        ad_id TEXT NOT NULL,
+        trigger_type TEXT NOT NULL,
+        trigger_value INTEGER NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_channel_ad_rules_channel ON channel_ad_rules(channel_id);
+      CREATE INDEX IF NOT EXISTS idx_channel_ad_rules_ad ON channel_ad_rules(ad_id);
+    `);
+    isAdsTablesReady = true;
+  } catch (err) {
+    console.warn('[DB] Failed to ensure ads and channel_ad_rules tables:', err);
+  }
+}
+
+async function handleAdminGetAds(request: Request, env: Env): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  await ensureAdsTables(env.DB);
+
+  try {
+    const res = await env.DB.prepare('SELECT * FROM ads ORDER BY created_at DESC').all<any>();
+    const ads = (res.results || []).map((r) => ({
+      id: r.id,
+      title: r.title,
+      videoUrl: r.video_url,
+      video_url: r.video_url,
+      duration: Number(r.duration) || 15,
+      maxImpressions: r.max_impressions !== null && r.max_impressions !== undefined ? Number(r.max_impressions) : null,
+      max_impressions: r.max_impressions !== null && r.max_impressions !== undefined ? Number(r.max_impressions) : null,
+      currentImpressions: Number(r.current_impressions) || 0,
+      current_impressions: Number(r.current_impressions) || 0,
+      isActive: Boolean(r.is_active),
+      is_active: Number(r.is_active) || 0,
+      createdAt: r.created_at,
+      created_at: r.created_at,
+    }));
+    return jsonResponse({ success: true, ads });
+  } catch (err: any) {
+    return jsonResponse({ success: false, error: 'فشل جلب الإعلانات: ' + (err?.message || ''), ads: [] }, 500);
+  }
+}
+
+async function handleAdminCreateAd(request: Request, env: Env): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  await ensureAdsTables(env.DB);
+
+  try {
+    const body = (await request.json()) as any;
+    const title = String(body.title || '').trim();
+    const videoUrl = String(body.videoUrl || body.video_url || '').trim();
+    if (!title) {
+      return jsonResponse({ error: 'عنوان أو اسم الإعلان مطلوب' }, 400);
+    }
+    if (!videoUrl) {
+      return jsonResponse({ error: 'رابط فيديو الإعلان (MP4) مطلوب' }, 400);
+    }
+
+    const duration = Math.max(1, Number(body.duration) || 15);
+    const maxImpRaw = body.maxImpressions !== undefined ? body.maxImpressions : body.max_impressions;
+    const maxImpressions = maxImpRaw !== null && maxImpRaw !== undefined && maxImpRaw !== '' && Number(maxImpRaw) > 0 ? Number(maxImpRaw) : null;
+    const isActive = body.isActive !== undefined ? (body.isActive ? 1 : 0) : (body.is_active !== undefined ? (body.is_active ? 1 : 0) : 1);
+    const id = `ad_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const now = new Date().toISOString();
+
+    await env.DB.prepare(`
+      INSERT INTO ads (id, title, video_url, duration, max_impressions, current_impressions, is_active, created_at)
+      VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+    `).bind(id, title, videoUrl, duration, maxImpressions, isActive, now).run();
+
+    return jsonResponse({
+      success: true,
+      message: 'تمت إضافة الإعلان بنجاح',
+      ad: {
+        id,
+        title,
+        videoUrl,
+        video_url: videoUrl,
+        duration,
+        maxImpressions,
+        max_impressions: maxImpressions,
+        currentImpressions: 0,
+        current_impressions: 0,
+        isActive: Boolean(isActive),
+        is_active: isActive,
+        createdAt: now,
+        created_at: now,
+      },
+    });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل إضافة الإعلان: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminUpdateAd(request: Request, env: Env, id: string): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  await ensureAdsTables(env.DB);
+
+  try {
+    const existing = await env.DB.prepare('SELECT * FROM ads WHERE id = ?').bind(id).first<any>();
+    if (!existing) {
+      return jsonResponse({ error: 'الإعلان غير موجود' }, 404);
+    }
+
+    const body = (await request.json()) as any;
+    const title = body.title !== undefined ? String(body.title).trim() : existing.title;
+    const videoUrl = body.videoUrl !== undefined ? String(body.videoUrl).trim() : (body.video_url !== undefined ? String(body.video_url).trim() : existing.video_url);
+    const duration = body.duration !== undefined ? Math.max(1, Number(body.duration) || 15) : existing.duration;
+
+    let maxImpressions = existing.max_impressions;
+    if (body.maxImpressions !== undefined || body.max_impressions !== undefined) {
+      const raw = body.maxImpressions !== undefined ? body.maxImpressions : body.max_impressions;
+      maxImpressions = raw !== null && raw !== '' && Number(raw) > 0 ? Number(raw) : null;
+    }
+
+    let currentImpressions = existing.current_impressions;
+    if (body.resetImpressions === true) {
+      currentImpressions = 0;
+    } else if (body.currentImpressions !== undefined || body.current_impressions !== undefined) {
+      const curRaw = body.currentImpressions !== undefined ? body.currentImpressions : body.current_impressions;
+      currentImpressions = Math.max(0, Number(curRaw) || 0);
+    }
+
+    let isActive = existing.is_active;
+    if (body.isActive !== undefined) {
+      isActive = body.isActive ? 1 : 0;
+    } else if (body.is_active !== undefined) {
+      isActive = body.is_active ? 1 : 0;
+    }
+
+    await env.DB.prepare(`
+      UPDATE ads
+      SET title = ?, video_url = ?, duration = ?, max_impressions = ?, current_impressions = ?, is_active = ?
+      WHERE id = ?
+    `).bind(title, videoUrl, duration, maxImpressions, currentImpressions, isActive, id).run();
+
+    return jsonResponse({ success: true, message: 'تم تحديث الإعلان بنجاح' });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل تحديث الإعلان: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminDeleteAd(request: Request, env: Env, id: string): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  await ensureAdsTables(env.DB);
+
+  try {
+    await env.DB.prepare('DELETE FROM channel_ad_rules WHERE ad_id = ?').bind(id).run();
+    await env.DB.prepare('DELETE FROM ads WHERE id = ?').bind(id).run();
+    return jsonResponse({ success: true, message: 'تم حذف الإعلان وقواعده المرتبطة بنجاح' });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل حذف الإعلان: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminGetAdRules(request: Request, env: Env): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  await ensureAdsTables(env.DB);
+  await ensureSimulatedChannelsTable(env.DB);
+
+  try {
+    const res = await env.DB.prepare(`
+      SELECT 
+        r.id,
+        r.channel_id,
+        r.ad_id,
+        r.trigger_type,
+        r.trigger_value,
+        r.is_active,
+        r.created_at,
+        a.title as ad_title,
+        a.video_url as ad_video_url,
+        a.duration as ad_duration,
+        a.current_impressions as ad_current_impressions,
+        a.max_impressions as ad_max_impressions,
+        a.is_active as ad_is_active,
+        c.name as channel_name
+      FROM channel_ad_rules r
+      LEFT JOIN ads a ON r.ad_id = a.id
+      LEFT JOIN simulated_channels_247 c ON r.channel_id = c.id
+      ORDER BY r.created_at DESC
+    `).all<any>();
+
+    const rules = (res.results || []).map((r) => ({
+      id: r.id,
+      channelId: r.channel_id,
+      channel_id: r.channel_id,
+      channelName: r.channel_id === 'ALL' ? 'جميع القنوات' : (r.channel_name || r.channel_id),
+      adId: r.ad_id,
+      ad_id: r.ad_id,
+      adTitle: r.ad_title || 'إعلان محذوف',
+      adVideoUrl: r.ad_video_url || '',
+      adDuration: Number(r.ad_duration) || 15,
+      triggerType: r.trigger_type,
+      trigger_type: r.trigger_type,
+      triggerValue: Number(r.trigger_value) || 1,
+      trigger_value: Number(r.trigger_value) || 1,
+      isActive: Boolean(r.is_active),
+      is_active: Number(r.is_active) || 0,
+      createdAt: r.created_at,
+      created_at: r.created_at,
+    }));
+
+    return jsonResponse({ success: true, rules });
+  } catch (err: any) {
+    return jsonResponse({ success: false, error: 'فشل جلب قواعد الإعلانات: ' + (err?.message || ''), rules: [] }, 500);
+  }
+}
+
+async function handleAdminCreateAdRule(request: Request, env: Env): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  await ensureAdsTables(env.DB);
+
+  try {
+    const body = (await request.json()) as any;
+    const channelId = String(body.channelId || body.channel_id || 'ALL').trim();
+    const adId = String(body.adId || body.ad_id || '').trim();
+    if (!adId) {
+      return jsonResponse({ error: 'يرجى اختيار الإعلان المراد ربطه' }, 400);
+    }
+
+    // التحقق من وجود الإعلان في جدول ads
+    const ad = await env.DB.prepare('SELECT id, title FROM ads WHERE id = ?').bind(adId).first<any>();
+    if (!ad) {
+      return jsonResponse({ error: 'الإعلان المختار غير موجود' }, 404);
+    }
+
+    let triggerType = String(body.triggerType || body.trigger_type || 'EPISODE_COUNT').toUpperCase().trim();
+    if (triggerType !== 'TIME_INTERVAL') {
+      triggerType = 'EPISODE_COUNT';
+    }
+
+    const triggerValRaw = body.triggerValue !== undefined ? body.triggerValue : body.trigger_value;
+    const triggerValue = Math.max(1, Number(triggerValRaw) || 1);
+    const isActive = body.isActive !== undefined ? (body.isActive ? 1 : 0) : (body.is_active !== undefined ? (body.is_active ? 1 : 0) : 1);
+    const id = `rule_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const now = new Date().toISOString();
+
+    await env.DB.prepare(`
+      INSERT INTO channel_ad_rules (id, channel_id, ad_id, trigger_type, trigger_value, is_active, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(id, channelId, adId, triggerType, triggerValue, isActive, now).run();
+
+    return jsonResponse({
+      success: true,
+      message: 'تمت إضافة قاعدة الإعلان بنجاح',
+      rule: {
+        id,
+        channelId,
+        channel_id: channelId,
+        adId,
+        ad_id: adId,
+        triggerType,
+        trigger_type: triggerType,
+        triggerValue,
+        trigger_value: triggerValue,
+        isActive: Boolean(isActive),
+        is_active: isActive,
+        createdAt: now,
+        created_at: now,
+      },
+    });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل إضافة قاعدة الإعلان: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleAdminDeleteAdRule(request: Request, env: Env, id: string): Promise<Response> {
+  const auth = await checkAdminAuth(request, env);
+  if (!auth.authorized) {
+    return jsonResponse({ error: auth.error || 'غير مصرح' }, 401);
+  }
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  await ensureAdsTables(env.DB);
+
+  try {
+    await env.DB.prepare('DELETE FROM channel_ad_rules WHERE id = ?').bind(id).run();
+    return jsonResponse({ success: true, message: 'تم حذف قاعدة الإعلان بنجاح' });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل حذف قاعدة الإعلان: ' + (err?.message || '') }, 500);
+  }
+}
+
+async function handleRecordAdImpression(request: Request, env: Env, adId: string): Promise<Response> {
+  if (!env.DB) {
+    return jsonResponse({ error: 'قاعدة البيانات غير متصلة' }, 500);
+  }
+
+  await ensureAdsTables(env.DB);
+
+  try {
+    await env.DB.prepare(`
+      UPDATE ads SET current_impressions = current_impressions + 1 WHERE id = ?
+    `).bind(adId).run();
+    return jsonResponse({ success: true, message: 'تم تسجيل المشاهدة بنجاح' });
+  } catch (err: any) {
+    return jsonResponse({ error: 'فشل تسجيل المشاهدة: ' + (err?.message || '') }, 500);
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -6613,6 +7025,70 @@ export default {
       return handleAdminImportYouTubePlaylist(request, env);
     }
 
+    // ==========================================
+    // مسارات إعلانات البث (24/7) وقواعدها
+    // ==========================================
+    if (
+      (cleanPath === '/api/admin/ads' || url.pathname === '/api/admin/ads') &&
+      request.method === 'GET'
+    ) {
+      return handleAdminGetAds(request, env);
+    }
+    if (
+      (cleanPath === '/api/admin/ads' || url.pathname === '/api/admin/ads') &&
+      request.method === 'POST'
+    ) {
+      return handleAdminCreateAd(request, env);
+    }
+    if (url.pathname.startsWith('/api/admin/ads/') || cleanPath.startsWith('/api/admin/ads/')) {
+      const prefix = '/api/admin/ads/';
+      const rawSub = url.pathname.startsWith(prefix) ? url.pathname.substring(prefix.length) : cleanPath.substring(prefix.length);
+      const idParam = decodeURIComponent(rawSub).trim();
+      if (idParam) {
+        if (request.method === 'PUT' || request.method === 'POST' || request.method === 'PATCH') {
+          return handleAdminUpdateAd(request, env, idParam);
+        }
+        if (request.method === 'DELETE') {
+          return handleAdminDeleteAd(request, env, idParam);
+        }
+      }
+    }
+
+    if (
+      (cleanPath === '/api/admin/ad-rules' || url.pathname === '/api/admin/ad-rules') &&
+      request.method === 'GET'
+    ) {
+      return handleAdminGetAdRules(request, env);
+    }
+    if (
+      (cleanPath === '/api/admin/ad-rules' || url.pathname === '/api/admin/ad-rules') &&
+      request.method === 'POST'
+    ) {
+      return handleAdminCreateAdRule(request, env);
+    }
+    if (url.pathname.startsWith('/api/admin/ad-rules/') || cleanPath.startsWith('/api/admin/ad-rules/')) {
+      const prefix = '/api/admin/ad-rules/';
+      const rawSub = url.pathname.startsWith(prefix) ? url.pathname.substring(prefix.length) : cleanPath.substring(prefix.length);
+      const idParam = decodeURIComponent(rawSub).trim();
+      if (idParam && request.method === 'DELETE') {
+        return handleAdminDeleteAdRule(request, env, idParam);
+      }
+    }
+
+    // تسجيل مشاهدة الإعلان (Impression)
+    if (
+      (url.pathname.startsWith('/api/ads/') || cleanPath.startsWith('/api/ads/')) &&
+      (url.pathname.endsWith('/impression') || cleanPath.endsWith('/impression')) &&
+      request.method === 'POST'
+    ) {
+      const prefix = '/api/ads/';
+      const rawSub = url.pathname.startsWith(prefix) ? url.pathname.substring(prefix.length) : cleanPath.substring(prefix.length);
+      const adId = decodeURIComponent(rawSub.replace(/\/impression$/, '')).trim();
+      if (adId) {
+        return handleRecordAdImpression(request, env, adId);
+      }
+    }
+
     // 3. نقاط نهاية بوابة الموزعين (Reseller Portal)
     if (url.pathname === '/api/reseller/login' && request.method === 'POST') {
       return handleResellerLogin(request, env);
@@ -6699,7 +7175,7 @@ export default {
           headers: {
             'Content-Type': 'text/plain; charset=utf-8',
             'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+            'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
             'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Key, Cache-Control, Pragma, *',
           },
         });
@@ -6726,7 +7202,7 @@ export default {
           headers: {
             'Content-Type': 'application/vnd.apple.mpegurl; charset=utf-8',
             'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+            'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
             'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Key, Cache-Control, Pragma, *',
             'Cache-Control': 'no-cache, no-store, must-revalidate',
             'Pragma': 'no-cache',
@@ -6739,7 +7215,7 @@ export default {
           headers: {
             'Content-Type': 'text/plain; charset=utf-8',
             'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+            'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
             'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Key, Cache-Control, Pragma, *',
           },
         });
@@ -6751,7 +7227,7 @@ export default {
       headers: {
         'Content-Type': 'text/plain; charset=utf-8',
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Key, Cache-Control, Pragma, *',
       },
     });
